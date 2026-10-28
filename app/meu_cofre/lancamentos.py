@@ -300,45 +300,50 @@ def listar(
     )
 
 
-def recentes(conn: sqlite3.Connection, n: int = 10, filtro: str = "todos") -> pd.DataFrame:
-    """Últimos `n` lançamentos por ordem de lançamento (id desc), não por data.
+def recentes(conn: sqlite3.Connection, hoje: date, n: int = 10, filtro: str = "todos") -> pd.DataFrame:
+    """Os últimos `n` lançamentos com data até `hoje`, do mais novo pro mais antigo (data desc, id desc).
 
-    `filtro`: "todos", "entradas" ou "saidas". Transferências só aparecem em "todos".
-    Colunas: id, descricao, categoria, conta, metodo, data, valor_centavos, parcela_atual, parcela_total.
+    Previstos e parcelas futuras ficam de fora até a data chegar; o lançamento que acabou de ser feito
+    hoje continua no topo. `filtro`: "todos", "entradas" ou "saidas" (transferências só em "todos").
+    Colunas: id, descricao, categoria, conta, metodo, data, valor_centavos, parcela_atual, parcela_total,
+    recorrente_id (nulo se não for de uma recorrente).
     """
     if filtro not in ("todos", "entradas", "saidas"):
         raise ValueError(f"Filtro desconhecido: {filtro}")
-    onde = ""
+    extra = ""
     if filtro != "todos":
         sinal = ">" if filtro == "entradas" else "<"
-        onde = f"""WHERE l.valor_centavos {sinal} 0
+        extra = f"""AND l.valor_centavos {sinal} 0
               AND COALESCE(c.tipo, '') <> 'transferencia'
               AND COALESCE(l.metodo, '') <> 'transferencia'"""
     return pd.read_sql_query(
         f"""
         SELECT l.id, l.descricao, c.nome AS categoria, ct.nome AS conta, l.metodo, l.data,
-               l.valor_centavos, l.parcela_atual, l.parcela_total
+               l.valor_centavos, l.parcela_atual, l.parcela_total, l.recorrente_id
         FROM lancamentos l
         JOIN contas ct ON ct.id = l.conta_id
         LEFT JOIN categorias c ON c.id = l.categoria_id
-        {onde}
-        ORDER BY l.id DESC
+        WHERE l.data <= ? {extra}
+        ORDER BY l.data DESC, l.id DESC
         LIMIT ?
         """,
         conn,
-        params=(n,),
+        params=(hoje.isoformat(), n),
         parse_dates=["data"],
     )
 
 
 def obter(conn: sqlite3.Connection, lancamento_id: int) -> dict | None:
-    """Um lançamento com todos os campos, mais `conta`, `categoria` e `categoria_tipo` (nomes)."""
+    """Um lançamento com todos os campos, mais `conta`, `categoria` e `categoria_tipo` (nomes) e, se vier de
+    uma recorrente, `recorrente_dia` (dia do mês), `recorrente_assinatura` e `recorrente_ativa` (senão, None)."""
     linha = conn.execute(
         """
-        SELECT l.*, ct.nome AS conta, c.nome AS categoria, c.tipo AS categoria_tipo
+        SELECT l.*, ct.nome AS conta, c.nome AS categoria, c.tipo AS categoria_tipo,
+               r.dia_do_mes AS recorrente_dia, r.assinatura AS recorrente_assinatura, r.ativa AS recorrente_ativa
         FROM lancamentos l
         JOIN contas ct ON ct.id = l.conta_id
         LEFT JOIN categorias c ON c.id = l.categoria_id
+        LEFT JOIN recorrentes r ON r.id = l.recorrente_id
         WHERE l.id = ?
         """,
         (lancamento_id,),

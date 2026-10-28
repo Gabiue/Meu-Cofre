@@ -96,6 +96,7 @@ QToolTip {{ background: {CARTAO_ELEVADO}; color: {TEXTO}; border: 1px solid {BOR
           background: {VERDE_SUAVE}; border: 1px solid {VERDE_SUAVE_BORDA}; color: {TEXTO}; }}
 #Pilula[variante="neutra"] {{ background: transparent; border: 1px solid {BORDA}; color: {TEXTO_SECUNDARIO}; }}
 #Pilula[variante="bom"] {{ background: {VERDE_SUAVE}; border: 1px solid {VERDE_SUAVE_BORDA}; color: {VERDE}; }}
+#Pilula[variante="feito"] {{ background: {VERDE_SUAVE}; border: 1px solid {VERDE_SUAVE_BORDA}; color: {VERDE}; }}
 #Pilula[variante="atencao"] {{ background: {DOURADO_SUAVE}; border: 1px solid {DOURADO_SUAVE_BORDA}; color: {DOURADO}; }}
 #Pilula[variante="ruim"] {{ background: {VERMELHO_SUAVE}; border: 1px solid {VERMELHO_SUAVE_BORDA}; color: {VERMELHO}; }}
 
@@ -200,6 +201,29 @@ QPushButton#BotaoLink {{ background: transparent; border: none; padding: 6px 0; 
 QPushButton#BotaoLink:hover {{ color: {TEXTO}; }}
 QPushButton#BotaoSecundario[compacto="true"], QPushButton#BotaoPrimario[compacto="true"],
 QPushButton#BotaoPerigo[compacto="true"] {{ min-height: 32px; padding: 0 14px; font-size: {PX_RODAPE + 1}px; border-radius: 8px; }}
+
+/* Marcador (caixinha de marcar) */
+QCheckBox#Marcador {{ spacing: 10px; font-size: {PX_TEXTO}px; font-weight: 600; color: {TEXTO}; }}
+QCheckBox#Marcador:disabled {{ color: {TEXTO_DESABILITADO}; }}
+QCheckBox#Marcador::indicator {{ width: 20px; height: 20px; border: 1px solid {TEXTO_APAGADO}; border-radius: 6px; background: {FUNDO}; }}
+QCheckBox#Marcador::indicator:hover {{ border-color: {TEXTO_SECUNDARIO}; }}
+QCheckBox#Marcador::indicator:checked {{ background: {VERDE}; border-color: {VERDE}; }}
+QCheckBox#Marcador::indicator:disabled {{ border-color: {BORDA}; background: transparent; }}
+QCheckBox#Marcador::indicator:checked:disabled {{ background: {BORDA}; border-color: {BORDA}; }}
+
+/* Aba "Assinaturas/fixos" */
+#GrupoNome {{ font-size: {PX_TITULO_CARTAO}px; font-weight: 600; color: {TEXTO_SECUNDARIO}; }}
+#GrupoSubtotal {{ font-size: {PX_RODAPE + 1}px; font-weight: 600; color: {TEXTO_SECUNDARIO}; }}
+#LinhaRecorrente {{ background: transparent; border: none; border-radius: 10px; }}
+#LinhaRecorrente:hover {{ background: {CARTAO_ELEVADO}; }}
+QPushButton#BotaoAcao {{ background: transparent; border: 1px solid transparent; border-radius: 8px; padding: 0 12px;
+    min-height: 30px; font-size: {PX_RODAPE + 1}px; font-weight: 600; color: {TEXTO_SECUNDARIO}; }}
+QPushButton#BotaoAcao:hover {{ background: {CARTAO_ELEVADO}; border-color: {BORDA}; color: {TEXTO}; }}
+QPushButton#BotaoAcao[perigo="true"]:hover {{ background: {VERMELHO_SUAVE}; border-color: {VERMELHO_SUAVE_BORDA}; color: {VERMELHO}; }}
+#RecorrenteNome {{ font-size: {PX_TEXTO + 1}px; font-weight: 600; color: {TEXTO}; }}
+#RecorrenteNome[apagada="true"] {{ color: {TEXTO_APAGADO}; }}
+#RecorrenteValor {{ font-size: {PX_TEXTO + 2}px; font-weight: 700; color: {TEXTO}; }}
+#RecorrenteValor[apagada="true"] {{ color: {TEXTO_APAGADO}; }}
 
 /* Barra de rolagem fina */
 QScrollBar:vertical {{ background: transparent; width: 10px; margin: 2px; }}

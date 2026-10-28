@@ -5,6 +5,7 @@ from PySide6.QtGui import QColor, QPainter, QPen, QTextCharFormat
 from PySide6.QtWidgets import (
     QBoxLayout,
     QButtonGroup,
+    QCheckBox,
     QComboBox,
     QDateEdit,
     QFrame,
@@ -12,6 +13,8 @@ from PySide6.QtWidgets import (
     QLabel,
     QPushButton,
     QSizePolicy,
+    QStyle,
+    QStyleOptionButton,
     QVBoxLayout,
     QWidget,
 )
@@ -47,7 +50,8 @@ class RotuloElidido(QLabel):
         return self._texto
 
     def sizeHint(self) -> QSize:
-        return QSize(self.fontMetrics().horizontalAdvance(self._texto), self.fontMetrics().height() + 2)
+        self.ensurePolished()  # a fonte do QSS (negrito, tamanho) só vale depois de polido
+        return QSize(self.fontMetrics().horizontalAdvance(self._texto) + 2, self.fontMetrics().height() + 2)  # +2: folga do arredondamento
 
     def minimumSizeHint(self) -> QSize:
         return QSize(0, self.fontMetrics().height() + 2)
@@ -119,10 +123,11 @@ def _espacar_letras(rotulo: QLabel, px: float) -> None:
 class Pilula(QLabel):
     """Texto curto em pílula. Variantes: neutra, bom, atencao, ruim.
 
-    Cor nunca vai sozinha: as variantes de status ganham um ícone (▲, ! ou ▼) antes do texto.
+    Cor nunca vai sozinha: as variantes de status ganham um ícone (▲, ✓, ! ou ▼) antes do texto.
+    "feito" é o "bom" de algo que já aconteceu (✓ cobrada).
     """
 
-    ICONES = {"neutra": "", "bom": "▲ ", "atencao": "! ", "ruim": "▼ "}
+    ICONES = {"neutra": "", "bom": "▲ ", "feito": "✓ ", "atencao": "! ", "ruim": "▼ "}
 
     def __init__(self, texto: str, variante: str = "neutra", parent: QWidget | None = None):
         super().__init__(parent)
@@ -287,6 +292,7 @@ class ItemLancamento(QFrame):
     `valor_centavos` é positivo para entrada e negativo para saída. O número fica sempre na
     cor do texto: quem diferencia entrada de saída é o marcador e o sinal (+ / −).
     `parcela` (ex.: "3/6") aparece apagada logo depois da descrição, que é quem encurta.
+    `recorrente` põe um ↻ discreto antes da categoria (veio de uma assinatura ou gasto fixo).
     """
 
     clicado = Signal(int)
@@ -300,6 +306,7 @@ class ItemLancamento(QFrame):
         data: str,
         valor_centavos: int,
         parcela: str = "",
+        recorrente: bool = False,
         parent: QWidget | None = None,
     ):
         super().__init__(parent)
@@ -323,7 +330,7 @@ class ItemLancamento(QFrame):
         titulo.setSpacing(6)
         titulo.addWidget(self.descricao, 1)
         titulo.addWidget(self.parcela)
-        self.detalhe = RotuloElidido(f"{categoria} · {conta}", "ItemDetalhe")
+        self.detalhe = RotuloElidido(f"{'↻ ' if recorrente else ''}{categoria} · {conta}", "ItemDetalhe")
         textos = QVBoxLayout()
         textos.setSpacing(2)
         textos.addStretch(1)
@@ -366,6 +373,33 @@ def _desenhar_seta(widget: QWidget) -> None:
     pintor.setPen(caneta)
     x, y = widget.width() - 20, widget.height() / 2
     pintor.drawPolyline([QPointF(x - 4, y - 2), QPointF(x, y + 2), QPointF(x + 4, y - 2)])
+
+
+class Marcador(QCheckBox):
+    """Caixinha de marcar no tema: quadrado de cantos arredondados, verde com ✓ quando marcado."""
+
+    TAMANHO = 20
+
+    def __init__(self, texto: str, parent: QWidget | None = None):
+        super().__init__(texto, parent)
+        self.setObjectName("Marcador")
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+
+    def paintEvent(self, evento) -> None:
+        super().paintEvent(evento)
+        if not self.isChecked():
+            return
+        opcao = QStyleOptionButton()
+        self.initStyleOption(opcao)
+        caixa = self.style().subElementRect(QStyle.SubElement.SE_CheckBoxIndicator, opcao, self)
+        pintor = QPainter(self)
+        pintor.setRenderHint(QPainter.RenderHint.Antialiasing)
+        caneta = QPen(QColor(tema.TEXTO_SOBRE_VERDE if self.isEnabled() else tema.TEXTO_DESABILITADO), 2.0)
+        caneta.setCapStyle(Qt.PenCapStyle.RoundCap)
+        caneta.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+        pintor.setPen(caneta)
+        x, y, l = caixa.x(), caixa.y(), caixa.width()
+        pintor.drawPolyline([QPointF(x + l * 0.27, y + l * 0.52), QPointF(x + l * 0.43, y + l * 0.68), QPointF(x + l * 0.74, y + l * 0.32)])
 
 
 class CampoLista(QComboBox):

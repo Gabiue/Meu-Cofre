@@ -22,7 +22,8 @@ def _tamanho_screenshot() -> tuple[int, int]:
 
 
 def _abrir_dialogo_de_revisao(janela: JanelaPrincipal, app: QApplication, modo: str):
-    """MEU_COFRE_DIALOGO=novo|cartao|contas|editar:<id>|excluir:<id>: abre o diálogo já preparado (screenshots)."""
+    """MEU_COFRE_DIALOGO=novo|cartao|repetir|contas|editar:<id>|excluir:<id>|recorrente:<id>: abre o diálogo
+    já preparado (screenshots)."""
     nome, _, id_texto = modo.partition(":")
     if nome == "contas":
         dialogo = janela.abrir_contas()
@@ -32,7 +33,11 @@ def _abrir_dialogo_de_revisao(janela: JanelaPrincipal, app: QApplication, modo: 
         dialogo.resize(dialogo.width(), janela.height() - 60)  # a tela offscreen é baixa: dá espaço pra mostrar tudo
         app.processEvents()
         return dialogo
-    dialogo = janela.novo_lancamento() if nome in ("novo", "cartao") else janela._abrir_lancamento(int(id_texto))
+    if nome == "recorrente":
+        dialogo = janela.aba_recorrentes.editar(int(id_texto))
+        app.processEvents()
+        return dialogo
+    dialogo = janela.novo_lancamento() if nome in ("novo", "cartao", "repetir") else janela._abrir_lancamento(int(id_texto))
     if dialogo is None:
         return None
     if nome == "cartao":
@@ -41,6 +46,14 @@ def _abrir_dialogo_de_revisao(janela: JanelaPrincipal, app: QApplication, modo: 
         dialogo.descricao.setText("Tênis")
         dialogo.parcelas.setCurrentIndex(5)
         dialogo._sugerir_categoria()
+    elif nome == "repetir":
+        dialogo.valor.setText("39,90")
+        dialogo.descricao.setText("Streaming de vídeo")
+        dialogo.metodo.clicar("Cartão")
+        dialogo._sugerir_categoria()
+        dialogo.repetir.setChecked(True)
+        dialogo.assinatura.setChecked(True)
+        dialogo.resize(dialogo.width(), janela.height() - 60)  # a tela offscreen é baixa: dá espaço pra mostrar tudo
     elif nome == "excluir":
         dialogo.pedir_exclusao()
     app.processEvents()
@@ -72,6 +85,7 @@ def main() -> int:
     if destino:  # modo revisão: salva um PNG e sai
         largura, altura = _tamanho_screenshot()
         janela.resize(largura, altura)
+        janela.mostrar_aba(os.environ.get("MEU_COFRE_ABA", "inicio"))
         painel = {"fluxo": "Fluxo", "rosca": "Para onde foi"}.get(os.environ.get("MEU_COFRE_PAINEL", ""))
         if painel:
             janela.mostrar_painel(painel)

@@ -26,6 +26,17 @@ MIGRACOES: dict[int, list[str]] = {
         "ALTER TABLE recorrentes ADD COLUMN pausada INTEGER NOT NULL DEFAULT 0",
         "CREATE INDEX IF NOT EXISTS ix_lancamentos_recorrente ON lancamentos (recorrente_id)",
     ],
+    # v3: assinaturas/fixos (F5). `recorrentes_meses` guarda os meses que cada recorrente já gerou.
+    #  Assim, se o lançamento de um mês for apagado, ele não é recriado (o lançamento some, a linha fica
+    #  com lancamento_id NULL). Também marca os meses pulados durante uma pausa.
+    3: [
+        """CREATE TABLE IF NOT EXISTS recorrentes_meses (
+    recorrente_id INTEGER NOT NULL REFERENCES recorrentes (id),
+    mes           TEXT    NOT NULL,
+    lancamento_id INTEGER REFERENCES lancamentos (id) ON DELETE SET NULL,
+    PRIMARY KEY (recorrente_id, mes)
+)""",
+    ],
 }
 ULTIMA_VERSAO = max(MIGRACOES)
 

@@ -4,6 +4,9 @@ Modo novo (`id_lancamento=None`): jornada em 4 passos (entrada/saída, valor, o 
 Modo ver/editar: o mesmo formulário preenchido, com os detalhes do lançamento e o botão Excluir.
 Todo erro aparece embaixo do campo; nada de caixa de mensagem. Quem abre o diálogo escuta
 `gravado(mensagem)` para atualizar a tela e mostrar a mensagem na barra de status.
+No modo novo, "Repetir todo mês" (com "É assinatura") faz do lançamento o primeiro de uma recorrente;
+no modo editar, um lançamento que veio de uma recorrente mostra "Repete todo dia N" e um atalho
+`gerenciar_recorrente(id)` pra aba Assinaturas/fixos.
 """
 
 import sqlite3
@@ -27,10 +30,18 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from meu_cofre import lancamentos
+from meu_cofre import lancamentos, recorrentes
 from meu_cofre.lancamentos import METODOS, formatar_brl, para_centavos
 from meu_cofre.ui import tema
-from meu_cofre.ui.componentes import BotaoPrimario, BotaoSecundario, CampoData, CampoLista, Segmentado, _repolir
+from meu_cofre.ui.componentes import (
+    BotaoPrimario,
+    BotaoSecundario,
+    CampoData,
+    CampoLista,
+    Marcador,
+    Segmentado,
+    _repolir,
+)
 
 LARGURA = 520
 SAIDA, ENTRADA = "Saída", "Entrada"
@@ -61,6 +72,7 @@ class DialogoLancamento(QDialog):
     """Diálogo modal de lançamento. Emite `gravado(mensagem)` depois de salvar ou excluir."""
 
     gravado = Signal(str)
+    gerenciar_recorrente = Signal(int)  # pediu pra gerenciar a recorrência na aba (o diálogo já fechou)
 
     def __init__(
         self,
@@ -75,6 +87,7 @@ class DialogoLancamento(QDialog):
         self._hoje = hoje or date.today()
         self._original: dict | None = None
         self._ultima_mensagem = ""
+        self._assinatura_manual = False  # o dono mexeu em "É assinatura": a categoria deixa de sugerir
         if id_lancamento is not None:
             self._original = lancamentos.obter(conn, id_lancamento)
             if self._original is None:
@@ -231,6 +244,42 @@ class DialogoLancamento(QDialog):
         form.addSpacing(4)
         form.addWidget(self.info_destino)
 
+        # Repetir todo mês (só no lançamento novo)
+        form.addSpacing(tema.ESPACO)
+        self._bloco_repetir = QWidget()
+        coluna_repetir = QVBoxLayout(self._bloco_repetir)
+        coluna_repetir.setContentsMargins(0, 0, 0, 0)
+        coluna_repetir.setSpacing(tema.ESPACO)
+        linha_repetir = QHBoxLayout()
+        self.repetir = Marcador("Repetir todo mês")
+        linha_repetir.addWidget(self.repetir)
+        linha_repetir.addStretch(1)
+        self.texto_repetir = _rotulo("", "CampoInfo")
+        linha_repetir.addWidget(self.texto_repetir)
+        coluna_repetir.addLayout(linha_repetir)
+        self.assinatura = Marcador("É assinatura")
+        self.assinatura.setToolTip("Assinaturas e gastos fixos ficam juntos na aba Assinaturas/fixos; este marca qual é qual")
+        coluna_repetir.addWidget(self.assinatura)
+        form.addWidget(self._bloco_repetir)
+        self._bloco_repetir.setVisible(not self.editando)
+        self.assinatura.setVisible(False)
+
+        # Lançamento que veio de uma recorrente (só ao editar)
+        self._bloco_recorrente = QWidget()
+        linha_recorrente = QHBoxLayout(self._bloco_recorrente)
+        linha_recorrente.setContentsMargins(0, 0, 0, 0)
+        self.texto_recorrente = _rotulo("", "CampoInfo")
+        linha_recorrente.addWidget(self.texto_recorrente)
+        linha_recorrente.addStretch(1)
+        self.botao_gerenciar = QPushButton("Gerenciar em Assinaturas/fixos")
+        self.botao_gerenciar.setObjectName("BotaoLink")
+        self.botao_gerenciar.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.botao_gerenciar.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.botao_gerenciar.setAutoDefault(False)
+        linha_recorrente.addWidget(self.botao_gerenciar)
+        form.addWidget(self._bloco_recorrente)
+        self._bloco_recorrente.setVisible(False)
+
         # Confirmação discreta do "salvar e lançar outro"
         self.aviso_salvo = _rotulo("", "AvisoSalvo")
         self.aviso_salvo.setMinimumHeight(24)
@@ -326,6 +375,12 @@ class DialogoLancamento(QDialog):
         self.descricao.editingFinished.connect(self._sugerir_categoria)
         self.completar.activated.connect(lambda _t: self._sugerir_categoria())
         self.categoria.activated.connect(lambda _i: self.dica_categoria.setVisible(False))
+        self.categoria.currentIndexChanged.connect(lambda _i: self._sugerir_assinatura())
+        self.data.dateChanged.connect(lambda _d: self._atualizar_repetir())
+        self.repetir.toggled.connect(lambda _m: self._repetir_mudou())
+        self.assinatura.clicked.connect(lambda _m: setattr(self, "_assinatura_manual", True))
+        self.parcelas.currentIndexChanged.connect(lambda _i: self._atualizar_repetir())
+        self.botao_gerenciar.clicked.connect(self._gerenciar)
 
         self.botao_salvar.clicked.connect(self.salvar)
         self.botao_outro.clicked.connect(self.salvar_e_lancar_outro)
@@ -430,6 +485,10 @@ class DialogoLancamento(QDialog):
             self.tipo.setEnabled(False)
             self.metodo.setEnabled(False)
             self._bloco_metodo.setVisible(l["metodo"] in METODOS)
+        if l["recorrente_id"] and l["recorrente_dia"]:
+            tipo = "assinatura" if l["recorrente_assinatura"] else "fixo"
+            self.texto_recorrente.setText(f"Repete todo dia {l['recorrente_dia']} · {tipo}")
+            self._bloco_recorrente.setVisible(True)
 
     # --- Comportamento dos campos ----------------------------------------------------------
     def _trocou_tipo(self) -> None:
@@ -455,6 +514,7 @@ class DialogoLancamento(QDialog):
             self._pilha_extra.setCurrentIndex(_PAG_VAZIA)
         self._atualizar_destino()
         self._atualizar_parcelas()
+        self._atualizar_repetir()
 
     def _atualizar_destino(self) -> None:
         """Texto de apoio sobre onde o lançamento vai cair."""
@@ -470,6 +530,32 @@ class DialogoLancamento(QDialog):
             self.info_destino.setText("Entra na Carteira" if self.entrada else "Sai da Carteira")
         else:
             self.info_destino.setText("")
+
+    def _atualizar_repetir(self) -> None:
+        """"todo dia 5" ao vivo; Repetir e Parcelas não valem juntos (um desliga o outro, com dica)."""
+        dia = self.data.date().day()
+        self.texto_repetir.setText(f"todo dia {dia}" if self.repetir.isChecked() else "")
+        parcelado = self._pilha_extra.currentIndex() == _PAG_PARCELAS and self.parcelas.currentData() > 1
+        self.repetir.setEnabled(not parcelado)
+        self.repetir.setToolTip("Compra parcelada não repete todo mês: são coisas diferentes" if parcelado else "")
+        repete = self.repetir.isChecked()
+        self.parcelas.setEnabled(not repete)
+        self.parcelas.setToolTip("Não combina com Repetir todo mês" if repete else "")
+
+    def _repetir_mudou(self) -> None:
+        self.assinatura.setVisible(self.repetir.isChecked())
+        self._sugerir_assinatura()
+        self._atualizar_repetir()
+
+    def _sugerir_assinatura(self) -> None:
+        """"É assinatura" já vem marcada com a categoria Assinaturas, até o dono mexer nela."""
+        if not self._assinatura_manual:
+            self.assinatura.setChecked(self.categoria.currentText() == "Assinaturas")
+
+    def _gerenciar(self) -> None:
+        recorrente_id = self._original["recorrente_id"]
+        self.reject()
+        self.gerenciar_recorrente.emit(recorrente_id)
 
     def _valor_mudou(self, _texto: str) -> None:
         self._limpar_erro(self.erro_valor, self.valor)
@@ -579,7 +665,7 @@ class DialogoLancamento(QDialog):
                 mensagem = f"Salvo: {descricao} ({formatar_brl(centavos)})"
             else:
                 parcelas = self.parcelas.currentData() if self._pilha_extra.currentIndex() == _PAG_PARCELAS else 1
-                lancamentos.registrar(
+                ids = lancamentos.registrar(
                     self.conn,
                     entrada=self.entrada,
                     valor_centavos=centavos,
@@ -591,6 +677,9 @@ class DialogoLancamento(QDialog):
                     parcelas=parcelas,
                 )
                 mensagem = f"Salvo: {descricao} ({formatar_brl(centavos)})" + (f" em {parcelas}x" if parcelas > 1 else "")
+                if self.repetir.isChecked() and self.repetir.isEnabled():
+                    recorrentes.criar_a_partir_de_lancamento(self.conn, ids[0], self.assinatura.isChecked())
+                    mensagem += f" · repete todo dia {data.day}"
         except ValueError as erro:  # regra de negócio que a tela não previu (ex.: sem conta corrente)
             self._mostrar_erro(self.erro_valor, self.valor, str(erro))
             return False
@@ -604,6 +693,8 @@ class DialogoLancamento(QDialog):
         self.categoria.setCurrentIndex(-1)
         self.dica_categoria.setVisible(False)
         self.parcelas.setCurrentIndex(0)
+        self.repetir.setChecked(False)
+        self._assinatura_manual = False
         self.completar.setModel(QStringListModel(lancamentos.descricoes_usadas(self.conn, self._tipo_categoria), self.completar))
         self.aviso_salvo.setText("✓ " + self._ultima_mensagem)
         self.valor.setFocus()
@@ -668,12 +759,17 @@ class DialogoLancamento(QDialog):
         tela = (self.screen() or QApplication.primaryScreen()).availableGeometry()
         # Mede com o "Qual cartão" aberto, pra janela não precisar crescer (nem rolar) ao escolher Cartão.
         reservar = len(self._cartoes) > 1 and not self._restrito and self._bloco_cartao.isHidden()
+        reservar_assinatura = not self.editando and self.assinatura.isHidden()  # "É assinatura" aparece ao repetir
         if reservar:
             self._bloco_cartao.setVisible(True)
+        if reservar_assinatura:
+            self.assinatura.setVisible(True)
         self._corpo.layout().activate()
         natural = self._corpo.sizeHint().height() + self._barra.sizeHint().height() + 4
         if reservar:
             self._bloco_cartao.setVisible(False)
+        if reservar_assinatura:
+            self.assinatura.setVisible(False)
         self.setMinimumHeight(0)
         altura = min(natural, int(tela.height() * 0.9))
         self.resize(LARGURA, altura)

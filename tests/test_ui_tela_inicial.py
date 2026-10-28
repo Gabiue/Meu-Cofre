@@ -88,17 +88,17 @@ def test_recentes_filtro_parcela_e_clique(app, conn):
     _reg(conn, 4000, descricao="Padaria", data=date(2026, 10, 19))
     janela = _janela(conn)
     itens = _itens(janela)
-    assert len(itens) == 8  # 1 + 6 parcelas + 1
+    # só o que tem data até hoje: a 1ª parcela do Tênis (hoje), a Padaria e o Salário (ontem); parcelas futuras ficam de fora
+    assert [i.descricao.texto() for i in itens] == ["Tênis", "Padaria", "Salário"]
     assert not janela._vazio_recentes.isVisibleTo(janela)
-    assert itens[0].descricao.texto() == "Padaria"
-    assert itens[0].data.text() == "ontem"
-    assert itens[1].parcela.text() == "(6/6)"
-    assert itens[0].parcela.isHidden()
+    assert itens[1].data.text() == "ontem" and itens[0].data.text() == "hoje"
+    assert itens[0].parcela.text() == "(1/6)"
+    assert itens[1].parcela.isHidden()
 
     janela.seletor_recentes.clicar("Entradas")
     assert [i.descricao.texto() for i in _itens(janela)] == ["Salário"]
     janela.seletor_recentes.clicar("Saídas")
-    assert len(_itens(janela)) == 7
+    assert [i.descricao.texto() for i in _itens(janela)] == ["Tênis", "Padaria"]
     janela.seletor_recentes.clicar("Todos")
 
     ids = []
@@ -108,7 +108,7 @@ def test_recentes_filtro_parcela_e_clique(app, conn):
     from PySide6.QtTest import QTest
 
     QTest.mouseClick(_itens(janela)[0], Qt.MouseButton.LeftButton, pos=QPoint(40, 30))
-    assert ids == [int(lanc.recentes(conn, 1).iloc[0]["id"])]
+    assert ids == [int(lanc.recentes(conn, HOJE, 1).iloc[0]["id"])]
     janela.close()
 
 

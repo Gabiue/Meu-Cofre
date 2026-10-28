@@ -171,33 +171,46 @@ def test_top_categorias_outros_do_seed_nao_duplica(conn):
 # --- Recentes ----------------------------------------------------------------------------
 
 
-def test_recentes_ordem_de_lancamento_e_limite(conn):
-    _reg(conn, 100, data=date(2026, 10, 20), descricao="primeiro lançado, data recente")
-    _reg(conn, 200, data=date(2026, 1, 1), descricao="último lançado, data antiga")
-    df = lanc.recentes(conn, n=10)
-    assert df["descricao"].tolist() == ["último lançado, data antiga", "primeiro lançado, data recente"]
-    assert len(lanc.recentes(conn, n=1)) == 1
+def test_recentes_ordem_por_data_e_limite(conn):
+    # Decisão da F5: recentes ordena por data desc (id desc no empate), não por ordem de lançamento.
+    _reg(conn, 100, data=date(2026, 10, 20), descricao="data recente, lançado primeiro")
+    _reg(conn, 200, data=date(2026, 1, 1), descricao="data antiga, lançado depois")
+    _reg(conn, 300, data=date(2026, 10, 20), descricao="mesma data, lançado por último")
+    df = lanc.recentes(conn, HOJE, n=10)
+    assert df["descricao"].tolist() == [
+        "mesma data, lançado por último", "data recente, lançado primeiro", "data antiga, lançado depois"
+    ]
+    assert len(lanc.recentes(conn, HOJE, n=1)) == 1
     assert list(df.columns) == ["id", "descricao", "categoria", "conta", "metodo", "data",
-                                "valor_centavos", "parcela_atual", "parcela_total"]
+                                "valor_centavos", "parcela_atual", "parcela_total", "recorrente_id"]
+
+
+def test_recentes_nao_mostra_o_futuro(conn):
+    _reg(conn, 100, data=date(2026, 10, 20), descricao="hoje")
+    _reg(conn, 200, data=date(2026, 10, 21), descricao="amanhã")
+    _reg(conn, 60000, metodo="cartao", parcelas=3, data=date(2026, 10, 10), descricao="Tênis")  # parcelas 10/10, 10/11, 10/12
+    nomes = lanc.recentes(conn, HOJE)["descricao"].tolist()
+    assert nomes == ["hoje", "Tênis"]  # a parcela do dia 10 aparece; as dos meses seguintes e "amanhã" não
+    assert lanc.recentes(conn, date(2026, 10, 21))["descricao"].tolist() == ["amanhã", "hoje", "Tênis"]
 
 
 def test_recentes_vazio(conn):
-    assert lanc.recentes(conn).empty
+    assert lanc.recentes(conn, HOJE).empty
 
 
 def test_recentes_filtros(conn):
-    _reg(conn, 5000, entrada=True, cat="Salário", descricao="Salário")
-    _reg(conn, 700, descricao="Padaria")
-    _reg(conn, 3000, cat="Pagamento de fatura", descricao="Fatura")
-    assert lanc.recentes(conn, filtro="todos")["descricao"].tolist() == ["Fatura", "Padaria", "Salário"]
-    assert lanc.recentes(conn, filtro="entradas")["descricao"].tolist() == ["Salário"]
-    assert lanc.recentes(conn, filtro="saidas")["descricao"].tolist() == ["Padaria"]
+    _reg(conn, 5000, entrada=True, cat="Salário", descricao="Salário", data=date(2026, 10, 1))
+    _reg(conn, 700, descricao="Padaria", data=date(2026, 10, 2))
+    _reg(conn, 3000, cat="Pagamento de fatura", descricao="Fatura", data=date(2026, 10, 3))
+    assert lanc.recentes(conn, HOJE, filtro="todos")["descricao"].tolist() == ["Fatura", "Padaria", "Salário"]
+    assert lanc.recentes(conn, HOJE, filtro="entradas")["descricao"].tolist() == ["Salário"]
+    assert lanc.recentes(conn, HOJE, filtro="saidas")["descricao"].tolist() == ["Padaria"]
     with pytest.raises(ValueError):
-        lanc.recentes(conn, filtro="outro")
+        lanc.recentes(conn, HOJE, filtro="outro")
 
 
 def test_recentes_traz_parcela_e_nomes(conn):
     _reg(conn, 60000, metodo="cartao", parcelas=6, descricao="Tênis", cat="Compras pessoais")
-    linha = lanc.recentes(conn, n=10).iloc[0]  # a última parcela lançada vem primeiro
+    linha = lanc.recentes(conn, date(2027, 6, 1), n=10).iloc[0]  # a última parcela (a de data mais nova) vem primeiro
     assert (linha["categoria"], linha["conta"], linha["metodo"]) == ("Compras pessoais", "Cartão de crédito", "cartao")
     assert (linha["parcela_atual"], linha["parcela_total"]) == (6, 6)

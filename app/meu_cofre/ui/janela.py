@@ -1,7 +1,7 @@
-"""Janela principal: tela inicial (docs/design/telas.md) com dados reais.
+"""Janela principal (docs/design/telas.md): abas "Início" e "Assinaturas/fixos" com dados reais.
 
-Painel (gráficos do mês escolhido), resumo e recentes (sempre "agora"), em 2 colunas ou 1.
-`atualizar()` recarrega tudo; o diálogo de lançamento chama depois de salvar ou excluir.
+Início: painel (gráficos do mês escolhido), resumo e recentes (sempre "agora"), em 2 colunas ou 1.
+`atualizar()` gera as recorrentes do mês e recarrega tudo; os diálogos chamam depois de salvar ou excluir.
 """
 
 import sqlite3
@@ -18,11 +18,12 @@ from PySide6.QtWidgets import (
     QMainWindow,
     QPushButton,
     QScrollArea,
+    QStackedWidget,
     QVBoxLayout,
     QWidget,
 )
 
-from meu_cofre import lancamentos, relatorios
+from meu_cofre import lancamentos, recorrentes, relatorios
 from meu_cofre.lancamentos import formatar_brl, formatar_brl_inteiro
 from meu_cofre.ui import tema
 from meu_cofre.ui.componentes import (
@@ -35,6 +36,7 @@ from meu_cofre.ui.componentes import (
     Pilula,
     Segmentado,
 )
+from meu_cofre.ui.aba_recorrentes import AbaRecorrentes
 from meu_cofre.ui.dialogo_contas import DialogoContas
 from meu_cofre.ui.dialogo_lancamento import DialogoLancamento
 from meu_cofre.ui.graficos import (
@@ -47,6 +49,8 @@ from meu_cofre.ui.graficos import (
 )
 
 LARGURA_DUAS_COLUNAS = 1100  # abaixo disso, RECENTES desce para baixo do RESUMO
+ABA_INICIO, ABA_RECORRENTES = "Início", "Assinaturas/fixos"
+ABAS = {"inicio": ABA_INICIO, "recorrentes": ABA_RECORRENTES}
 OPCOES_PAINEL = [OPCAO_FLUXO, OPCAO_ROSCA]
 OPCOES_RECENTES = {"Todos": "todos", "Entradas": "entradas", "Saídas": "saidas"}
 VAZIO_RECENTES = {
@@ -115,7 +119,13 @@ class JanelaPrincipal(QMainWindow):
         rolagem.setFrameShape(QFrame.Shape.NoFrame)
         rolagem.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         rolagem.setWidget(self._conteudo)
-        coluna.addWidget(rolagem, 1)
+
+        self.aba_recorrentes = AbaRecorrentes(self.conn, self._hoje)
+        self.aba_recorrentes.alterado.connect(self._lancamento_gravado)
+        self._paginas = QStackedWidget()
+        self._paginas.addWidget(rolagem)
+        self._paginas.addWidget(self.aba_recorrentes)
+        coluna.addWidget(self._paginas, 1)
 
     def _montar_cabecalho(self) -> QWidget:
         faixa = QWidget()
@@ -128,6 +138,11 @@ class JanelaPrincipal(QMainWindow):
         marca.setObjectName("Marca")
         linha.addWidget(marca, 0, Qt.AlignmentFlag.AlignVCenter)
 
+        self.abas = Segmentado([ABA_INICIO, ABA_RECORRENTES])
+        self.abas.escolhido.connect(self._trocar_aba)
+        linha.addSpacing(tema.ESPACO)
+        linha.addWidget(self.abas, 0, Qt.AlignmentFlag.AlignVCenter)
+
         self.botao_mes_anterior = self._botao_mes("‹", "Mês anterior")
         self.botao_mes_anterior.clicked.connect(lambda: self._mudar_mes(-1))
         self.botao_mes_seguinte = self._botao_mes("›", "Próximo mês")
@@ -135,10 +150,10 @@ class JanelaPrincipal(QMainWindow):
         self.rotulo_mes = QLabel()
         self.rotulo_mes.setObjectName("MesRotulo")
         self.rotulo_mes.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._navegacao_mes = (self.botao_mes_anterior, self.rotulo_mes, self.botao_mes_seguinte)
         linha.addSpacing(tema.ESPACO)
-        linha.addWidget(self.botao_mes_anterior, 0, Qt.AlignmentFlag.AlignVCenter)
-        linha.addWidget(self.rotulo_mes, 0, Qt.AlignmentFlag.AlignVCenter)
-        linha.addWidget(self.botao_mes_seguinte, 0, Qt.AlignmentFlag.AlignVCenter)
+        for w in self._navegacao_mes:
+            linha.addWidget(w, 0, Qt.AlignmentFlag.AlignVCenter)
         linha.addStretch(1)
 
         self.botao_contas = BotaoSecundario("Contas")
@@ -203,10 +218,12 @@ class JanelaPrincipal(QMainWindow):
 
     # --- Dados -----------------------------------------------------------------------
     def atualizar(self) -> None:
-        """Recarrega resumo, recentes e painel do banco (o diálogo chama depois de salvar ou excluir)."""
+        """Gera o que as recorrentes devem até hoje e recarrega tudo do banco (os diálogos chamam depois de salvar)."""
+        recorrentes.gerar_pendentes(self.conn, self._hoje())
         self._carregar_resumo()
         self._carregar_recentes()
         self._carregar_painel()
+        self.aba_recorrentes.recarregar()
 
     def _carregar_resumo(self) -> None:
         hoje = self._hoje()
@@ -228,8 +245,8 @@ class JanelaPrincipal(QMainWindow):
             if item.widget():
                 item.widget().deleteLater()
         filtro = OPCOES_RECENTES[self.seletor_recentes.atual()]
-        df = lancamentos.recentes(self.conn, 10, filtro)
         hoje = self._hoje()
+        df = lancamentos.recentes(self.conn, hoje, 10, filtro)
         for linha in df.itertuples():
             parcela = ""
             if not pd.isna(linha.parcela_total):
@@ -242,6 +259,7 @@ class JanelaPrincipal(QMainWindow):
                 _data_curta(linha.data.date(), hoje),
                 int(linha.valor_centavos),
                 parcela,
+                recorrente=not pd.isna(linha.recorrente_id),
             )
             item.clicado.connect(self._abrir_lancamento)
             self._lista.addWidget(item)
@@ -271,6 +289,21 @@ class JanelaPrincipal(QMainWindow):
         self._mes = novo
         self._carregar_painel()
 
+    def _trocar_aba(self, rotulo: str) -> None:
+        self._paginas.setCurrentIndex(0 if rotulo == ABA_INICIO else 1)
+        for w in self._navegacao_mes:  # os botões de mês são do painel da tela inicial
+            w.setVisible(rotulo == ABA_INICIO)
+
+    def mostrar_aba(self, nome: str) -> None:
+        """Troca de aba por código ("inicio" ou "recorrentes"), como se clicasse nela."""
+        rotulo = ABAS[nome]
+        self.abas.definir(rotulo)
+        self._trocar_aba(rotulo)
+
+    @property
+    def aba_atual(self) -> str:
+        return "inicio" if self._paginas.currentIndex() == 0 else "recorrentes"
+
     def _trocar_painel(self, opcao: str) -> None:
         self._painel_grafico.mostrar(opcao)
 
@@ -295,6 +328,7 @@ class JanelaPrincipal(QMainWindow):
             return None
         dialogo.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
         dialogo.gravado.connect(self._lancamento_gravado)
+        dialogo.gerenciar_recorrente.connect(lambda _id: self.mostrar_aba("recorrentes"))
         dialogo.finished.connect(lambda _codigo: setattr(self, "dialogo", None))
         self.dialogo = dialogo
         dialogo.open()

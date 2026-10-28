@@ -40,6 +40,15 @@ CREATE TABLE IF NOT EXISTS recorrentes (
     pausada        INTEGER NOT NULL DEFAULT 0     -- pausada não gera lançamentos; `ativa` = 0 é encerrada
 );
 
+-- Meses que cada recorrente já gerou ('AAAA-MM'). Apagar o lançamento gerado não faz o mês voltar a ser gerado
+-- (lancamento_id vira NULL); meses pulados numa pausa também ficam aqui, com lancamento_id NULL.
+CREATE TABLE IF NOT EXISTS recorrentes_meses (
+    recorrente_id INTEGER NOT NULL REFERENCES recorrentes (id),
+    mes           TEXT    NOT NULL,
+    lancamento_id INTEGER REFERENCES lancamentos (id) ON DELETE SET NULL,
+    PRIMARY KEY (recorrente_id, mes)
+);
+
 CREATE TABLE IF NOT EXISTS importacoes (
     id                INTEGER PRIMARY KEY,
     arquivo           TEXT    NOT NULL,

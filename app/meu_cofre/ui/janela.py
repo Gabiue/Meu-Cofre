@@ -1,7 +1,7 @@
 """Janela principal: tela inicial (docs/design/telas.md) com dados reais.
 
 Painel (gráficos do mês escolhido), resumo e recentes (sempre "agora"), em 2 colunas ou 1.
-`atualizar()` recarrega tudo; a F3 chama depois de salvar um lançamento.
+`atualizar()` recarrega tudo; o diálogo de lançamento chama depois de salvar ou excluir.
 """
 
 import sqlite3
@@ -34,6 +34,7 @@ from meu_cofre.ui.componentes import (
     Pilula,
     Segmentado,
 )
+from meu_cofre.ui.dialogo_lancamento import DialogoLancamento
 from meu_cofre.ui.graficos import (
     MESES_CURTOS,
     OPCAO_FLUXO,
@@ -75,6 +76,7 @@ class JanelaPrincipal(QMainWindow):
         self.resize(1400, 900)
 
         self._duas_colunas: bool | None = None
+        self.dialogo: DialogoLancamento | None = None  # diálogo aberto (se houver)
         hoje = self._hoje()
         self._mes = (hoje.year, hoje.month)  # mês mostrado no painel
         self._montar()
@@ -192,7 +194,7 @@ class JanelaPrincipal(QMainWindow):
 
     # --- Dados -----------------------------------------------------------------------
     def atualizar(self) -> None:
-        """Recarrega resumo, recentes e painel do banco (a F3 chama depois de salvar)."""
+        """Recarrega resumo, recentes e painel do banco (o diálogo chama depois de salvar ou excluir)."""
         self._carregar_resumo()
         self._carregar_recentes()
         self._carregar_painel()
@@ -268,12 +270,31 @@ class JanelaPrincipal(QMainWindow):
         self.seletor_painel.definir(opcao)
         self._painel_grafico.mostrar(opcao)
 
-    def _abrir_lancamento(self, id_lancamento: int) -> None:
-        self.statusBar().showMessage(f"Detalhe do lançamento {id_lancamento}: chega na F3", 4000)
+    def _abrir_lancamento(self, id_lancamento: int) -> DialogoLancamento | None:
+        """Clique num item dos Recentes: abre o lançamento pra ver, editar ou excluir."""
+        return self._abrir_dialogo(id_lancamento)
 
-    def novo_lancamento(self) -> None:
-        """Ctrl+N / botão. O diálogo de lançamento é a F3; por ora só avisa."""
-        self.statusBar().showMessage("Novo lançamento: o diálogo chega na F3", 4000)
+    def novo_lancamento(self) -> DialogoLancamento | None:
+        """Ctrl+N / botão: abre o diálogo de novo lançamento."""
+        return self._abrir_dialogo(None)
+
+    def _abrir_dialogo(self, id_lancamento: int | None) -> DialogoLancamento | None:
+        try:
+            dialogo = DialogoLancamento(self.conn, id_lancamento, parent=self, hoje=self._hoje())
+        except ValueError:  # o lançamento sumiu (ex.: excluído em outro lugar)
+            self.atualizar()
+            return None
+        dialogo.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+        dialogo.gravado.connect(self._lancamento_gravado)
+        dialogo.finished.connect(lambda _codigo: setattr(self, "dialogo", None))
+        self.dialogo = dialogo
+        dialogo.open()
+        return dialogo
+
+    def _lancamento_gravado(self, mensagem: str) -> None:
+        """Depois de salvar ou excluir: recarrega a tela e avisa na barra de status."""
+        self.atualizar()
+        self.statusBar().showMessage(mensagem, 6000)
 
     # --- Layout responsivo ---------------------------------------------------------
     def _aplicar_layout(self, duas_colunas: bool) -> None:

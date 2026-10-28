@@ -317,7 +317,10 @@ class PainelFluxo(QWidget):
         grafico.plotAreaChanged.connect(self._posicionar_media)
 
         # Os wrappers Python das séries precisam viver tanto quanto o gráfico (senão o Qt cai).
+        # Penduradas no próprio gráfico, elas só morrem junto com ele: trocar o gráfico ao atualizar
+        # (ex.: depois de editar um lançamento) derrubava o app quando `self._refs` soltava as antigas antes.
         self._refs = (topo, base, area, linha, pontos, serie_media, eixo_x, eixo_y)
+        grafico._refs = self._refs
         self._vista.setChart(grafico)
         self._pilha.setCurrentWidget(self._vista)
         QTimer.singleShot(0, self._posicionar_media)
@@ -505,8 +508,6 @@ class PainelRosca(QWidget):
             legenda.append((cor, linha.categoria, int(linha.centavos), float(linha.percentual)))
         serie.setPieSize(ROSCA_TAMANHO)
         grafico.addSeries(serie)
-
-        self._vista.setChart(grafico)
         self._centro.definir(int(categorias["centavos"].sum()))
         self._legenda.definir(legenda)
         self._pilha.setCurrentWidget(self._conteudo)

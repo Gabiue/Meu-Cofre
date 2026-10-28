@@ -9,6 +9,9 @@ from meu_cofre import lancamentos as lanc
 def test_para_centavos():
     assert lanc.para_centavos("1.234,56") == 123456
     assert lanc.para_centavos("10") == 1000
+    assert lanc.para_centavos("1.500") == 150000  # ponto de milhar
+    assert lanc.para_centavos("1.234.567") == 123456700
+    assert lanc.para_centavos("32.50") == 3250
     assert lanc.para_centavos("R$ 5,5") == 550
     assert lanc.para_centavos(0.1 + 0.2) == 30
     assert lanc.para_centavos(str(19.99)) == 1999
@@ -140,3 +143,63 @@ def test_aplicar_edicoes(conn):
         "A2", -1250, id_cat(conn, "Lazer"))
     # sem mudanças
     assert lanc.aplicar_edicoes(conn, original.iloc[:1], original.iloc[:1]) == (0, 0)
+
+
+# --- obter, atualizar com sinal/método, excluir_parcelas (F3) -------------------
+
+
+def _novo(conn, **kw):
+    base = dict(entrada=False, valor_centavos=3250, descricao="Almoço", categoria_id=id_cat(conn, "Mercado"),
+                metodo="pix", conta_id=id_conta(conn, "Inter"), data=date(2026, 10, 5))
+    base.update(kw)
+    return lanc.registrar(conn, **base)
+
+
+def test_obter(conn):
+    (i,) = _novo(conn)
+    l = lanc.obter(conn, i)
+    assert l["descricao"] == "Almoço" and l["valor_centavos"] == -3250
+    assert l["conta"] == "Inter" and l["categoria"] == "Mercado" and l["categoria_tipo"] == "despesa"
+    assert l["origem"] == "manual" and l["criado_em"]
+    assert lanc.obter(conn, 9999) is None
+
+
+def test_atualizar_troca_saida_por_entrada(conn):
+    (i,) = _novo(conn)
+    lanc.atualizar(conn, i, entrada=True)
+    assert lanc.obter(conn, i)["valor_centavos"] == 3250
+    lanc.atualizar(conn, i, entrada=False, valor_centavos=1000)
+    assert lanc.obter(conn, i)["valor_centavos"] == -1000
+
+
+def test_atualizar_valida(conn):
+    (i,) = _novo(conn)
+    with pytest.raises(ValueError, match="maior que zero"):
+        lanc.atualizar(conn, i, entrada=False, valor_centavos=0)
+    with pytest.raises(ValueError, match="Diga o que foi"):
+        lanc.atualizar(conn, i, descricao="  ")
+    with pytest.raises(ValueError, match="Método desconhecido"):
+        lanc.atualizar(conn, i, metodo="cheque")
+    with pytest.raises(ValueError, match="não existe"):
+        lanc.atualizar(conn, 9999, descricao="x")
+    assert lanc.obter(conn, i)["descricao"] == "Almoço"
+
+
+def test_atualizar_metodo_recalcula_conta(conn):
+    (i,) = _novo(conn)
+    lanc.atualizar(conn, i, metodo="dinheiro")
+    assert lanc.obter(conn, i)["conta"] == "Carteira"
+    lanc.atualizar(conn, i, metodo="pix", conta_id=id_conta(conn, "Inter"))
+    assert lanc.obter(conn, i)["conta"] == "Inter"
+    lanc.atualizar(conn, i, metodo="cartao")
+    assert lanc.obter(conn, i)["conta"] == "Cartão de crédito"
+
+
+def test_excluir_parcelas(conn):
+    ids = _novo(conn, metodo="cartao", valor_centavos=60000, parcelas=6)
+    (avulso,) = _novo(conn, descricao="Outro")
+    grupo = lanc.obter(conn, ids[0])["grupo_parcelas"]
+    assert lanc.excluir_parcelas(conn, grupo) == 6
+    assert all(lanc.obter(conn, i) is None for i in ids)
+    assert lanc.obter(conn, avulso) is not None
+    assert lanc.excluir_parcelas(conn, grupo) == 0

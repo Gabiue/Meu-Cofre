@@ -26,14 +26,14 @@ CONTA_POR_METODO = {"cartao": "cartao", "dinheiro": "dinheiro"}
 
 
 def para_centavos(valor: str | float | Decimal) -> int:
-    """Converte reais em centavos sem erro de float. Aceita "1.234,56" e "1234.56".
+    """Converte reais em centavos sem erro de float. Aceita "1.234,56", "1.500" (milhar) e "1234.56".
 
     Levanta `ValueError` com mensagem amigável se o texto não for um número.
     """
     original = valor
     if isinstance(valor, str):
         texto = valor.strip().replace("R$", "").replace(" ", "")
-        if "," in texto:
+        if "," in texto or re.fullmatch(r"\d{1,3}(\.\d{3})+", texto):  # "1.234,56" e "1.500" (milhar)
             texto = texto.replace(".", "").replace(",", ".")
         valor = texto
     try:
@@ -306,17 +306,57 @@ def recentes(conn: sqlite3.Connection, n: int = 10, filtro: str = "todos") -> pd
     )
 
 
+def obter(conn: sqlite3.Connection, lancamento_id: int) -> dict | None:
+    """Um lançamento com todos os campos, mais `conta`, `categoria` e `categoria_tipo` (nomes)."""
+    linha = conn.execute(
+        """
+        SELECT l.*, ct.nome AS conta, c.nome AS categoria, c.tipo AS categoria_tipo
+        FROM lancamentos l
+        JOIN contas ct ON ct.id = l.conta_id
+        LEFT JOIN categorias c ON c.id = l.categoria_id
+        WHERE l.id = ?
+        """,
+        (lancamento_id,),
+    ).fetchone()
+    return dict(linha) if linha else None
+
+
 CAMPOS_EDITAVEIS = {"data", "descricao", "valor_centavos", "categoria_id", "conta_id", "metodo"}
 
 
-def atualizar(conn: sqlite3.Connection, lancamento_id: int, **campos) -> None:
+def atualizar(conn: sqlite3.Connection, lancamento_id: int, *, entrada: bool | None = None, **campos) -> None:
+    """Altera campos de um lançamento.
+
+    `entrada` (opcional) troca o sinal: com ele, `valor_centavos` (se vier) é positivo e o sinal
+    vem de `entrada`; sem `valor_centavos`, mantém o valor atual e só vira o sinal. Trocar `metodo`
+    recalcula a conta com `conta_do_metodo` (use `conta_id` pra dizer a conta corrente).
+    """
     invalidos = set(campos) - CAMPOS_EDITAVEIS
     if invalidos:
         raise ValueError(f"Campos não editáveis: {sorted(invalidos)}")
-    if not campos:
+    if not campos and entrada is None:
         return
+
+    atual = obter(conn, lancamento_id)
+    if atual is None:
+        raise ValueError(f"Lançamento {lancamento_id} não existe.")
+
+    if "descricao" in campos:
+        campos["descricao"] = str(campos["descricao"]).strip()
+        if not campos["descricao"]:
+            raise ValueError("Diga o que foi.")
+    if entrada is not None:
+        valor = campos.get("valor_centavos", abs(atual["valor_centavos"]))
+        if valor <= 0:
+            raise ValueError("O valor precisa ser maior que zero.")
+        campos["valor_centavos"] = valor if entrada else -valor
+    if "metodo" in campos:
+        if campos["metodo"] not in METODOS:
+            raise ValueError(f"Método desconhecido: {campos['metodo']}")
+        campos["conta_id"] = conta_do_metodo(conn, campos["metodo"], campos.get("conta_id", atual["conta_id"]))
     if isinstance(campos.get("data"), date):
         campos["data"] = campos["data"].isoformat()
+
     sets = ", ".join(f"{k} = ?" for k in campos)
     with conn:
         conn.execute(f"UPDATE lancamentos SET {sets} WHERE id = ?", (*campos.values(), lancamento_id))
@@ -325,6 +365,12 @@ def atualizar(conn: sqlite3.Connection, lancamento_id: int, **campos) -> None:
 def excluir(conn: sqlite3.Connection, ids: list[int]) -> None:
     with conn:
         conn.executemany("DELETE FROM lancamentos WHERE id = ?", [(i,) for i in ids])
+
+
+def excluir_parcelas(conn: sqlite3.Connection, grupo_parcelas: str) -> int:
+    """Apaga todas as parcelas de uma compra e devolve quantas eram."""
+    with conn:
+        return conn.execute("DELETE FROM lancamentos WHERE grupo_parcelas = ?", (grupo_parcelas,)).rowcount
 
 
 def aplicar_edicoes(conn: sqlite3.Connection, original: pd.DataFrame, editado: pd.DataFrame) -> tuple[int, int]:

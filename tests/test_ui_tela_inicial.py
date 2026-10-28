@@ -1,5 +1,6 @@
 """Tela inicial com dados reais (F2): resumo, recentes, navegação de mês e gráficos. Offscreen."""
 
+import gc
 from datetime import date
 
 import pytest
@@ -200,3 +201,14 @@ def test_brl_curto_e_ticks():
     assert ticks_bonitos(0, 1850) == [0, 500, 1000, 1500, 2000]
     assert ticks_bonitos(0, 0)[0] == 0  # sem dados não quebra
     assert nome_do_mes(2026, 3) == "Março de 2026"
+
+
+def test_atualizar_varias_vezes_com_dados_nao_cai(app, conn):
+    """Regressão: trocar o gráfico do fluxo ao atualizar com dados derrubava o app (visto ao editar um lançamento)."""
+    _reg(conn, 5000)
+    janela = _janela(conn)
+    for _ in range(4):
+        janela.atualizar()
+        QApplication.processEvents()
+        gc.collect()
+    janela.close()

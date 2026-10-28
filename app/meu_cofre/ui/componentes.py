@@ -1,10 +1,12 @@
 """Componentes reutilizáveis da interface. A aparência vem do QSS global (ver `tema.py`)."""
 
-from PySide6.QtCore import QSize, Qt, Signal
-from PySide6.QtGui import QPainter
+from PySide6.QtCore import QPointF, QSize, Qt, Signal
+from PySide6.QtGui import QColor, QPainter, QPen, QTextCharFormat
 from PySide6.QtWidgets import (
     QBoxLayout,
     QButtonGroup,
+    QComboBox,
+    QDateEdit,
     QFrame,
     QHBoxLayout,
     QLabel,
@@ -347,3 +349,42 @@ class ItemLancamento(QFrame):
         if evento.button() == Qt.MouseButton.LeftButton and self.rect().contains(evento.position().toPoint()):
             self.clicado.emit(self.id_lancamento)
         super().mouseReleaseEvent(evento)
+
+
+def _desenhar_seta(widget: QWidget) -> None:
+    """Chevron "v" no canto direito de um campo de lista (o QSS esconde a seta nativa)."""
+    pintor = QPainter(widget)
+    pintor.setRenderHint(QPainter.RenderHint.Antialiasing)
+    caneta = QPen(QColor(tema.TEXTO_APAGADO), 1.6)
+    caneta.setCapStyle(Qt.PenCapStyle.RoundCap)
+    caneta.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+    pintor.setPen(caneta)
+    x, y = widget.width() - 20, widget.height() / 2
+    pintor.drawPolyline([QPointF(x - 4, y - 2), QPointF(x, y + 2), QPointF(x + 4, y - 2)])
+
+
+class CampoLista(QComboBox):
+    """QComboBox com a seta desenhada à mão (combina com o tema)."""
+
+    def paintEvent(self, evento) -> None:
+        super().paintEvent(evento)
+        _desenhar_seta(self)
+
+
+class CampoData(QDateEdit):
+    """QDateEdit com calendário em popup e a mesma seta do `CampoLista`."""
+
+    def __init__(self, parent: QWidget | None = None):
+        super().__init__(parent)
+        self.setCalendarPopup(True)
+        self.setDisplayFormat("dd/MM/yyyy")
+        calendario = self.calendarWidget()  # fim de semana sem o vermelho padrão (vermelho aqui é status "ruim")
+        formato = QTextCharFormat()
+        formato.setForeground(QColor(tema.TEXTO_SECUNDARIO))
+        calendario.setHeaderTextFormat(formato)
+        for dia in (Qt.DayOfWeek.Saturday, Qt.DayOfWeek.Sunday):
+            calendario.setWeekdayTextFormat(dia, formato)
+
+    def paintEvent(self, evento) -> None:
+        super().paintEvent(evento)
+        _desenhar_seta(self)

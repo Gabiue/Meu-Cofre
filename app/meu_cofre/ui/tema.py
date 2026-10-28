@@ -45,6 +45,8 @@ PX_TITULO_CARTAO = 11
 PX_RODAPE = 12
 PX_NUMERO = 30
 PX_MARCA = 22
+PX_TITULO_DIALOGO = 18
+PX_VALOR = 22
 
 
 def familia_da_fonte() -> str:
@@ -140,6 +142,47 @@ QPushButton#BotaoMes:disabled {{ color: {BORDA}; border-color: {BORDA}; backgrou
 #LegendaNome {{ font-size: {PX_TEXTO}px; color: {TEXTO}; }}
 #LegendaValor {{ font-size: {PX_TEXTO}px; font-weight: 600; color: {TEXTO}; }}
 #LegendaPct {{ font-size: {PX_RODAPE}px; color: {TEXTO_APAGADO}; }}
+
+/* Diálogo de lançamento */
+#Dialogo {{ background: {CARTAO_ELEVADO}; border: 1px solid {BORDA}; }}
+#Dialogo QScrollArea, #DialogoCorpo {{ background: transparent; }}
+#DialogoTitulo {{ font-size: {PX_TITULO_DIALOGO}px; font-weight: 700; }}
+#DialogoDetalhe {{ font-size: {PX_RODAPE}px; color: {TEXTO_SECUNDARIO}; }}
+#CampoRotulo {{ font-size: {PX_RODAPE}px; font-weight: 600; color: {TEXTO_SECUNDARIO}; }}
+#CampoDica {{ font-size: {PX_RODAPE}px; color: {VERDE}; }}
+#CampoInfo {{ font-size: {PX_RODAPE + 1}px; color: {TEXTO_SECUNDARIO}; }}
+#CampoErro {{ font-size: {PX_RODAPE}px; font-weight: 600; color: {VERMELHO}; }}
+#AvisoSalvo {{ font-size: {PX_TEXTO}px; font-weight: 600; color: {VERDE}; }}
+#ConfirmaTexto {{ font-size: {PX_TEXTO}px; font-weight: 600; color: {TEXTO}; }}
+#Dialogo QLineEdit, #Dialogo QComboBox, #Dialogo QDateEdit {{
+    background: {FUNDO}; color: {TEXTO}; border: 1px solid {BORDA}; border-radius: 8px;
+    padding: 0 12px; min-height: 38px; selection-background-color: {VERDE}; selection-color: {TEXTO_SOBRE_VERDE}; }}
+#Dialogo QLineEdit:hover, #Dialogo QComboBox:hover, #Dialogo QDateEdit:hover {{ border-color: {TEXTO_APAGADO}; }}
+#Dialogo QLineEdit:focus, #Dialogo QComboBox:focus, #Dialogo QDateEdit:focus {{ border-color: {VERDE}; }}
+#Dialogo QLineEdit[erro="true"] {{ border-color: {VERMELHO}; }}
+#Dialogo QLineEdit#CampoValor {{ font-size: {PX_VALOR}px; font-weight: 700; min-height: 44px; }}
+#Dialogo QComboBox::drop-down, #Dialogo QDateEdit::drop-down {{ width: 30px; border: none; background: transparent; }}
+#Dialogo QComboBox::down-arrow, #Dialogo QDateEdit::down-arrow {{ image: none; width: 0; height: 0; }}
+QComboBox QAbstractItemView, QListView#CompletarPopup {{
+    background: {CARTAO_ELEVADO}; color: {TEXTO}; border: 1px solid {BORDA}; border-radius: 8px;
+    padding: 4px; outline: none; selection-background-color: {VERDE_SUAVE}; selection-color: {VERDE}; }}
+QComboBox QAbstractItemView::item, QListView#CompletarPopup::item {{ min-height: 30px; padding: 0 8px; border-radius: 6px; }}
+QComboBox QAbstractItemView::item:selected, QListView#CompletarPopup::item:selected {{
+    background: {VERDE_SUAVE}; color: {VERDE}; }}
+QCalendarWidget QWidget {{ background: {CARTAO_ELEVADO}; color: {TEXTO}; }}
+QCalendarWidget QToolButton {{ background: transparent; color: {TEXTO}; border: none; border-radius: 6px;
+    padding: 4px 8px; font-weight: 600; }}
+QCalendarWidget QToolButton:hover {{ background: {BORDA}; }}
+QCalendarWidget QMenu {{ background: {CARTAO_ELEVADO}; border: 1px solid {BORDA}; }}
+QCalendarWidget QSpinBox {{ background: {FUNDO}; border: 1px solid {BORDA}; border-radius: 6px; }}
+QCalendarWidget QAbstractItemView:enabled {{ background: {CARTAO_ELEVADO}; color: {TEXTO};
+    selection-background-color: {VERDE}; selection-color: {TEXTO_SOBRE_VERDE}; outline: none; }}
+QCalendarWidget QAbstractItemView:disabled {{ color: {TEXTO_APAGADO}; }}
+QPushButton#BotaoPerigo {{ background: {VERMELHO}; color: {TEXTO_SOBRE_VERDE}; border: 1px solid {VERMELHO};
+    border-radius: 10px; padding: 0 20px; min-height: 40px; font-size: {PX_TEXTO}px; font-weight: 700; }}
+QPushButton#BotaoPerigo:hover {{ background: #ec7b6c; border-color: #ec7b6c; }}
+QPushButton#BotaoSecundario[perigo="true"] {{ color: {VERMELHO}; border-color: {VERMELHO_SUAVE_BORDA}; }}
+QPushButton#BotaoSecundario[perigo="true"]:hover {{ background: {VERMELHO_SUAVE}; border-color: {VERMELHO}; }}
 
 /* Barra de rolagem fina */
 QScrollBar:vertical {{ background: transparent; width: 10px; margin: 2px; }}

@@ -75,7 +75,6 @@ QToolTip {{ background: {CARTAO_ELEVADO}; color: {TEXTO}; border: 1px solid {BOR
 
 /* Cabeçalho da janela */
 #Marca {{ font-size: {PX_MARCA}px; font-weight: 700; }}
-#Mes {{ font-size: {PX_TEXTO}px; color: {TEXTO_SECUNDARIO}; }}
 #DicaAtalho {{ font-size: {PX_RODAPE}px; color: {TEXTO_APAGADO}; }}
 
 /* Cartão */
@@ -125,10 +124,22 @@ QPushButton:focus {{ outline: none; }}
 #ItemValor {{ font-size: {PX_TEXTO}px; font-weight: 600; color: {TEXTO}; }}
 #ItemData {{ font-size: {PX_RODAPE}px; color: {TEXTO_APAGADO}; }}
 
-/* Área reservada para gráfico (F2 troca pelo gráfico real) */
-#AreaGrafico {{ background: transparent; border: 1px dashed {BORDA}; border-radius: 10px; }}
-#AreaGraficoTitulo {{ font-size: {PX_TEXTO + 2}px; font-weight: 600; color: {TEXTO_SECUNDARIO}; }}
-#AreaGraficoNota {{ font-size: {PX_RODAPE}px; color: {TEXTO_APAGADO}; }}
+/* Navegação de mês */
+QPushButton#BotaoMes {{ background: transparent; border: 1px solid {BORDA}; border-radius: 14px;
+    min-width: 28px; max-width: 28px; min-height: 28px; max-height: 28px; font-size: 16px; font-weight: 700;
+    color: {TEXTO_SECUNDARIO}; padding: 0; }}
+QPushButton#BotaoMes:hover {{ background: {CARTAO_ELEVADO}; color: {TEXTO}; }}
+QPushButton#BotaoMes:disabled {{ color: {BORDA}; border-color: {BORDA}; background: transparent; }}
+#MesRotulo {{ font-size: {PX_TEXTO + 1}px; font-weight: 600; color: {TEXTO}; min-width: 150px; }}
+
+/* Estado vazio (gráficos e lista) */
+#VazioTitulo {{ font-size: {PX_TEXTO + 1}px; font-weight: 600; color: {TEXTO_SECUNDARIO}; }}
+#VazioDica {{ font-size: {PX_RODAPE}px; color: {TEXTO_APAGADO}; }}
+
+/* Legenda da rosca */
+#LegendaNome {{ font-size: {PX_TEXTO}px; color: {TEXTO}; }}
+#LegendaValor {{ font-size: {PX_TEXTO}px; font-weight: 600; color: {TEXTO}; }}
+#LegendaPct {{ font-size: {PX_RODAPE}px; color: {TEXTO_APAGADO}; }}
 
 /* Barra de rolagem fina */
 QScrollBar:vertical {{ background: transparent; width: 10px; margin: 2px; }}

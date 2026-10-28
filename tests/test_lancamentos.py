@@ -14,6 +14,12 @@ def test_para_centavos():
     assert lanc.para_centavos(str(19.99)) == 1999
 
 
+@pytest.mark.parametrize("texto", ["abc", "", "R$", "1,2,3x", "nan", "inf"])
+def test_para_centavos_invalido(texto):
+    with pytest.raises(ValueError, match="Valor inválido"):
+        lanc.para_centavos(texto)
+
+
 def test_formatar_brl():
     assert lanc.formatar_brl(123456) == "R$ 1.234,56"
     assert lanc.formatar_brl(-500) == "-R$ 5,00"

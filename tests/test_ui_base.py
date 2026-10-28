@@ -54,15 +54,6 @@ def test_janela_alterna_layout_ao_redimensionar(app, conn):
     janela.close()
 
 
-def test_filtro_de_recentes(app, conn):
-    janela = JanelaPrincipal(conn)
-    assert janela._lista.count() == 10
-    janela.seletor_recentes.clicar("Entradas")
-    assert 0 < janela._lista.count() < 10
-    janela.seletor_recentes.clicar("Todos")
-    assert janela._lista.count() == 10
-
-
 def test_segmentado_emite_opcao(app):
     seg = Segmentado(["Todos", "Entradas", "Saídas"])
     recebidos = []

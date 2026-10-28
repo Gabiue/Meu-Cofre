@@ -130,8 +130,15 @@ class Pilula(QLabel):
         self.setFixedHeight(24)
         self.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Fixed)
+        self.definir(texto, variante)
+
+    def definir(self, texto: str, variante: str = "neutra") -> None:
+        """Troca texto e variante (reaplica o estilo)."""
+        if variante not in self.ICONES:
+            raise ValueError(f"variante desconhecida: {variante!r}")
         self.setProperty("variante", variante)
         self.setText(self.ICONES[variante] + texto)
+        _repolir(self)
 
 
 class NumeroDestaque(QWidget):
@@ -171,6 +178,13 @@ class NumeroDestaque(QWidget):
         for w in (self.rotulo, self.valor, self.apoio):
             self._layout.addWidget(w)
         self._layout.addStretch(1)
+
+    def definir(self, valor: str, apoio: str | None = None) -> None:
+        """Atualiza o número; a linha de apoio só muda se `apoio` for dado."""
+        self.valor.setText(valor)
+        if apoio is not None:
+            self.apoio.setText(apoio)
+            self.apoio.setVisible(bool(apoio))
 
     def adicionar(self, widget: QWidget) -> None:
         """Acrescenta um widget (ex.: `Pilula`) logo abaixo do número, alinhado à esquerda."""
@@ -265,6 +279,7 @@ class ItemLancamento(QFrame):
 
     `valor_centavos` é positivo para entrada e negativo para saída. O número fica sempre na
     cor do texto: quem diferencia entrada de saída é o marcador e o sinal (+ / −).
+    `parcela` (ex.: "3/6") aparece apagada logo depois da descrição, que é quem encurta.
     """
 
     clicado = Signal(int)
@@ -277,6 +292,7 @@ class ItemLancamento(QFrame):
         conta: str,
         data: str,
         valor_centavos: int,
+        parcela: str = "",
         parent: QWidget | None = None,
     ):
         super().__init__(parent)
@@ -293,11 +309,18 @@ class ItemLancamento(QFrame):
         marcador.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
         self.descricao = RotuloElidido(descricao, "ItemDescricao")
+        self.parcela = QLabel(f"({parcela})" if parcela else "")
+        self.parcela.setObjectName("ItemDetalhe")
+        self.parcela.setVisible(bool(parcela))
+        titulo = QHBoxLayout()
+        titulo.setSpacing(6)
+        titulo.addWidget(self.descricao, 1)
+        titulo.addWidget(self.parcela)
         self.detalhe = RotuloElidido(f"{categoria} · {conta}", "ItemDetalhe")
         textos = QVBoxLayout()
         textos.setSpacing(2)
         textos.addStretch(1)
-        textos.addWidget(self.descricao)
+        textos.addLayout(titulo)
         textos.addWidget(self.detalhe)
         textos.addStretch(1)
 

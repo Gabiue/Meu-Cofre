@@ -127,3 +127,118 @@ def saldo_diario(conn: sqlite3.Connection, inicio: date, fim: date) -> pd.DataFr
     dias = pd.date_range(inicio, fim, freq="D")
     saldo = mov.reindex(dias, fill_value=0).cumsum() + base
     return pd.DataFrame({"data": dias, "centavos": saldo.to_numpy()})
+
+
+# --- Tela inicial (F2) --------------------------------------------------------
+
+_CONTAS_DO_DIA_A_DIA = ("corrente", "dinheiro")
+
+
+def _saldo_das_contas(conn: sqlite3.Connection, tipos: tuple[str, ...], ate: date | None) -> int:
+    """Saldo inicial + lançamentos (até `ate`, ou de todas as datas) das contas ativas dos `tipos`."""
+    marcas = ", ".join("?" * len(tipos))
+    filtro, params = ("AND l.data <= ?", [ate.isoformat()]) if ate else ("", [])
+    return conn.execute(
+        f"""
+        SELECT COALESCE((SELECT SUM(saldo_inicial_centavos) FROM contas WHERE ativa = 1 AND tipo IN ({marcas})), 0)
+             + COALESCE((SELECT SUM(l.valor_centavos) FROM lancamentos l JOIN contas ct ON ct.id = l.conta_id
+                         WHERE ct.ativa = 1 AND ct.tipo IN ({marcas}) {filtro}), 0)
+        """,
+        [*tipos, *tipos, *params],
+    ).fetchone()[0]
+
+
+def em_conta(conn: sqlite3.Connection, hoje: date) -> int:
+    """Dinheiro disponível hoje: saldo das contas corrente e dinheiro (saldo inicial + lançamentos até hoje)."""
+    return _saldo_das_contas(conn, _CONTAS_DO_DIA_A_DIA, hoje)
+
+
+def _divida_do_cartao(conn: sqlite3.Connection, ate: date | None) -> int:
+    """Quanto está no cartão (positivo). `ate=None` conta todas as datas, inclusive parcelas futuras."""
+    return max(0, -_saldo_das_contas(conn, ("cartao",), ate))
+
+
+def devo(conn: sqlite3.Connection) -> int:
+    """Tudo que está no cartão e ainda não foi pago, parcelas futuras incluídas (centavos, positivo)."""
+    return _divida_do_cartao(conn, None)
+
+
+def livre_ate_fim_do_mes(conn: sqlite3.Connection, hoje: date) -> int:
+    """Em conta, menos a dívida do cartão até o fim do mês, menos as saídas já lançadas
+    (contas corrente/dinheiro) de amanhã até o fim do mês. Pode ser negativo.
+
+    Transferências ficam de fora das saídas futuras: pagar a fatura já está na dívida do cartão.
+    """
+    _, fim = limites_do_mes(hoje.year, hoje.month)
+    amanha = date.fromordinal(hoje.toordinal() + 1)
+    futuras = conn.execute(
+        """
+        SELECT COALESCE(-SUM(l.valor_centavos), 0)
+        FROM lancamentos l
+        JOIN contas ct ON ct.id = l.conta_id
+        LEFT JOIN categorias c ON c.id = l.categoria_id
+        WHERE ct.ativa = 1 AND ct.tipo IN ('corrente', 'dinheiro')
+          AND l.valor_centavos < 0
+          AND COALESCE(c.tipo, '') <> 'transferencia'
+          AND COALESCE(l.metodo, '') <> 'transferencia'
+          AND l.data BETWEEN ? AND ?
+        """,
+        (amanha.isoformat(), fim.isoformat()),
+    ).fetchone()[0]
+    return em_conta(conn, hoje) - _divida_do_cartao(conn, fim) - futuras
+
+
+def por_dia_ate_fim_do_mes(conn: sqlite3.Connection, hoje: date) -> int:
+    """Livre dividido pelos dias que faltam no mês, contando hoje (centavos, divisão inteira)."""
+    _, fim = limites_do_mes(hoje.year, hoje.month)
+    dias_restantes = fim.day - hoje.day + 1  # nunca zero: hoje conta
+    return livre_ate_fim_do_mes(conn, hoje) // dias_restantes
+
+
+def gastos_por_dia(conn: sqlite3.Connection, ano: int, mes: int, ate: date | None = None) -> pd.DataFrame:
+    """Saídas (positivo) de cada dia do mês, de 1 até `ate` (padrão: fim do mês). Dias sem gasto = 0.
+
+    Colunas: data, centavos.
+    """
+    inicio, fim = limites_do_mes(ano, mes)
+    ultimo = min(ate, fim) if ate else fim
+    dias = pd.date_range(inicio, ultimo, freq="D")
+    if ultimo < inicio:
+        return pd.DataFrame({"data": dias, "centavos": []}, dtype="int64")
+    por_data = pd.read_sql_query(
+        f"""
+        SELECT l.data AS data, -SUM(l.valor_centavos) AS centavos
+        {_SEM_TRANSFERENCIA}
+          AND l.valor_centavos < 0
+          AND l.data BETWEEN ? AND ?
+        GROUP BY l.data
+        """,
+        conn,
+        params=(inicio.isoformat(), ultimo.isoformat()),
+        parse_dates=["data"],
+    ).set_index("data")["centavos"]
+    return pd.DataFrame({"data": dias, "centavos": por_data.reindex(dias, fill_value=0).to_numpy(dtype="int64")})
+
+
+def gastos_top_categorias(conn: sqlite3.Connection, ano: int, mes: int, n: int = 5) -> pd.DataFrame:
+    """As `n` maiores categorias de gasto + uma linha "Outros" com o resto (só se houver resto).
+
+    A categoria "Outros" do seed entra sempre nessa última linha, pra não haver duas iguais.
+    Colunas: categoria, centavos, percentual (0 a 100).
+    """
+    df = gastos_por_categoria(conn, ano, mes)[["categoria", "centavos"]]
+    if df.empty:
+        return pd.DataFrame({"categoria": [], "centavos": [], "percentual": []}).astype(
+            {"categoria": "object", "centavos": "int64", "percentual": "float64"}
+        )
+    total = int(df["centavos"].sum())
+    da_lista = df[df["categoria"] != "Outros"].sort_values("centavos", ascending=False, kind="stable")
+    top = da_lista.head(n)
+    resto = total - int(top["centavos"].sum())
+    linhas = top.to_dict("records")
+    if resto > 0:
+        linhas.append({"categoria": "Outros", "centavos": resto})
+    saida = pd.DataFrame(linhas)
+    saida["centavos"] = saida["centavos"].astype("int64")
+    saida["percentual"] = saida["centavos"] / total * 100
+    return saida

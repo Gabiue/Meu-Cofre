@@ -6,7 +6,7 @@ import sqlite3
 import unicodedata
 import uuid
 from datetime import date
-from decimal import ROUND_HALF_UP, Decimal
+from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 
 import pandas as pd
 
@@ -26,14 +26,23 @@ CONTA_POR_METODO = {"cartao": "cartao", "dinheiro": "dinheiro"}
 
 
 def para_centavos(valor: str | float | Decimal) -> int:
-    """Converte reais em centavos sem erro de float. Aceita "1.234,56" e "1234.56"."""
+    """Converte reais em centavos sem erro de float. Aceita "1.234,56" e "1234.56".
+
+    Levanta `ValueError` com mensagem amigável se o texto não for um número.
+    """
+    original = valor
     if isinstance(valor, str):
         texto = valor.strip().replace("R$", "").replace(" ", "")
         if "," in texto:
             texto = texto.replace(".", "").replace(",", ".")
         valor = texto
-    reais = Decimal(str(valor))
-    return int((reais * 100).quantize(Decimal("1"), rounding=ROUND_HALF_UP))
+    try:
+        reais = Decimal(str(valor))
+        if not reais.is_finite():
+            raise InvalidOperation
+        return int((reais * 100).quantize(Decimal("1"), rounding=ROUND_HALF_UP))
+    except InvalidOperation:
+        raise ValueError(f"Valor inválido: {str(original).strip()!r}. Digite só números, como 12,50.") from None
 
 
 def formatar_brl(centavos: int) -> str:
@@ -41,6 +50,13 @@ def formatar_brl(centavos: int) -> str:
     sinal = "-" if centavos < 0 else ""
     inteiro, resto = divmod(abs(int(centavos)), 100)
     return f"{sinal}R$ {inteiro:,}".replace(",", ".") + f",{resto:02d}"
+
+
+def formatar_brl_inteiro(centavos: int) -> str:
+    """Reais cheios, arredondados: 6249 -> "R$ 62"; 6250 -> "R$ 63"."""
+    sinal = "-" if centavos < 0 else ""
+    reais = (abs(int(centavos)) + 50) // 100
+    return f"{sinal}R$ {reais:,}".replace(",", ".")
 
 
 # --- Datas e parcelas ---------------------------------------------------------
@@ -255,6 +271,37 @@ def listar(
         """,
         conn,
         params=params,
+        parse_dates=["data"],
+    )
+
+
+def recentes(conn: sqlite3.Connection, n: int = 10, filtro: str = "todos") -> pd.DataFrame:
+    """Últimos `n` lançamentos por ordem de lançamento (id desc), não por data.
+
+    `filtro`: "todos", "entradas" ou "saidas". Transferências só aparecem em "todos".
+    Colunas: id, descricao, categoria, conta, metodo, data, valor_centavos, parcela_atual, parcela_total.
+    """
+    if filtro not in ("todos", "entradas", "saidas"):
+        raise ValueError(f"Filtro desconhecido: {filtro}")
+    onde = ""
+    if filtro != "todos":
+        sinal = ">" if filtro == "entradas" else "<"
+        onde = f"""WHERE l.valor_centavos {sinal} 0
+              AND COALESCE(c.tipo, '') <> 'transferencia'
+              AND COALESCE(l.metodo, '') <> 'transferencia'"""
+    return pd.read_sql_query(
+        f"""
+        SELECT l.id, l.descricao, c.nome AS categoria, ct.nome AS conta, l.metodo, l.data,
+               l.valor_centavos, l.parcela_atual, l.parcela_total
+        FROM lancamentos l
+        JOIN contas ct ON ct.id = l.conta_id
+        LEFT JOIN categorias c ON c.id = l.categoria_id
+        {onde}
+        ORDER BY l.id DESC
+        LIMIT ?
+        """,
+        conn,
+        params=(n,),
         parse_dates=["data"],
     )
 

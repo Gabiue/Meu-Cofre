@@ -31,6 +31,9 @@ def main() -> int:
     if destino:  # modo revisão: salva um PNG e sai
         largura, altura = _tamanho_screenshot()
         janela.resize(largura, altura)
+        painel = {"fluxo": "Fluxo", "rosca": "Para onde foi"}.get(os.environ.get("MEU_COFRE_PAINEL", ""))
+        if painel:
+            janela.mostrar_painel(painel)
         janela.show()
         app.processEvents()
         janela.grab().save(destino)

@@ -1,3 +1,9 @@
+import os
+
+# Os testes de interface nunca podem abrir janelas de verdade no desktop (o ambiente pode
+# trazer QT_QPA_PLATFORM=wayland): força o modo offscreen antes de qualquer import do Qt.
+os.environ["QT_QPA_PLATFORM"] = "offscreen"
+
 import pytest
 
 from meu_cofre import db

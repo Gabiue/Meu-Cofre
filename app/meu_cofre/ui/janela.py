@@ -1,10 +1,13 @@
-"""Janela principal: esqueleto da tela inicial (docs/design/telas.md).
+"""Janela principal: tela inicial (docs/design/telas.md) com dados reais.
 
-F1 só monta a estrutura com dados falsos; F2 liga os dados reais e os gráficos.
+Painel (gráficos do mês escolhido), resumo e recentes (sempre "agora"), em 2 colunas ou 1.
+`atualizar()` recarrega tudo; a F3 chama depois de salvar um lançamento.
 """
 
 import sqlite3
+from datetime import date
 
+import pandas as pd
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import (
@@ -13,12 +16,14 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QMainWindow,
+    QPushButton,
     QScrollArea,
-    QSizePolicy,
     QVBoxLayout,
     QWidget,
 )
 
+from meu_cofre import lancamentos, relatorios
+from meu_cofre.lancamentos import formatar_brl, formatar_brl_inteiro
 from meu_cofre.ui import tema
 from meu_cofre.ui.componentes import (
     BotaoPrimario,
@@ -29,83 +34,56 @@ from meu_cofre.ui.componentes import (
     Pilula,
     Segmentado,
 )
+from meu_cofre.ui.graficos import (
+    MESES_CURTOS,
+    OPCAO_FLUXO,
+    OPCAO_ROSCA,
+    EstadoVazio,
+    PainelGraficos,
+    nome_do_mes,
+)
 
 LARGURA_DUAS_COLUNAS = 1100  # abaixo disso, RECENTES desce para baixo do RESUMO
-OPCOES_PAINEL = ["Fluxo", "Para onde foi"]
-OPCOES_RECENTES = ["Todos", "Entradas", "Saídas"]
-
-# F2: trocar por dados reais
-MES_ATUAL = "Outubro de 2026"
-# (id, descrição, categoria, conta, data curta, valor em centavos)
-RECENTES_FALSOS = [
-    (10, "Salário outubro", "Salário", "Inter", "27 out", 520000),
-    (9, "Supermercado Dia", "Mercado", "Cartão", "27 out", -23490),
-    (8, "Assinatura de streaming com nome bem longo para testar o corte", "Lazer", "Cartão", "26 out", -3990),
-    (7, "Uber", "Transporte", "Carteira", "26 out", -1850),
-    (6, "Aluguel", "Moradia", "Inter", "25 out", -140000),
-    (5, "Freela de design", "Renda extra", "Caixa", "24 out", 85000),
-    (4, "Padaria", "Mercado", "Carteira", "24 out", -2120),
-    (3, "Farmácia", "Saúde", "Cartão", "23 out", -6780),
-    (2, "Conta de luz", "Moradia", "Inter", "22 out", -18934),
-    (1, "Almoço com a equipe", "Restaurantes", "Cartão", "21 out", -4500),
-]
-RESUMO_FALSO = {
-    "em_conta": ("R$ 8.432,10", "Inter + Caixa + Carteira"),
-    "devo": ("R$ 2.315,40", "Fatura aberta + parcelas futuras"),
-    "livre": ("R$ 1.870,25", "Depois de fatura e fixos do mês"),
-    "livre_pilula": "12% vs setembro",
-}
-GRAFICOS_FALSOS = {
-    "Fluxo": ("Quanto saiu por dia", "Gráfico de linha do mês entra aqui"),
-    "Para onde foi": ("Gastos por categoria", "Rosca com as 5 maiores categorias entra aqui"),
+OPCOES_PAINEL = [OPCAO_FLUXO, OPCAO_ROSCA]
+OPCOES_RECENTES = {"Todos": "todos", "Entradas": "entradas", "Saídas": "saidas"}
+VAZIO_RECENTES = {
+    "todos": "Nenhum lançamento ainda",
+    "entradas": "Nenhuma entrada ainda",
+    "saidas": "Nenhuma saída ainda",
 }
 
 
-class AreaGrafico(QFrame):
-    """Espaço reservado ao gráfico, com texto que acompanha a opção escolhida (F2 troca por QChartView)."""
-
-    def __init__(self, parent: QWidget | None = None):
-        super().__init__(parent)
-        self.setObjectName("AreaGrafico")
-        self.setMinimumHeight(240)
-        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
-        self._titulo = QLabel()
-        self._titulo.setObjectName("AreaGraficoTitulo")
-        self._nota = QLabel()
-        self._nota.setObjectName("AreaGraficoNota")
-        for rotulo in (self._titulo, self._nota):
-            rotulo.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            rotulo.setWordWrap(True)
-        coluna = QVBoxLayout(self)
-        coluna.setContentsMargins(tema.PADDING_CARTAO, tema.PADDING_CARTAO, tema.PADDING_CARTAO, tema.PADDING_CARTAO)
-        coluna.setSpacing(4)
-        coluna.addStretch(1)
-        coluna.addWidget(self._titulo)
-        coluna.addWidget(self._nota)
-        coluna.addStretch(1)
-
-    def mostrar(self, opcao: str) -> None:
-        titulo, nota = GRAFICOS_FALSOS[opcao]
-        self._titulo.setText(titulo)
-        self._nota.setText(nota)
+def _data_curta(dia: date, hoje: date) -> str:
+    """"hoje", "ontem" ou "27 out"."""
+    if dia == hoje:
+        return "hoje"
+    if (hoje - dia).days == 1:
+        return "ontem"
+    return f"{dia.day} {MESES_CURTOS[dia.month - 1]}"
 
 
 class JanelaPrincipal(QMainWindow):
-    """Tela inicial: painel (gráfico), resumo e recentes, com layout de 2 colunas ou 1 coluna."""
+    """Tela inicial: painel (gráficos), resumo e recentes, com layout de 2 colunas ou 1 coluna."""
 
-    def __init__(self, conn: sqlite3.Connection | None = None):
+    def __init__(self, conn: sqlite3.Connection, hoje: date | None = None):
+        """`hoje` fixa a data (testes e screenshots); sem ele, vale a data do computador."""
         super().__init__()
-        self.conn = conn  # F1 ainda não lê dados; F2 usa.
+        self.conn = conn
+        self._hoje_fixo = hoje
         self.setWindowTitle("meu-cofre")
         self.setMinimumSize(560, 400)
         self.resize(1400, 900)
 
         self._duas_colunas: bool | None = None
+        hoje = self._hoje()
+        self._mes = (hoje.year, hoje.month)  # mês mostrado no painel
         self._montar()
         self._atalho_novo = QShortcut(QKeySequence("Ctrl+N"), self, activated=self.novo_lancamento)
-        self._mostrar_recentes("Todos")
-        self._painel_grafico.mostrar(OPCOES_PAINEL[0])
         self._aplicar_layout(self.width() >= LARGURA_DUAS_COLUNAS)
+        self.atualizar()
+
+    def _hoje(self) -> date:
+        return self._hoje_fixo or date.today()
 
     # --- Montagem ----------------------------------------------------------------
     def _montar(self) -> None:
@@ -143,10 +121,19 @@ class JanelaPrincipal(QMainWindow):
 
         marca = QLabel("meu-cofre")
         marca.setObjectName("Marca")
-        mes = QLabel(MES_ATUAL)  # F2: trocar por dados reais
-        mes.setObjectName("Mes")
-        linha.addWidget(marca, 0, Qt.AlignmentFlag.AlignBaseline)
-        linha.addWidget(mes, 0, Qt.AlignmentFlag.AlignBaseline)
+        linha.addWidget(marca, 0, Qt.AlignmentFlag.AlignVCenter)
+
+        self.botao_mes_anterior = self._botao_mes("‹", "Mês anterior")
+        self.botao_mes_anterior.clicked.connect(lambda: self._mudar_mes(-1))
+        self.botao_mes_seguinte = self._botao_mes("›", "Próximo mês")
+        self.botao_mes_seguinte.clicked.connect(lambda: self._mudar_mes(+1))
+        self.rotulo_mes = QLabel()
+        self.rotulo_mes.setObjectName("MesRotulo")
+        self.rotulo_mes.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        linha.addSpacing(tema.ESPACO)
+        linha.addWidget(self.botao_mes_anterior, 0, Qt.AlignmentFlag.AlignVCenter)
+        linha.addWidget(self.rotulo_mes, 0, Qt.AlignmentFlag.AlignVCenter)
+        linha.addWidget(self.botao_mes_seguinte, 0, Qt.AlignmentFlag.AlignVCenter)
         linha.addStretch(1)
 
         dica = QLabel("Ctrl+N")
@@ -158,63 +145,134 @@ class JanelaPrincipal(QMainWindow):
         linha.addWidget(self.botao_novo)
         return faixa
 
+    @staticmethod
+    def _botao_mes(simbolo: str, dica: str) -> QPushButton:
+        botao = QPushButton(simbolo)
+        botao.setObjectName("BotaoMes")
+        botao.setToolTip(dica)
+        botao.setCursor(Qt.CursorShape.PointingHandCursor)
+        botao.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        return botao
+
     def _montar_painel(self) -> Cartao:
         self.seletor_painel = Segmentado(OPCOES_PAINEL)
         self.seletor_painel.escolhido.connect(self._trocar_painel)
-        cartao = Cartao("Painel", "Outubro de 2026", acao=self.seletor_painel)
-        cartao.setMinimumHeight(360)
-        self._painel_grafico = AreaGrafico()
+        cartao = Cartao("Painel", nome_do_mes(*self._mes), acao=self.seletor_painel)
+        cartao.setMinimumHeight(380)
+        self._painel_grafico = PainelGraficos()
         cartao.corpo.addWidget(self._painel_grafico, 1)
         return cartao
 
     def _montar_resumo(self) -> Cartao:
         cartao = Cartao("Resumo")
-        f = RESUMO_FALSO  # F2: trocar por dados reais
-        em_conta = NumeroDestaque("Em conta", f["em_conta"][0], f["em_conta"][1])
-        devo = NumeroDestaque("Devo", f["devo"][0], f["devo"][1])
-        livre = NumeroDestaque("Livre até o fim do mês", f["livre"][0], f["livre"][1], destaque=True)
-        livre.adicionar(Pilula(f["livre_pilula"], "bom"))
+        self._em_conta = NumeroDestaque("Em conta", "", "Saldo de hoje nas contas e na carteira")
+        self._devo = NumeroDestaque("Devo", "", "Cartão em aberto, com parcelas futuras")
+        self._livre = NumeroDestaque("Livre até o fim do mês", "", "Depois do cartão e do que ainda vai sair", destaque=True)
+        self._pilula_livre = Pilula("", "neutra")
+        self._livre.adicionar(self._pilula_livre)
         linha = LinhaResponsiva(largura_minima_item=220, espaco=3 * tema.ESPACO)
-        for numero in (em_conta, devo, livre):
+        for numero in (self._em_conta, self._devo, self._livre):
             linha.adicionar(numero)
         cartao.corpo.addWidget(linha)
         return cartao
 
     def _montar_recentes(self) -> Cartao:
-        self.seletor_recentes = Segmentado(OPCOES_RECENTES)
-        self.seletor_recentes.escolhido.connect(self._mostrar_recentes)
+        self.seletor_recentes = Segmentado(list(OPCOES_RECENTES))
+        self.seletor_recentes.escolhido.connect(lambda _opcao: self._carregar_recentes())
         cartao = Cartao("Recentes", "Últimos 10 lançamentos", acao=self.seletor_recentes)
         cartao.setMinimumWidth(360)
         self._lista = QVBoxLayout()
         self._lista.setSpacing(2)
         cartao.corpo.addLayout(self._lista)
+        self._vazio_recentes = EstadoVazio("lista", dica="Ctrl+N pra lançar")
+        self._vazio_recentes.setMinimumHeight(200)
+        cartao.corpo.addWidget(self._vazio_recentes)
         cartao.corpo.addStretch(1)
         return cartao
 
-    # --- Comportamento -----------------------------------------------------------
-    def _trocar_painel(self, opcao: str) -> None:
-        self._painel_grafico.mostrar(opcao)
+    # --- Dados -----------------------------------------------------------------------
+    def atualizar(self) -> None:
+        """Recarrega resumo, recentes e painel do banco (a F3 chama depois de salvar)."""
+        self._carregar_resumo()
+        self._carregar_recentes()
+        self._carregar_painel()
 
-    def _mostrar_recentes(self, filtro: str) -> None:
-        """Refaz a lista de recentes conforme o filtro Todos / Entradas / Saídas."""
+    def _carregar_resumo(self) -> None:
+        hoje = self._hoje()
+        em_conta = relatorios.em_conta(self.conn, hoje)
+        livre = relatorios.livre_ate_fim_do_mes(self.conn, hoje)
+        self._em_conta.definir(formatar_brl(em_conta))
+        self._devo.definir(formatar_brl(relatorios.devo(self.conn)))
+        self._livre.definir(formatar_brl(livre))
+        if livre < 0:
+            self._pilula_livre.definir(f"{formatar_brl_inteiro(-livre)} acima do disponível", "atencao")
+        else:
+            por_dia = relatorios.por_dia_ate_fim_do_mes(self.conn, hoje)
+            self._pilula_livre.definir(f"≈ {formatar_brl_inteiro(por_dia)} por dia", "neutra")
+
+    def _carregar_recentes(self) -> None:
+        """Refaz a lista conforme o filtro Todos / Entradas / Saídas."""
         while self._lista.count():
             item = self._lista.takeAt(0)
             if item.widget():
                 item.widget().deleteLater()
-        for dados in RECENTES_FALSOS:  # F2: trocar por dados reais
-            valor = dados[5]
-            if (filtro == "Entradas" and valor < 0) or (filtro == "Saídas" and valor > 0):
-                continue
-            item = ItemLancamento(*dados)
+        filtro = OPCOES_RECENTES[self.seletor_recentes.atual()]
+        df = lancamentos.recentes(self.conn, 10, filtro)
+        hoje = self._hoje()
+        for linha in df.itertuples():
+            parcela = ""
+            if not pd.isna(linha.parcela_total):
+                parcela = f"{int(linha.parcela_atual)}/{int(linha.parcela_total)}"
+            item = ItemLancamento(
+                int(linha.id),
+                linha.descricao,
+                linha.categoria or "A categorizar",
+                linha.conta,
+                _data_curta(linha.data.date(), hoje),
+                int(linha.valor_centavos),
+                parcela,
+            )
             item.clicado.connect(self._abrir_lancamento)
             self._lista.addWidget(item)
+        self._vazio_recentes.definir(VAZIO_RECENTES[filtro], "Ctrl+N pra lançar")
+        self._vazio_recentes.setVisible(df.empty)
+
+    def _carregar_painel(self) -> None:
+        ano, mes = self._mes
+        hoje = self._hoje()
+        mes_atual = (ano, mes) == (hoje.year, hoje.month)
+        gastos_dia = relatorios.gastos_por_dia(self.conn, ano, mes, hoje if mes_atual else None)
+        categorias = relatorios.gastos_top_categorias(self.conn, ano, mes)
+        self._painel_grafico.atualizar(ano, mes, mes_atual, gastos_dia, categorias)
+        self.rotulo_mes.setText(nome_do_mes(ano, mes))
+        self._cartao_painel.subtitulo.setText(nome_do_mes(ano, mes))
+        self.botao_mes_seguinte.setEnabled(not mes_atual)
+
+    # --- Comportamento -----------------------------------------------------------
+    def _mudar_mes(self, passo: int) -> None:
+        """Navega no mês do painel; nunca passa do mês atual."""
+        hoje = self._hoje()
+        ano, mes = self._mes
+        indice = ano * 12 + (mes - 1) + passo
+        novo = (indice // 12, indice % 12 + 1)
+        if novo > (hoje.year, hoje.month):
+            return
+        self._mes = novo
+        self._carregar_painel()
+
+    def _trocar_painel(self, opcao: str) -> None:
+        self._painel_grafico.mostrar(opcao)
+
+    def mostrar_painel(self, opcao: str) -> None:
+        """Escolhe o gráfico do painel por código (usado no modo screenshot)."""
+        self.seletor_painel.definir(opcao)
+        self._painel_grafico.mostrar(opcao)
 
     def _abrir_lancamento(self, id_lancamento: int) -> None:
         self.statusBar().showMessage(f"Detalhe do lançamento {id_lancamento}: chega na F3", 4000)
 
     def novo_lancamento(self) -> None:
         """Ctrl+N / botão. O diálogo de lançamento é a F3; por ora só avisa."""
-        print("Novo lançamento (diálogo chega na F3)")
         self.statusBar().showMessage("Novo lançamento: o diálogo chega na F3", 4000)
 
     # --- Layout responsivo ---------------------------------------------------------

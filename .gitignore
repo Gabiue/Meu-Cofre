@@ -1,0 +1,25 @@
+# Pastas locais (nunca vão pro git)
+docs/
+data/
+
+# Rede de segurança: dados financeiros fora de data/
+*.db
+*.sqlite
+*.sqlite3
+*.ofx
+*.csv
+*.xlsx
+*.xls
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.env
+
+# Streamlit / editores / SO
+.streamlit/secrets.toml
+.vscode/
+.idea/
+.DS_Store

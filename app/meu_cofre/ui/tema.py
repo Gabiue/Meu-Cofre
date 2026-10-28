@@ -15,6 +15,7 @@ BORDA = "#1f3a2b"
 TEXTO = "#e8f0ea"
 TEXTO_SECUNDARIO = "#9fb5a8"
 TEXTO_APAGADO = "#6f8a7b"
+TEXTO_DESABILITADO = "#4a6356"
 
 # --- Destaques de interface -------------------------------------------------------
 VERDE = "#3fb37f"
@@ -114,6 +115,8 @@ QPushButton:focus {{ outline: none; }}
     padding: 0 14px; min-height: 26px; font-size: {PX_RODAPE + 1}px; font-weight: 600; }}
 #SegmentadoOpcao:hover {{ color: {TEXTO}; }}
 #SegmentadoOpcao:checked {{ background: {VERDE_SUAVE}; color: {VERDE}; }}
+#SegmentadoOpcao:disabled {{ color: {TEXTO_DESABILITADO}; }}
+#SegmentadoOpcao:checked:disabled {{ background: {VERDE_SUAVE}; color: {TEXTO_DESABILITADO}; }}
 
 /* Item de lançamento */
 #ItemLancamento {{ background: transparent; border: none; border-radius: 10px; }}
@@ -183,6 +186,20 @@ QPushButton#BotaoPerigo {{ background: {VERMELHO}; color: {TEXTO_SOBRE_VERDE}; b
 QPushButton#BotaoPerigo:hover {{ background: #ec7b6c; border-color: #ec7b6c; }}
 QPushButton#BotaoSecundario[perigo="true"] {{ color: {VERMELHO}; border-color: {VERMELHO_SUAVE_BORDA}; }}
 QPushButton#BotaoSecundario[perigo="true"]:hover {{ background: {VERMELHO_SUAVE}; border-color: {VERMELHO}; }}
+
+/* Janela "Contas e cartões" */
+#Dialogo[tela="contas"] {{ background: {FUNDO}; }}
+#ContaNome {{ font-size: {PX_TEXTO + 1}px; font-weight: 600; color: {TEXTO}; }}
+#ContaNome[inativo="true"] {{ color: {TEXTO_APAGADO}; }}
+#ContaDetalhe {{ font-size: {PX_RODAPE + 1}px; color: {TEXTO_SECUNDARIO}; }}
+#ContaValor {{ font-size: {PX_TEXTO + 2}px; font-weight: 700; color: {TEXTO}; }}
+#Separador {{ background: {BORDA}; border: none; }}
+#FormCartao {{ background: {CARTAO_ELEVADO}; border: 1px solid {BORDA}; border-radius: 10px; }}
+QPushButton#BotaoLink {{ background: transparent; border: none; padding: 6px 0; color: {TEXTO_SECUNDARIO};
+    font-size: {PX_RODAPE + 1}px; font-weight: 600; }}
+QPushButton#BotaoLink:hover {{ color: {TEXTO}; }}
+QPushButton#BotaoSecundario[compacto="true"], QPushButton#BotaoPrimario[compacto="true"],
+QPushButton#BotaoPerigo[compacto="true"] {{ min-height: 32px; padding: 0 14px; font-size: {PX_RODAPE + 1}px; border-radius: 8px; }}
 
 /* Barra de rolagem fina */
 QScrollBar:vertical {{ background: transparent; width: 10px; margin: 2px; }}

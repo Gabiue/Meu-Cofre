@@ -27,6 +27,7 @@ from meu_cofre.lancamentos import formatar_brl, formatar_brl_inteiro
 from meu_cofre.ui import tema
 from meu_cofre.ui.componentes import (
     BotaoPrimario,
+    BotaoSecundario,
     Cartao,
     ItemLancamento,
     LinhaResponsiva,
@@ -34,6 +35,7 @@ from meu_cofre.ui.componentes import (
     Pilula,
     Segmentado,
 )
+from meu_cofre.ui.dialogo_contas import DialogoContas
 from meu_cofre.ui.dialogo_lancamento import DialogoLancamento
 from meu_cofre.ui.graficos import (
     MESES_CURTOS,
@@ -77,6 +79,7 @@ class JanelaPrincipal(QMainWindow):
 
         self._duas_colunas: bool | None = None
         self.dialogo: DialogoLancamento | None = None  # diálogo aberto (se houver)
+        self.dialogo_contas: DialogoContas | None = None
         hoje = self._hoje()
         self._mes = (hoje.year, hoje.month)  # mês mostrado no painel
         self._montar()
@@ -137,6 +140,12 @@ class JanelaPrincipal(QMainWindow):
         linha.addWidget(self.rotulo_mes, 0, Qt.AlignmentFlag.AlignVCenter)
         linha.addWidget(self.botao_mes_seguinte, 0, Qt.AlignmentFlag.AlignVCenter)
         linha.addStretch(1)
+
+        self.botao_contas = BotaoSecundario("Contas")
+        self.botao_contas.setToolTip("Contas e cartões")
+        self.botao_contas.clicked.connect(self.abrir_contas)
+        linha.addWidget(self.botao_contas)
+        linha.addSpacing(tema.ESPACO)
 
         dica = QLabel("Ctrl+N")
         dica.setObjectName("DicaAtalho")
@@ -228,7 +237,7 @@ class JanelaPrincipal(QMainWindow):
             item = ItemLancamento(
                 int(linha.id),
                 linha.descricao,
-                linha.categoria or "A categorizar",
+                "A categorizar" if pd.isna(linha.categoria) else linha.categoria,  # NaN do pandas é truthy
                 linha.conta,
                 _data_curta(linha.data.date(), hoje),
                 int(linha.valor_centavos),
@@ -291,8 +300,18 @@ class JanelaPrincipal(QMainWindow):
         dialogo.open()
         return dialogo
 
+    def abrir_contas(self) -> DialogoContas:
+        """Botão "Contas": abre a janela de contas e cartões; cada mudança recarrega esta tela."""
+        dialogo = DialogoContas(self.conn, parent=self, hoje=self._hoje())
+        dialogo.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+        dialogo.alterado.connect(self._lancamento_gravado)
+        dialogo.finished.connect(lambda _codigo: setattr(self, "dialogo_contas", None))
+        self.dialogo_contas = dialogo
+        dialogo.open()
+        return dialogo
+
     def _lancamento_gravado(self, mensagem: str) -> None:
-        """Depois de salvar ou excluir: recarrega a tela e avisa na barra de status."""
+        """Depois de salvar, excluir ou mudar contas: recarrega a tela e avisa na barra de status."""
         self.atualizar()
         self.statusBar().showMessage(mensagem, 6000)
 

@@ -271,6 +271,11 @@ class Segmentado(QFrame):
         """Seleciona uma opção por código, sem emitir o sinal."""
         self._botoes[opcao].setChecked(True)
 
+    def habilitar(self, opcao: str, habilitada: bool, dica: str = "") -> None:
+        """Liga ou desliga uma opção; desligada, mostra `dica` ao passar o mouse."""
+        self._botoes[opcao].setEnabled(habilitada)
+        self._botoes[opcao].setToolTip("" if habilitada else dica)
+
     def clicar(self, opcao: str) -> None:
         """Simula o clique do usuário (emite o sinal). Útil em testes."""
         self._botoes[opcao].click()

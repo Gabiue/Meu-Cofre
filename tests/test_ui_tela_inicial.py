@@ -212,3 +212,21 @@ def test_atualizar_varias_vezes_com_dados_nao_cai(app, conn):
         QApplication.processEvents()
         gc.collect()
     janela.close()
+
+
+
+def test_recente_sem_categoria_mostra_a_categorizar(app, conn):
+    """Regressão: categoria nula vinha do pandas como NaN e aparecia "nan" na lista."""
+    from PySide6.QtWidgets import QLabel
+
+    from meu_cofre.ui.componentes import ItemLancamento
+
+    lanc.registrar(conn, entrada=False, valor_centavos=1000, descricao="Sem categoria",
+                   categoria_id=None, metodo="pix", conta_id=id_conta(conn, "Inter"),
+                   data=date(2026, 10, 5))
+    _reg(conn, 2000, descricao="Com categoria")  # lista mista: é aí que o pandas vira NaN
+    janela = _janela(conn)
+    textos = [lbl.texto() if hasattr(lbl, "texto") else lbl.text()
+              for item in janela.findChildren(ItemLancamento) for lbl in item.findChildren(QLabel)]
+    assert not any("nan" in t for t in textos)
+    assert any("A categorizar" in t for t in textos)

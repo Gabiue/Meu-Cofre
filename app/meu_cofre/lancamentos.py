@@ -91,15 +91,40 @@ def listar_categorias(conn: sqlite3.Connection, tipo: str | None = None) -> list
     return conn.execute(sql + " ORDER BY nome", params).fetchall()
 
 
+def cartoes_ativos(conn: sqlite3.Connection) -> list[sqlite3.Row]:
+    return conn.execute("SELECT * FROM contas WHERE tipo = 'cartao' AND ativa = 1 ORDER BY id").fetchall()
+
+
+def ultimo_cartao_usado(conn: sqlite3.Connection) -> int | None:
+    """Cartão do lançamento mais recente com método cartão, entre os cartões ativos; None se não há."""
+    linha = conn.execute(
+        """
+        SELECT ct.id FROM lancamentos l JOIN contas ct ON ct.id = l.conta_id
+        WHERE l.metodo = 'cartao' AND ct.tipo = 'cartao' AND ct.ativa = 1
+        ORDER BY l.id DESC LIMIT 1
+        """
+    ).fetchone()
+    return linha["id"] if linha else None
+
+
 def conta_do_metodo(conn: sqlite3.Connection, metodo: str, conta_escolhida_id: int) -> int:
-    """Cartão vai pro cartão de crédito, dinheiro pra carteira; o resto, pra conta escolhida."""
+    """Cartão vai pro cartão escolhido (se `conta_escolhida_id` for um cartão ativo; senão, o primeiro
+    ativo), dinheiro pra carteira; o resto, pra conta escolhida."""
     tipo = CONTA_POR_METODO.get(metodo)
     if not tipo:
         return conta_escolhida_id
+    if tipo == "cartao":
+        escolhido = conn.execute(
+            "SELECT id FROM contas WHERE id = ? AND tipo = 'cartao' AND ativa = 1", (conta_escolhida_id,)
+        ).fetchone()
+        if escolhido:
+            return escolhido["id"]
     linha = conn.execute(
         "SELECT id FROM contas WHERE tipo = ? AND ativa = 1 ORDER BY id LIMIT 1", (tipo,)
     ).fetchone()
     if not linha:
+        if tipo == "cartao":
+            raise ValueError("Não há cartão ativo. Adicione um em Contas.")
         raise ValueError(f"Nenhuma conta ativa do tipo '{tipo}' para o método '{metodo}'.")
     return linha["id"]
 
@@ -329,7 +354,7 @@ def atualizar(conn: sqlite3.Connection, lancamento_id: int, *, entrada: bool | N
 
     `entrada` (opcional) troca o sinal: com ele, `valor_centavos` (se vier) é positivo e o sinal
     vem de `entrada`; sem `valor_centavos`, mantém o valor atual e só vira o sinal. Trocar `metodo`
-    recalcula a conta com `conta_do_metodo` (use `conta_id` pra dizer a conta corrente).
+    recalcula a conta com `conta_do_metodo` (use `conta_id` pra dizer a conta corrente ou o cartão).
     """
     invalidos = set(campos) - CAMPOS_EDITAVEIS
     if invalidos:
@@ -353,7 +378,11 @@ def atualizar(conn: sqlite3.Connection, lancamento_id: int, *, entrada: bool | N
     if "metodo" in campos:
         if campos["metodo"] not in METODOS:
             raise ValueError(f"Método desconhecido: {campos['metodo']}")
-        campos["conta_id"] = conta_do_metodo(conn, campos["metodo"], campos.get("conta_id", atual["conta_id"]))
+        conta = campos.get("conta_id", atual["conta_id"])
+        # Mesmo método e mesma conta: não mexe (um cartão já desativado continua onde estava).
+        if campos["metodo"] != atual["metodo"] or conta != atual["conta_id"]:
+            conta = conta_do_metodo(conn, campos["metodo"], conta)
+        campos["conta_id"] = conta
     if isinstance(campos.get("data"), date):
         campos["data"] = campos["data"].isoformat()
 

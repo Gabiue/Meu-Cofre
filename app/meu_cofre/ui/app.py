@@ -22,8 +22,16 @@ def _tamanho_screenshot() -> tuple[int, int]:
 
 
 def _abrir_dialogo_de_revisao(janela: JanelaPrincipal, app: QApplication, modo: str):
-    """MEU_COFRE_DIALOGO=novo|cartao|editar:<id>|excluir:<id>: abre o diálogo já preparado (screenshots)."""
+    """MEU_COFRE_DIALOGO=novo|cartao|contas|editar:<id>|excluir:<id>: abre o diálogo já preparado (screenshots)."""
     nome, _, id_texto = modo.partition(":")
+    if nome == "contas":
+        dialogo = janela.abrir_contas()
+        dialogo.mostrar_desativados(True)
+        for _ in range(3):  # a janela se ajusta à lista em etapas (estilo, depois tamanho)
+            app.processEvents()
+        dialogo.resize(dialogo.width(), janela.height() - 60)  # a tela offscreen é baixa: dá espaço pra mostrar tudo
+        app.processEvents()
+        return dialogo
     dialogo = janela.novo_lancamento() if nome in ("novo", "cartao") else janela._abrir_lancamento(int(id_texto))
     if dialogo is None:
         return None

@@ -184,6 +184,15 @@ class DialogoLancamento(QDialog):
         coluna_metodo.addWidget(_rotulo("Método", "CampoRotulo"))
         self.metodo = Segmentado(list(METODOS.values()), METODOS["pix"])
         coluna_metodo.addWidget(self.metodo, 0, Qt.AlignmentFlag.AlignLeft)
+        # "Qual cartão": só aparece com método Cartão e mais de um cartão para escolher
+        self._bloco_cartao = QWidget()
+        coluna_cartao = QVBoxLayout(self._bloco_cartao)
+        coluna_cartao.setContentsMargins(0, tema.ESPACO + 4, 0, 0)
+        coluna_cartao.setSpacing(4)
+        coluna_cartao.addWidget(_rotulo("Qual cartão", "CampoRotulo"))
+        self.cartao = CampoLista()
+        coluna_cartao.addWidget(self.cartao)
+        coluna_metodo.addWidget(self._bloco_cartao)
         form.addWidget(self._bloco_metodo)
         form.addSpacing(tema.ESPACO + 4)
 
@@ -311,6 +320,7 @@ class DialogoLancamento(QDialog):
     def _ligar(self) -> None:
         self.tipo.escolhido.connect(lambda _t: self._trocou_tipo())
         self.metodo.escolhido.connect(lambda _m: self._atualizar_metodo())
+        self.cartao.currentIndexChanged.connect(lambda _i: self._atualizar_destino())
         self.valor.textChanged.connect(self._valor_mudou)
         self.descricao.textChanged.connect(lambda _t: self._limpar_erro(self.erro_descricao, self.descricao))
         self.descricao.editingFinished.connect(self._sugerir_categoria)
@@ -336,6 +346,16 @@ class DialogoLancamento(QDialog):
         for c in correntes:
             self.conta.addItem(c["nome"], c["id"])
         self.conta.setCurrentIndex(max(self.conta.findText("Inter"), 0))
+
+        # Cartões para escolher: os ativos (e, ao editar, o da compra, mesmo que já desativado).
+        self._cartoes = [(c["id"], c["nome"]) for c in lancamentos.cartoes_ativos(self.conn)]
+        original = self._original
+        if original and original["metodo"] == "cartao" and original["conta_id"] not in [i for i, _ in self._cartoes]:
+            self._cartoes.append((original["conta_id"], f"{original['conta']} (desativado)"))
+        for id_cartao, nome in self._cartoes:
+            self.cartao.addItem(nome, id_cartao)
+        self.cartao.setCurrentIndex(max(self.cartao.findData(lancamentos.ultimo_cartao_usado(self.conn)), 0))
+        self.metodo.habilitar(METODOS["cartao"], bool(self._cartoes), "Nenhum cartão ativo. Adicione um em Contas.")
 
         for n in range(1, PARCELAS_MAX + 1):
             self.parcelas.addItem(f"{n}x", n)
@@ -397,9 +417,15 @@ class DialogoLancamento(QDialog):
         self.data.setDate(QDate(dia.year, dia.month, dia.day))
         if l["metodo"] in METODOS:
             self.metodo.definir(METODOS[l["metodo"]])
-        indice = self.conta.findData(l["conta_id"])
-        if indice >= 0:
-            self.conta.setCurrentIndex(indice)
+        if l["metodo"] == "cartao":
+            self.cartao.setCurrentIndex(max(self.cartao.findData(l["conta_id"]), 0))
+        else:
+            indice = self.conta.findData(l["conta_id"])
+            if indice < 0 and l["metodo"] in ("pix", "debito", "boleto"):  # conta já desativada: mantém a escolha
+                self.conta.addItem(f"{l['conta']} (desativada)", l["conta_id"])
+                indice = self.conta.count() - 1
+            if indice >= 0:
+                self.conta.setCurrentIndex(indice)
         if self._restrito:
             self.tipo.setEnabled(False)
             self.metodo.setEnabled(False)
@@ -419,20 +445,31 @@ class DialogoLancamento(QDialog):
             return
         metodo = self.codigo_metodo
         parcelavel = metodo == "cartao" and not self.entrada and not self.editando
+        escolhe_cartao = metodo == "cartao" and len(self._cartoes) > 1 and not self._restrito
+        self._bloco_cartao.setVisible(escolhe_cartao)
         if metodo in ("pix", "debito", "boleto"):
             self._pilha_extra.setCurrentIndex(_PAG_CONTA)
-            self.info_destino.setText("")
         elif parcelavel:
             self._pilha_extra.setCurrentIndex(_PAG_PARCELAS)
-            self.info_destino.setText("Vai pro cartão de crédito, na data da compra")
         else:
             self._pilha_extra.setCurrentIndex(_PAG_VAZIA)
-            self.info_destino.setText(
-                "Vai pro cartão de crédito, na data da compra"
-                if metodo == "cartao"
-                else ("Entra na Carteira" if self.entrada else "Sai da Carteira")
-            )
+        self._atualizar_destino()
         self._atualizar_parcelas()
+
+    def _atualizar_destino(self) -> None:
+        """Texto de apoio sobre onde o lançamento vai cair."""
+        metodo = self.codigo_metodo
+        if self._restrito and self._original["metodo"] not in METODOS:
+            return
+        if metodo == "cartao":
+            if self._bloco_cartao.isHidden():
+                self.info_destino.setText(f"Vai pro {self.cartao.currentText()}, na data da compra")
+            else:
+                self.info_destino.setText("Cai na fatura do cartão, na data da compra")
+        elif metodo == "dinheiro":
+            self.info_destino.setText("Entra na Carteira" if self.entrada else "Sai da Carteira")
+        else:
+            self.info_destino.setText("")
 
     def _valor_mudou(self, _texto: str) -> None:
         self._limpar_erro(self.erro_valor, self.valor)
@@ -503,6 +540,11 @@ class DialogoLancamento(QDialog):
             return None
         return centavos, descricao
 
+    def _conta_escolhida(self) -> int:
+        """Cartão escolhido (método Cartão) ou conta corrente escolhida; 0 se não há."""
+        campo = self.cartao if self.codigo_metodo == "cartao" else self.conta
+        return campo.currentData() or 0
+
     # --- Gravar ---------------------------------------------------------------------------------
     def salvar(self) -> bool:
         """Grava e fecha. Devolve False (sem gravar) se houver erro."""
@@ -532,7 +574,7 @@ class DialogoLancamento(QDialog):
             if self.editando:
                 campos = dict(valor_centavos=centavos, descricao=descricao, categoria_id=categoria_id, data=data)
                 if not self._restrito:
-                    campos.update(metodo=self.codigo_metodo, conta_id=self.conta.currentData() or self._original["conta_id"])
+                    campos.update(metodo=self.codigo_metodo, conta_id=self._conta_escolhida() or self._original["conta_id"])
                 lancamentos.atualizar(self.conn, self.id_lancamento, entrada=self.entrada, **campos)
                 mensagem = f"Salvo: {descricao} ({formatar_brl(centavos)})"
             else:
@@ -544,7 +586,7 @@ class DialogoLancamento(QDialog):
                     descricao=descricao,
                     categoria_id=categoria_id,
                     metodo=self.codigo_metodo,
-                    conta_id=self.conta.currentData() or 0,
+                    conta_id=self._conta_escolhida(),
                     data=data,
                     parcelas=parcelas,
                 )
@@ -624,8 +666,14 @@ class DialogoLancamento(QDialog):
     def _ajustar_tamanho(self) -> None:
         """Altura pelo conteúdo, limitada à tela (se faltar espaço, o formulário rola)."""
         tela = (self.screen() or QApplication.primaryScreen()).availableGeometry()
+        # Mede com o "Qual cartão" aberto, pra janela não precisar crescer (nem rolar) ao escolher Cartão.
+        reservar = len(self._cartoes) > 1 and not self._restrito and self._bloco_cartao.isHidden()
+        if reservar:
+            self._bloco_cartao.setVisible(True)
         self._corpo.layout().activate()
         natural = self._corpo.sizeHint().height() + self._barra.sizeHint().height() + 4
+        if reservar:
+            self._bloco_cartao.setVisible(False)
         self.setMinimumHeight(0)
         altura = min(natural, int(tela.height() * 0.9))
         self.resize(LARGURA, altura)

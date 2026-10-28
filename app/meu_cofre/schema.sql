@@ -1,4 +1,6 @@
--- meu-cofre: esquema do banco (SQLite)
+-- meu-cofre: esquema ATUAL do banco (SQLite), aplicado só em banco novo.
+-- Bancos existentes chegam aqui pelas migrações (migracoes.py): ao mudar este arquivo,
+-- crie também a migração correspondente e suba ULTIMA_VERSAO.
 -- Valores sempre em centavos (inteiro). Saída é negativa, entrada é positiva.
 
 PRAGMA foreign_keys = ON;
@@ -26,14 +28,16 @@ CREATE TABLE IF NOT EXISTS categorias (
 CREATE TABLE IF NOT EXISTS recorrentes (
     id             INTEGER PRIMARY KEY,
     descricao      TEXT    NOT NULL,
-    valor_centavos INTEGER NOT NULL,
+    valor_centavos INTEGER NOT NULL,                  -- com sinal, como nos lançamentos (entrada > 0)
     conta_id       INTEGER NOT NULL REFERENCES contas (id),
     categoria_id   INTEGER REFERENCES categorias (id),
     metodo         TEXT,
     dia_do_mes     INTEGER NOT NULL CHECK (dia_do_mes BETWEEN 1 AND 31),
     inicio         TEXT    NOT NULL,
     fim            TEXT,
-    ativa          INTEGER NOT NULL DEFAULT 1
+    ativa          INTEGER NOT NULL DEFAULT 1,
+    assinatura     INTEGER NOT NULL DEFAULT 0,    -- 1 = assinatura; 0 = gasto fixo (aluguel, salário...)
+    pausada        INTEGER NOT NULL DEFAULT 0     -- pausada não gera lançamentos; `ativa` = 0 é encerrada
 );
 
 CREATE TABLE IF NOT EXISTS importacoes (
@@ -73,6 +77,7 @@ CREATE TABLE IF NOT EXISTS lancamentos (
 
 CREATE INDEX IF NOT EXISTS ix_lancamentos_data ON lancamentos (data);
 CREATE INDEX IF NOT EXISTS ix_lancamentos_conta ON lancamentos (conta_id);
+CREATE INDEX IF NOT EXISTS ix_lancamentos_recorrente ON lancamentos (recorrente_id);
 CREATE UNIQUE INDEX IF NOT EXISTS ux_lancamentos_fitid ON lancamentos (conta_id, fitid) WHERE fitid IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS regras_categorizacao (

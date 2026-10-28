@@ -134,15 +134,19 @@ def saldo_diario(conn: sqlite3.Connection, inicio: date, fim: date) -> pd.DataFr
 _CONTAS_DO_DIA_A_DIA = ("corrente", "dinheiro")
 
 
-def _saldo_das_contas(conn: sqlite3.Connection, tipos: tuple[str, ...], ate: date | None) -> int:
-    """Saldo inicial + lançamentos (até `ate`, ou de todas as datas) das contas ativas dos `tipos`."""
+def _saldo_das_contas(
+    conn: sqlite3.Connection, tipos: tuple[str, ...], ate: date | None, so_ativas: bool = True
+) -> int:
+    """Saldo inicial + lançamentos (até `ate`, ou de todas as datas) das contas dos `tipos`."""
     marcas = ", ".join("?" * len(tipos))
     filtro, params = ("AND l.data <= ?", [ate.isoformat()]) if ate else ("", [])
+    ativa = "ativa = 1 AND " if so_ativas else ""
+    ativa_ct = "ct.ativa = 1 AND " if so_ativas else ""
     return conn.execute(
         f"""
-        SELECT COALESCE((SELECT SUM(saldo_inicial_centavos) FROM contas WHERE ativa = 1 AND tipo IN ({marcas})), 0)
+        SELECT COALESCE((SELECT SUM(saldo_inicial_centavos) FROM contas WHERE {ativa}tipo IN ({marcas})), 0)
              + COALESCE((SELECT SUM(l.valor_centavos) FROM lancamentos l JOIN contas ct ON ct.id = l.conta_id
-                         WHERE ct.ativa = 1 AND ct.tipo IN ({marcas}) {filtro}), 0)
+                         WHERE {ativa_ct}ct.tipo IN ({marcas}) {filtro}), 0)
         """,
         [*tipos, *tipos, *params],
     ).fetchone()[0]
@@ -154,8 +158,11 @@ def em_conta(conn: sqlite3.Connection, hoje: date) -> int:
 
 
 def _divida_do_cartao(conn: sqlite3.Connection, ate: date | None) -> int:
-    """Quanto está no cartão (positivo). `ate=None` conta todas as datas, inclusive parcelas futuras."""
-    return max(0, -_saldo_das_contas(conn, ("cartao",), ate))
+    """Quanto está nos cartões (positivo). `ate=None` conta todas as datas, inclusive parcelas futuras.
+
+    Cartão desativado (cancelado) com fatura em aberto continua sendo dívida, então entra na conta.
+    """
+    return max(0, -_saldo_das_contas(conn, ("cartao",), ate, so_ativas=False))
 
 
 def devo(conn: sqlite3.Connection) -> int:

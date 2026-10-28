@@ -98,7 +98,7 @@ def test_metodos_mudam_campos(app, conn):
     assert d._pilha_extra.currentWidget() is d._pilha_extra.widget(0)
     d.metodo.clicar("Cartão")
     assert d._pilha_extra.currentIndex() == 1
-    assert d.info_destino.text() == "Vai pro cartão de crédito, na data da compra"
+    assert d.info_destino.text() == "Vai pro Cartão de crédito, na data da compra"
     d.tipo.clicar("Entrada")  # entrada no cartão não parcela
     assert d._pilha_extra.currentIndex() == 2
     d.tipo.clicar("Saída")

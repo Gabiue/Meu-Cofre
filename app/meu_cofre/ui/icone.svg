@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256">
+  <!-- meu-cofre: porta de cofre verde-floresta com o disco em dourado -->
+  <rect x="16" y="16" width="224" height="224" rx="52" fill="#13241b"/>
+  <rect x="16" y="16" width="224" height="224" rx="52" fill="none" stroke="#1f3a2b" stroke-width="6"/>
+  <rect x="52" y="52" width="152" height="152" rx="26" fill="#183022" stroke="#3fb37f" stroke-width="10"/>
+  <circle cx="128" cy="128" r="42" fill="none" stroke="#e0a030" stroke-width="10"/>
+  <circle cx="128" cy="128" r="9" fill="#e0a030"/>
+  <g stroke="#e0a030" stroke-width="8" stroke-linecap="round">
+    <line x1="128" y1="86" x2="128" y2="100"/>
+    <line x1="128" y1="156" x2="128" y2="170"/>
+    <line x1="86" y1="128" x2="100" y2="128"/>
+    <line x1="156" y1="128" x2="170" y2="128"/>
+  </g>
+  <g fill="#3fb37f">
+    <rect x="200" y="84" width="14" height="26" rx="5"/>
+    <rect x="200" y="146" width="14" height="26" rx="5"/>
+  </g>
+</svg>

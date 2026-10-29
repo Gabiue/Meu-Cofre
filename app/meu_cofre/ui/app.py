@@ -4,7 +4,9 @@ import os
 import sys
 
 from PySide6.QtCore import QPoint
-from PySide6.QtGui import QColor, QPainter, QPixmap
+from importlib.resources import files
+
+from PySide6.QtGui import QColor, QIcon, QPainter, QPixmap
 from PySide6.QtWidgets import QApplication
 
 from meu_cofre import db
@@ -81,6 +83,9 @@ def _compor_screenshot(janela: JanelaPrincipal, dialogo) -> QPixmap:
 def main() -> int:
     app = QApplication(sys.argv)
     app.setApplicationName("meu-cofre")
+    # Casa a janela com o meu-cofre.desktop (ícone certo no lançador e na barra) e define o ícone.
+    app.setDesktopFileName("meu-cofre")
+    app.setWindowIcon(QIcon(str(files("meu_cofre.ui").joinpath("icone.svg"))))
     tema.aplicar_tema(app)
 
     conn = db.conectar()  # respeita MEU_COFRE_DB

@@ -282,3 +282,23 @@ def test_recentes_mostram_o_nome_do_cartao(app, conn, dois_cartoes):
     _compra(conn, dois_cartoes[1])
     j = JanelaPrincipal(conn, hoje=HOJE)
     assert any(r.texto() == "Compras pessoais · Caixa Visa" for r in j.findChildren(RotuloElidido))
+
+
+def test_formulario_de_novo_cartao_cabe_na_rolagem(app, conn):
+    """Regressão: com a janela no limite de altura, abrir "+ Adicionar cartão" não deixava rolar até o fim."""
+    from PySide6.QtTest import QTest
+
+    from meu_cofre import cadastros
+
+    for i in range(3):  # lista comprida: a janela bate no limite e passa a rolar
+        cadastros.criar_cartao(conn, f"Cartão {i}", banco="Banco", dia_fechamento=1, dia_vencimento=10)
+    d = _contas(conn)
+    d.resize(d.width(), 520)
+    d.botao_adicionar.click()
+    QTest.qWait(150)  # as duas passadas de ajuste (0 ms e 80 ms)
+    rolagem = d._rolagem
+    assert rolagem.widget().height() >= d._corpo.sizeHint().height()
+    # o formulário inteiro precisa ser alcançável pela barra de rolagem
+    fim_do_form = d._form.mapTo(rolagem.widget(), d._form.rect().bottomLeft()).y()
+    assert fim_do_form <= rolagem.verticalScrollBar().maximum() + rolagem.viewport().height()
+    assert d._form.isVisible()

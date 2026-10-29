@@ -132,6 +132,7 @@ class DialogoContas(QDialog):
         self._corpo.setObjectName("DialogoCorpo")
         rolagem.setWidget(self._corpo)
         raiz.addWidget(rolagem, 1)
+        self._rolagem = rolagem
 
         m = 3 * tema.ESPACO
         coluna = QVBoxLayout(self._corpo)
@@ -374,6 +375,9 @@ class DialogoContas(QDialog):
         self.botao_adicionar.setVisible(not self._adicionando)
         if self.isVisible():  # a lista mudou de tamanho: ajusta a janela depois que os novos widgets forem estilizados
             QTimer.singleShot(0, self._ajustar_altura)
+            # Segunda passada: no app real o estilo dos campos novos pode chegar depois do primeiro ajuste,
+            # e a rolagem ficava com o tamanho antigo (não dava pra descer até o fim do formulário).
+            QTimer.singleShot(80, self._ajustar_altura)
 
     def _linha_cartao(self, c: sqlite3.Row) -> QWidget:
         id_ = c["id"]
@@ -683,3 +687,8 @@ class DialogoContas(QDialog):
         natural = self._corpo.sizeHint().height() + self.botao_concluir.sizeHint().height() + 3 * tema.ESPACO + 4
         self.setMinimumHeight(0)
         self.resize(LARGURA, min(max(natural, 420), int(tela.height() * 0.9)))
+        # Avisa a área de rolagem que o conteúdo mudou de tamanho (senão ela só recalcula no próximo evento).
+        self._corpo.updateGeometry()
+        self._rolagem.widget().resize(self._rolagem.viewport().width(), max(self._corpo.sizeHint().height(), self._rolagem.viewport().height()))
+        if self._adicionando:  # formulário de novo cartão aberto: rola até ele
+            self._rolagem.ensureWidgetVisible(self._form, 0, 3 * tema.ESPACO)

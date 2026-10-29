@@ -23,3 +23,6 @@ venv/
 .vscode/
 .idea/
 .DS_Store
+
+# Instruções internas do Claude (ficam só na máquina)
+CLAUDE.md

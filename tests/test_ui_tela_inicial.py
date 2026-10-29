@@ -230,3 +230,24 @@ def test_recente_sem_categoria_mostra_a_categorizar(app, conn):
               for item in janela.findChildren(ItemLancamento) for lbl in item.findChildren(QLabel)]
     assert not any("nan" in t for t in textos)
     assert any("A categorizar" in t for t in textos)
+
+
+def test_rosca_com_dados_tem_grafico_com_a_serie(app, conn):
+    """Regressão: a rosca montava o gráfico mas não o entregava à vista (aparecia um retângulo branco)."""
+    from meu_cofre.ui.graficos import PainelRosca
+
+    _reg(conn, 5000, cat="Mercado")
+    _reg(conn, 3000, cat="Transporte")
+    janela = _janela(conn)
+    rosca = janela.findChild(PainelRosca)
+    janela.mostrar_painel(OPCAO_ROSCA)
+    QApplication.processEvents()
+    series = rosca._vista.chart().series()
+    assert len(series) == 1 and series[0].count() == 2
+    rosca.definir(lanc_top(conn), 2026, 10, True)  # redesenhar não pode cair
+    assert rosca._vista.chart().series()[0].count() == 2
+
+
+def lanc_top(conn):
+    from meu_cofre import relatorios
+    return relatorios.gastos_top_categorias(conn, 2026, 10)

@@ -365,27 +365,30 @@ class PainelFluxo(QWidget):
 # --- Rosca: para onde foi ---------------------------------------------------------------
 
 
-class _CentroRosca(QWidget):
-    """Total no meio da rosca (número grande + "gasto no mês"), desenhado por cima do gráfico."""
+class _VistaRosca(_Vista):
+    """Vista da rosca que desenha o total no furo, no primeiro plano da própria cena.
 
-    def __init__(self, vista: _Vista, parent: QWidget | None = None):
+    Antes era um QWidget sobreposto; numa janela real (Wayland) ele ganhava fundo opaco e
+    escondia a rosca inteira (offscreen não mostrava o problema).
+    """
+
+    def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
-        self._vista = vista
         self._total = ""
-        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
 
-    def definir(self, total_centavos: int) -> None:
+    def definir_total(self, total_centavos: int) -> None:
         self._total = formatar_brl(total_centavos)
-        self.update()
+        self.viewport().update()
 
-    def paintEvent(self, _evento) -> None:
-        grafico = self._vista.chart()
+    def drawForeground(self, p: QPainter, rect) -> None:
+        super().drawForeground(p, rect)
+        grafico = self.chart()
         if grafico is None or not self._total:
             return
         area = grafico.plotArea()
         diametro_furo = min(area.width(), area.height()) * ROSCA_TAMANHO * ROSCA_FURO
         centro = area.center()
-        p = QPainter(self)
+        p.save()
         p.setRenderHint(QPainter.RenderHint.TextAntialiasing)
 
         # Maior fonte (até 28 px) em que o total cabe dentro do furo.
@@ -393,7 +396,6 @@ class _CentroRosca(QWidget):
         fonte.setWeight(QFont.Weight.Bold)
         while fonte.pixelSize() > 12 and QFontMetrics(fonte).horizontalAdvance(self._total) > diametro_furo * 0.84:
             fonte.setPixelSize(fonte.pixelSize() - 1)
-        legenda = _fonte(12)
 
         p.setFont(fonte)
         p.setPen(QColor(tema.TEXTO))
@@ -403,14 +405,14 @@ class _CentroRosca(QWidget):
             Qt.AlignmentFlag.AlignCenter,
             self._total,
         )
-        p.setFont(legenda)
+        p.setFont(_fonte(12))
         p.setPen(QColor(tema.TEXTO_APAGADO))
         p.drawText(
             QRectF(centro.x() - diametro_furo / 2, centro.y() + 2, diametro_furo, p.fontMetrics().height() + 2),
             Qt.AlignmentFlag.AlignCenter,
             "gasto no mês",
         )
-        p.end()
+        p.restore()
 
 
 class _Legenda(QWidget):
@@ -453,18 +455,12 @@ class PainelRosca(QWidget):
 
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
-        self._vista = _Vista()
+        self._vista = _VistaRosca()
         self._vista.setMinimumSize(220, 220)
-        self._centro = _CentroRosca(self._vista)
         self._legenda = _Legenda()
         self._vazio = EstadoVazio("rosca")
 
-        area_rosca = QWidget()
-        sobreposto = QStackedLayout(area_rosca)
-        sobreposto.setStackingMode(QStackedLayout.StackingMode.StackAll)
-        sobreposto.setContentsMargins(0, 0, 0, 0)
-        sobreposto.addWidget(self._vista)
-        sobreposto.addWidget(self._centro)
+        area_rosca = self._vista
 
         conteudo = QWidget()
         self._linha = QBoxLayout(QBoxLayout.Direction.LeftToRight, conteudo)
@@ -508,7 +504,9 @@ class PainelRosca(QWidget):
             legenda.append((cor, linha.categoria, int(linha.centavos), float(linha.percentual)))
         serie.setPieSize(ROSCA_TAMANHO)
         grafico.addSeries(serie)
-        self._centro.definir(int(categorias["centavos"].sum()))
+        grafico._refs = (serie,)  # a série precisa viver tanto quanto o gráfico (senão segfault)
+        self._vista.setChart(grafico)
+        self._vista.definir_total(int(categorias["centavos"].sum()))
         self._legenda.definir(legenda)
         self._pilha.setCurrentWidget(self._conteudo)
 

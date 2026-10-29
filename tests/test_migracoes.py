@@ -113,6 +113,8 @@ def test_banco_novo_nasce_na_ultima_versao_sem_backup(tmp_path):
     conn = db.conectar(caminho)
     assert migracoes.versao(conn) == migracoes.ULTIMA_VERSAO
     assert {"assinatura", "pausada"} <= _colunas(conn, "recorrentes")
+    assert "final" in _colunas(conn, "contas")
+    assert {"cartao_id", "referencia", "transferencia_id"} <= _colunas(conn, "faturas_pagas")
     assert not (tmp_path / "backups").exists()
 
 
@@ -136,6 +138,25 @@ def test_banco_antigo_migra_preservando_dados_e_gera_backup(tmp_path):
     assert copia.execute("PRAGMA user_version").fetchone()[0] == 0  # o backup é o banco como estava
     assert "assinatura" not in {r[1] for r in copia.execute("PRAGMA table_info(recorrentes)")}
     copia.close()
+
+
+def test_v3_para_v4_acrescenta_final_e_faturas_pagas_sem_perder_dados(tmp_path):
+    caminho = tmp_path / "meu.db"
+    conn = db.conectar(caminho)
+    conn.execute("INSERT INTO lancamentos (conta_id, data, valor_centavos, descricao) VALUES (1, '2026-10-01', -1500, 'Pão')")
+    conn.execute("DROP TABLE faturas_pagas")
+    conn.execute("ALTER TABLE contas DROP COLUMN final")
+    conn.execute("PRAGMA user_version = 3")
+    conn.commit()
+    conn.close()
+
+    conn = db.conectar(caminho)
+    assert migracoes.versao(conn) == 4
+    assert "final" in _colunas(conn, "contas")
+    assert conn.execute("SELECT final FROM contas").fetchone()[0] is None
+    assert conn.execute("SELECT COUNT(*) FROM faturas_pagas").fetchone()[0] == 0
+    assert conn.execute("SELECT descricao FROM lancamentos").fetchone()[0] == "Pão"
+    assert len(list((tmp_path / "backups").glob("meu-*-v3.db"))) == 1
 
 
 def test_conectar_de_novo_nao_reaplica_nem_refaz_backup(tmp_path):

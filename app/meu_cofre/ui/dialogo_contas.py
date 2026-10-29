@@ -9,7 +9,8 @@ a janela principal para recarregar. Erros e confirmações aparecem na própria 
 import sqlite3
 from datetime import date
 
-from PySide6.QtCore import Qt, QTimer, Signal
+from PySide6.QtCore import QRegularExpression, Qt, QTimer, Signal
+from PySide6.QtGui import QRegularExpressionValidator
 from PySide6.QtWidgets import (
     QApplication,
     QDialog,
@@ -25,7 +26,7 @@ from PySide6.QtWidgets import (
 )
 
 from meu_cofre import cadastros
-from meu_cofre.lancamentos import formatar_brl, para_centavos
+from meu_cofre.lancamentos import formatar_brl, nome_com_final, para_centavos
 from meu_cofre.ui import tema
 from meu_cofre.ui.componentes import BotaoPrimario, BotaoSecundario, Cartao, CampoLista, Pilula, _espacar_letras, _repolir
 
@@ -80,7 +81,8 @@ def _saldo_texto(centavos: int) -> str:
     return formatar_brl(centavos).removeprefix("R$ ")
 
 
-def _detalhe_cartao(c: sqlite3.Row) -> str:
+def detalhe_cartao(c: sqlite3.Row) -> str:
+    """"Caixa · fecha dia 1 · vence dia 10" (o final do cartão vai no nome)."""
     partes = [c["banco"]] if c["banco"] else []
     if c["dia_fechamento"]:
         partes.append(f"fecha dia {c['dia_fechamento']}")
@@ -98,7 +100,7 @@ class DialogoContas(QDialog):
         super().__init__(parent)
         self.conn = conn
         self._hoje = hoje or date.today()
-        self._acao: tuple[str, int] | None = None  # ("renomear" | "desativar", id do cartão)
+        self._acao: tuple[str, int] | None = None  # ("renomear" | "editar" | "desativar", id do cartão)
         self._adicionando = False
         self._mostrar_desativados = False
         self._saldos: dict[int, QLineEdit] = {}
@@ -191,25 +193,29 @@ class DialogoContas(QDialog):
         self.novo_nome.setPlaceholderText("Ex.: Caixa Visa")
         self.novo_banco = QLineEdit()
         self.novo_banco.setPlaceholderText("Opcional")
+        self.novo_final = self._campo_final()
         self.novo_fechamento = self._combo_dia()
         self.novo_vencimento = self._combo_dia()
         for linha, (texto0, campo0, texto1, campo1) in enumerate(
             (
                 ("Nome", self.novo_nome, "Banco", self.novo_banco),
+                ("Final do cartão (4 dígitos)", self.novo_final, None, None),
                 ("Dia de fechamento", self.novo_fechamento, "Dia de vencimento", self.novo_vencimento),
             )
         ):
             base = 1 + linha * 2
             grade.addWidget(_rotulo(texto0, "CampoRotulo"), base, 0)
-            grade.addWidget(_rotulo(texto1, "CampoRotulo"), base, 1)
             grade.addWidget(campo0, base + 1, 0)
-            grade.addWidget(campo1, base + 1, 1)
+            if campo1 is not None:
+                grade.addWidget(_rotulo(texto1, "CampoRotulo"), base, 1)
+                grade.addWidget(campo1, base + 1, 1)
         self.erro_novo = _rotulo("", "CampoErro")
         self.erro_novo.setWordWrap(True)
         self.erro_novo.setFixedHeight(22)
-        grade.addWidget(self.erro_novo, 5, 0, 1, 2)
+        grade.addWidget(self.erro_novo, 7, 0, 1, 2)
 
         botoes = QHBoxLayout()
+        botoes.setSpacing(tema.ESPACO)
         botoes.addStretch(1)
         self.botao_cancelar_novo = _compacto(BotaoSecundario("Cancelar"))
         self.botao_cancelar_novo.clicked.connect(self.cancelar_adicao)
@@ -219,13 +225,23 @@ class DialogoContas(QDialog):
         self.botao_salvar_novo.clicked.connect(self.adicionar_cartao)
         botoes.addWidget(self.botao_cancelar_novo)
         botoes.addWidget(self.botao_salvar_novo)
-        grade.addLayout(botoes, 6, 0, 1, 2)
+        grade.addLayout(botoes, 8, 0, 1, 2)
 
         self.novo_nome.textChanged.connect(lambda _t: self._limpar_erro_novo())
+        self.novo_final.textChanged.connect(lambda _t: self._limpar_erro_novo())
         self.novo_nome.returnPressed.connect(self.adicionar_cartao)
         self.novo_banco.returnPressed.connect(self.adicionar_cartao)
+        self.novo_final.returnPressed.connect(self.adicionar_cartao)
         quadro.setVisible(False)
         return quadro
+
+    @staticmethod
+    def _campo_final() -> QLineEdit:
+        campo = QLineEdit()
+        campo.setPlaceholderText("Opcional, ex.: 1234")
+        campo.setMaxLength(4)
+        campo.setValidator(QRegularExpressionValidator(QRegularExpression(r"\d{0,4}")))
+        return campo
 
     @staticmethod
     def _combo_dia() -> CampoLista:
@@ -365,6 +381,8 @@ class DialogoContas(QDialog):
             return self._linha_confirmar_desativar(c)
         if self._acao == ("renomear", id_):
             return self._linha_renomear(c)
+        if self._acao == ("editar", id_):
+            return self._linha_editar(c)
 
         linha = QWidget()
         caixa = QHBoxLayout(linha)
@@ -373,7 +391,7 @@ class DialogoContas(QDialog):
 
         textos = QVBoxLayout()
         textos.setSpacing(2)
-        nome = _rotulo(c["nome"], "ContaNome")
+        nome = _rotulo(nome_com_final(c["nome"], c["final"]), "ContaNome")
         nome.setProperty("inativo", not c["ativa"])
         topo = QHBoxLayout()
         topo.setSpacing(tema.ESPACO)
@@ -382,7 +400,7 @@ class DialogoContas(QDialog):
             topo.addWidget(Pilula("desativado"))
         topo.addStretch(1)
         textos.addLayout(topo)
-        textos.addWidget(_rotulo(_detalhe_cartao(c), "ContaDetalhe"))
+        textos.addWidget(_rotulo(detalhe_cartao(c), "ContaDetalhe"))
         caixa.addLayout(textos, 1)
 
         aberto = cadastros.divida_do_cartao(self.conn, id_)
@@ -400,7 +418,10 @@ class DialogoContas(QDialog):
             renomear.clicked.connect(lambda _c=False, i=id_: self.pedir_renomear(i))
             desativar = _compacto(BotaoSecundario("Desativar"), perigo=True)
             desativar.clicked.connect(lambda _c=False, i=id_: self.pedir_desativar(i))
+            editar = _compacto(BotaoSecundario("Editar"))
+            editar.clicked.connect(lambda _c=False, i=id_: self.pedir_editar(i))
             caixa.addWidget(renomear)
+            caixa.addWidget(editar)
             caixa.addWidget(desativar)
         else:
             reativar = _compacto(BotaoSecundario("Reativar"))
@@ -455,6 +476,59 @@ class DialogoContas(QDialog):
         coluna.addWidget(self.erro_renomear)
         self.campo_renomear.setFocus()
         return linha
+
+    def _linha_editar(self, c: sqlite3.Row) -> QWidget:
+        """Banco, final e dias de fechamento e vencimento do cartão (o nome é no Renomear)."""
+        quadro = QFrame()
+        quadro.setObjectName("FormCartao")
+        grade = QGridLayout(quadro)
+        p = 2 * tema.ESPACO
+        grade.setContentsMargins(p, p, p, p)
+        grade.setHorizontalSpacing(2 * tema.ESPACO)
+        grade.setVerticalSpacing(4)
+        grade.setColumnStretch(0, 1)
+        grade.setColumnStretch(1, 1)
+        grade.addWidget(_legenda(f"Editar {c['nome']}"), 0, 0, 1, 2)
+        grade.setRowMinimumHeight(0, 22)
+        self.editar_banco = QLineEdit(c["banco"] or "")
+        self.editar_banco.setPlaceholderText("Opcional")
+        self.editar_final = self._campo_final()
+        self.editar_final.setText(c["final"] or "")
+        self.editar_fechamento = self._combo_dia()
+        self.editar_fechamento.setCurrentIndex(max(self.editar_fechamento.findData(c["dia_fechamento"]), 0))
+        self.editar_vencimento = self._combo_dia()
+        self.editar_vencimento.setCurrentIndex(max(self.editar_vencimento.findData(c["dia_vencimento"]), 0))
+        for linha, (texto0, campo0, texto1, campo1) in enumerate(
+            (
+                ("Banco", self.editar_banco, "Final do cartão (4 dígitos)", self.editar_final),
+                ("Dia de fechamento", self.editar_fechamento, "Dia de vencimento", self.editar_vencimento),
+            )
+        ):
+            base = 1 + linha * 2
+            grade.addWidget(_rotulo(texto0, "CampoRotulo"), base, 0)
+            grade.addWidget(_rotulo(texto1, "CampoRotulo"), base, 1)
+            grade.addWidget(campo0, base + 1, 0)
+            grade.addWidget(campo1, base + 1, 1)
+        self.erro_editar = _rotulo("", "CampoErro")
+        self.erro_editar.setWordWrap(True)
+        self.erro_editar.setFixedHeight(22)
+        grade.addWidget(self.erro_editar, 5, 0, 1, 2)
+        botoes = QHBoxLayout()
+        botoes.setSpacing(tema.ESPACO)
+        botoes.addStretch(1)
+        cancelar = _compacto(BotaoSecundario("Cancelar"))
+        cancelar.clicked.connect(self.cancelar_acao)
+        salvar = BotaoPrimario("Salvar")
+        salvar.setProperty("compacto", True)
+        salvar.setAutoDefault(False)
+        salvar.clicked.connect(self.salvar_edicao)
+        botoes.addWidget(cancelar)
+        botoes.addWidget(salvar)
+        grade.addLayout(botoes, 6, 0, 1, 2)
+        self.editar_banco.returnPressed.connect(self.salvar_edicao)
+        self.editar_final.returnPressed.connect(self.salvar_edicao)
+        self.editar_final.textChanged.connect(lambda _t: self.erro_editar.setText(""))
+        return quadro
 
     # --- Ações dos cartões ------------------------------------------------------------------
     def _mostrar_erro_geral(self, texto: str) -> None:
@@ -517,6 +591,31 @@ class DialogoContas(QDialog):
             self.campo_renomear.setProperty("erro", False)
             _repolir(self.campo_renomear)
 
+    def pedir_editar(self, conta_id: int) -> None:
+        self._limpar_erro_geral()
+        self._acao = ("editar", conta_id)
+        self._carregar_cartoes()
+
+    def salvar_edicao(self) -> bool:
+        if not self._acao or self._acao[0] != "editar":
+            return False
+        id_ = self._acao[1]
+        nome = cadastros._conta(self.conn, id_)["nome"]
+        try:
+            cadastros.editar_cartao(
+                self.conn,
+                id_,
+                banco=self.editar_banco.text(),
+                dia_fechamento=self.editar_fechamento.currentData(),
+                dia_vencimento=self.editar_vencimento.currentData(),
+                final=self.editar_final.text(),
+            )
+        except ValueError as erro:
+            self.erro_editar.setText(f"!  {erro}")
+            return False
+        self._gravou(f"Cartão atualizado: {nome}")
+        return True
+
     def cancelar_acao(self) -> None:
         self._acao = None
         self._carregar_cartoes()
@@ -532,7 +631,7 @@ class DialogoContas(QDialog):
         self._limpar_erro_geral()
         self._acao = None
         self._adicionando = True
-        for campo in (self.novo_nome, self.novo_banco):
+        for campo in (self.novo_nome, self.novo_banco, self.novo_final):
             campo.clear()
         self.novo_fechamento.setCurrentIndex(0)
         self.novo_vencimento.setCurrentIndex(0)
@@ -552,6 +651,7 @@ class DialogoContas(QDialog):
                 self.novo_banco.text(),
                 self.novo_fechamento.currentData(),
                 self.novo_vencimento.currentData(),
+                self.novo_final.text(),
             )
         except ValueError as erro:
             self.erro_novo.setText(f"!  {erro}")

@@ -37,6 +37,23 @@ MIGRACOES: dict[int, list[str]] = {
     PRIMARY KEY (recorrente_id, mes)
 )""",
     ],
+    # v4: cartões e faturas (F6).
+    #  - contas.final: os 4 últimos dígitos do cartão ("Caixa Visa •••• 1234"), opcional.
+    #  - faturas_pagas: uma linha por fatura paga ('AAAA-MM' = mês do vencimento). Liga a fatura à
+    #    transferência conta -> cartão que a pagou (`transferencia_id`), pra poder desfazer.
+    4: [
+        "ALTER TABLE contas ADD COLUMN final TEXT",
+        """CREATE TABLE IF NOT EXISTS faturas_pagas (
+    id               INTEGER PRIMARY KEY,
+    cartao_id        INTEGER NOT NULL REFERENCES contas (id),
+    referencia       TEXT    NOT NULL,
+    valor_centavos   INTEGER NOT NULL,
+    data             TEXT    NOT NULL,
+    conta_origem_id  INTEGER NOT NULL REFERENCES contas (id),
+    transferencia_id TEXT    NOT NULL,
+    UNIQUE (cartao_id, referencia)
+)""",
+    ],
 }
 ULTIMA_VERSAO = max(MIGRACOES)
 

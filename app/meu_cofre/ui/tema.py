@@ -158,15 +158,15 @@ QPushButton#BotaoMes:disabled {{ color: {BORDA}; border-color: {BORDA}; backgrou
 #CampoErro {{ font-size: {PX_RODAPE}px; font-weight: 600; color: {VERMELHO}; }}
 #AvisoSalvo {{ font-size: {PX_TEXTO}px; font-weight: 600; color: {VERDE}; }}
 #ConfirmaTexto {{ font-size: {PX_TEXTO}px; font-weight: 600; color: {TEXTO}; }}
-#Dialogo QLineEdit, #Dialogo QComboBox, #Dialogo QDateEdit {{
+#Dialogo QLineEdit, #Dialogo QComboBox, #Dialogo QDateEdit, #FormPagamento QLineEdit, #FormPagamento QComboBox, #FormPagamento QDateEdit {{
     background: {FUNDO}; color: {TEXTO}; border: 1px solid {BORDA}; border-radius: 8px;
     padding: 0 12px; min-height: 38px; selection-background-color: {VERDE}; selection-color: {TEXTO_SOBRE_VERDE}; }}
-#Dialogo QLineEdit:hover, #Dialogo QComboBox:hover, #Dialogo QDateEdit:hover {{ border-color: {TEXTO_APAGADO}; }}
-#Dialogo QLineEdit:focus, #Dialogo QComboBox:focus, #Dialogo QDateEdit:focus {{ border-color: {VERDE}; }}
-#Dialogo QLineEdit[erro="true"] {{ border-color: {VERMELHO}; }}
-#Dialogo QLineEdit#CampoValor {{ font-size: {PX_VALOR}px; font-weight: 700; min-height: 44px; }}
-#Dialogo QComboBox::drop-down, #Dialogo QDateEdit::drop-down {{ width: 30px; border: none; background: transparent; }}
-#Dialogo QComboBox::down-arrow, #Dialogo QDateEdit::down-arrow {{ image: none; width: 0; height: 0; }}
+#Dialogo QLineEdit:hover, #Dialogo QComboBox:hover, #Dialogo QDateEdit:hover, #FormPagamento QLineEdit:hover, #FormPagamento QComboBox:hover, #FormPagamento QDateEdit:hover {{ border-color: {TEXTO_APAGADO}; }}
+#Dialogo QLineEdit:focus, #Dialogo QComboBox:focus, #Dialogo QDateEdit:focus, #FormPagamento QLineEdit:focus, #FormPagamento QComboBox:focus, #FormPagamento QDateEdit:focus {{ border-color: {VERDE}; }}
+#Dialogo QLineEdit[erro="true"], #FormPagamento QLineEdit[erro="true"] {{ border-color: {VERMELHO}; }}
+#Dialogo QLineEdit#CampoValor, #FormPagamento QLineEdit#CampoValor {{ font-size: {PX_VALOR}px; font-weight: 700; min-height: 44px; }}
+#Dialogo QComboBox::drop-down, #Dialogo QDateEdit::drop-down, #FormPagamento QComboBox::drop-down, #FormPagamento QDateEdit::drop-down {{ width: 30px; border: none; background: transparent; }}
+#Dialogo QComboBox::down-arrow, #Dialogo QDateEdit::down-arrow, #FormPagamento QComboBox::down-arrow, #FormPagamento QDateEdit::down-arrow {{ image: none; width: 0; height: 0; }}
 QComboBox QAbstractItemView, QListView#CompletarPopup {{
     background: {CARTAO_ELEVADO}; color: {TEXTO}; border: 1px solid {BORDA}; border-radius: 8px;
     padding: 4px; outline: none; selection-background-color: {VERDE_SUAVE}; selection-color: {VERDE}; }}
@@ -224,6 +224,25 @@ QPushButton#BotaoAcao[perigo="true"]:hover {{ background: {VERMELHO_SUAVE}; bord
 #RecorrenteNome[apagada="true"] {{ color: {TEXTO_APAGADO}; }}
 #RecorrenteValor {{ font-size: {PX_TEXTO + 2}px; font-weight: 700; color: {TEXTO}; }}
 #RecorrenteValor[apagada="true"] {{ color: {TEXTO_APAGADO}; }}
+
+/* Aba "Cartões" */
+#FormPagamento {{ background: {CARTAO_ELEVADO}; border: 1px solid {BORDA}; border-radius: 10px; }}
+#FaturaCard {{ background: transparent; border: 1px solid {BORDA}; border-radius: 10px; }}
+#FaturaCabecalho {{ background: transparent; border: none; border-radius: 10px; }}
+#FaturaCabecalho:hover {{ background: {CARTAO_ELEVADO}; }}
+#FaturaSeta {{ font-size: {PX_RODAPE + 1}px; color: {TEXTO_APAGADO}; }}
+#FaturaNome {{ font-size: {PX_TEXTO + 1}px; font-weight: 600; color: {TEXTO}; }}
+#FaturaNome[paga="true"] {{ color: {TEXTO_SECUNDARIO}; }}
+#FaturaTotal {{ font-size: {PX_TEXTO + 2}px; font-weight: 700; color: {TEXTO}; }}
+#FaturaTotal[paga="true"] {{ color: {TEXTO_SECUNDARIO}; }}
+#CompraData {{ font-size: {PX_RODAPE}px; color: {TEXTO_APAGADO}; }}
+#CompraDescricao {{ font-size: {PX_TEXTO}px; font-weight: 600; color: {TEXTO}; }}
+#CompraDescricao[paga="true"] {{ color: {TEXTO_SECUNDARIO}; }}
+#CompraValor {{ font-size: {PX_TEXTO}px; font-weight: 600; color: {TEXTO}; }}
+#CompraValor[paga="true"] {{ color: {TEXTO_SECUNDARIO}; }}
+#CompraPago {{ font-size: {PX_RODAPE}px; color: {TEXTO_APAGADO}; }}
+#ParcelaTag {{ font-size: {PX_RODAPE}px; font-weight: 700; padding: 1px 8px; border-radius: 9px;
+    background: {VERDE_SUAVE}; border: 1px solid {VERDE_SUAVE_BORDA}; color: {VERDE}; }}
 
 /* Barra de rolagem fina */
 QScrollBar:vertical {{ background: transparent; width: 10px; margin: 2px; }}

@@ -31,7 +31,7 @@ from PySide6.QtWidgets import (
 )
 
 from meu_cofre import lancamentos, recorrentes
-from meu_cofre.lancamentos import METODOS, formatar_brl, para_centavos
+from meu_cofre.lancamentos import METODOS, formatar_brl, nome_com_final, para_centavos
 from meu_cofre.ui import tema
 from meu_cofre.ui.componentes import (
     BotaoPrimario,
@@ -403,10 +403,11 @@ class DialogoLancamento(QDialog):
         self.conta.setCurrentIndex(max(self.conta.findText("Inter"), 0))
 
         # Cartões para escolher: os ativos (e, ao editar, o da compra, mesmo que já desativado).
-        self._cartoes = [(c["id"], c["nome"]) for c in lancamentos.cartoes_ativos(self.conn)]
+        self._cartoes = [(c["id"], nome_com_final(c["nome"], c["final"])) for c in lancamentos.cartoes_ativos(self.conn)]
         original = self._original
         if original and original["metodo"] == "cartao" and original["conta_id"] not in [i for i, _ in self._cartoes]:
-            self._cartoes.append((original["conta_id"], f"{original['conta']} (desativado)"))
+            nome = nome_com_final(original["conta"], original["conta_final"])
+            self._cartoes.append((original["conta_id"], f"{nome} (desativado)"))
         for id_cartao, nome in self._cartoes:
             self.cartao.addItem(nome, id_cartao)
         self.cartao.setCurrentIndex(max(self.cartao.findData(lancamentos.ultimo_cartao_usado(self.conn)), 0))
@@ -449,7 +450,7 @@ class DialogoLancamento(QDialog):
     # --- Preenchimento (modo editar) -----------------------------------------------------
     @staticmethod
     def _texto_detalhes(l: dict) -> str:
-        conta = l["conta"]
+        conta = nome_com_final(l["conta"], l["conta_final"])
         if l["metodo"] in METODOS:
             conta += f" · {METODOS[l['metodo']]}"
         if l["grupo_parcelas"]:

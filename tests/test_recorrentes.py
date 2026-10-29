@@ -419,6 +419,8 @@ def test_migracao_v2_para_v3_preserva_dados_e_cria_backup(tmp_path):
     db.conectar(caminho).close()
     c = sqlite3.connect(caminho)
     c.execute("DROP TABLE recorrentes_meses")
+    c.execute("DROP TABLE faturas_pagas")  # o banco de teste já nasce na última versão: tira o que é da v4
+    c.execute("ALTER TABLE contas DROP COLUMN final")
     c.execute("PRAGMA user_version = 2")
     c.execute("INSERT INTO recorrentes (descricao, valor_centavos, conta_id, dia_do_mes, inicio, assinatura) "
               "VALUES ('Netflix', -4490, 3, 7, '2026-01-01', 1)")
@@ -426,7 +428,7 @@ def test_migracao_v2_para_v3_preserva_dados_e_cria_backup(tmp_path):
     c.close()
 
     conn = db.conectar(caminho)
-    assert migracoes.versao(conn) == migracoes.ULTIMA_VERSAO == 3
+    assert migracoes.versao(conn) == migracoes.ULTIMA_VERSAO
     assert conn.execute("SELECT descricao, valor_centavos FROM recorrentes").fetchone()[:] == ("Netflix", -4490)
     colunas = {r["name"] for r in conn.execute("PRAGMA table_info(recorrentes_meses)")}
     assert colunas == {"recorrente_id", "mes", "lancamento_id"}

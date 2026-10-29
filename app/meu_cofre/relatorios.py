@@ -7,9 +7,12 @@ from datetime import date
 
 import pandas as pd
 
-# Lançamentos que contam como renda/gasto: tudo que não é transferência.
+from meu_cofre.lancamentos import data_no_mes
+
+# Lançamentos que contam como renda/gasto: tudo que não é transferência (`ct` = a conta do lançamento).
 _SEM_TRANSFERENCIA = """
     FROM lancamentos l
+    JOIN contas ct ON ct.id = l.conta_id
     LEFT JOIN categorias c ON c.id = l.categoria_id
     WHERE COALESCE(c.tipo, '') <> 'transferencia'
       AND COALESCE(l.metodo, '') <> 'transferencia'
@@ -47,6 +50,29 @@ def resumo_mes(conn: sqlite3.Connection, ano: int, mes: int) -> ResumoMes:
         (inicio.isoformat(), fim.isoformat()),
     ).fetchone()
     return ResumoMes(entradas=linha["entradas"], saidas=linha["saidas"])
+
+
+def gastei_no_mes(conn: sqlite3.Connection, ano: int, mes: int, ate: date | None = None) -> tuple[int, int, int]:
+    """O que se gastou no mês, sem transferências: (total, já saiu da conta, no cartão), centavos positivos.
+
+    "Já saiu da conta" = saídas em Pix, débito, dinheiro, boleto (contas que não são cartão); "no cartão" =
+    compras no cartão, que só saem da conta quando a fatura é paga. `ate` corta os dias depois dele (a tela
+    inicial passa hoje, pra o que está só previsto não contar como gasto).
+    """
+    inicio, fim = limites_do_mes(ano, mes)
+    if ate is not None:
+        fim = min(fim, ate)
+    linha = conn.execute(
+        f"""
+        SELECT COALESCE(SUM(CASE WHEN ct.tipo <> 'cartao' THEN -l.valor_centavos END), 0) AS conta,
+               COALESCE(SUM(CASE WHEN ct.tipo = 'cartao' THEN -l.valor_centavos END), 0) AS cartao
+        {_SEM_TRANSFERENCIA}
+          AND l.valor_centavos < 0
+          AND l.data BETWEEN ? AND ?
+        """,
+        (inicio.isoformat(), fim.isoformat()),
+    ).fetchone()
+    return linha["conta"] + linha["cartao"], linha["conta"], linha["cartao"]
 
 
 def gastos_por_categoria(conn: sqlite3.Connection, ano: int, mes: int) -> pd.DataFrame:
@@ -249,3 +275,56 @@ def gastos_top_categorias(conn: sqlite3.Connection, ano: int, mes: int, n: int =
     saida["centavos"] = saida["centavos"].astype("int64")
     saida["percentual"] = saida["centavos"] / total * 100
     return saida
+
+
+def comprometido_proximos_meses(conn: sqlite3.Connection, hoje: date, meses: int = 6) -> pd.DataFrame:
+    """Quanto já está comprometido (saídas) em cada um dos próximos `meses` meses, a partir do mês seguinte.
+
+    Soma o que já está lançado (parcelas, previstos) e o que as recorrentes ativas ainda vão gerar nesses
+    meses (projetado a partir do molde, sem gravar). Separa o que cai no cartão do que cai nas contas
+    (corrente, dinheiro). O mês é o da data do lançamento, não o do vencimento da fatura.
+    Colunas: mes ('AAAA-MM'), cartao, contas, total (centavos, positivos); uma linha por mês, mesmo zerado.
+    """
+    chaves, ano, mes = [], hoje.year, hoje.month
+    for _ in range(meses):
+        ano, mes = (ano, mes + 1) if mes < 12 else (ano + 1, 1)
+        chaves.append((ano, mes))
+    inicio = date(*chaves[0], 1)
+    fim = limites_do_mes(*chaves[-1])[1]
+    por_mes = {f"{a}-{m:02d}": {"cartao": 0, "contas": 0} for a, m in chaves}
+
+    lancados = conn.execute(
+        f"""
+        SELECT substr(l.data, 1, 7) AS mes, ct.tipo = 'cartao' AS no_cartao, -SUM(l.valor_centavos) AS centavos
+        {_SEM_TRANSFERENCIA}
+          AND l.valor_centavos < 0
+          AND l.data BETWEEN ? AND ?
+        GROUP BY 1, 2
+        """,
+        (inicio.isoformat(), fim.isoformat()),
+    )
+    for r in lancados:
+        por_mes[r["mes"]]["cartao" if r["no_cartao"] else "contas"] += r["centavos"]
+
+    ja_gerados = {(r["recorrente_id"], r["mes"]) for r in conn.execute("SELECT recorrente_id, mes FROM recorrentes_meses")}
+    moldes = conn.execute(
+        """
+        SELECT r.id, r.valor_centavos, r.dia_do_mes, r.inicio, r.fim, ct.tipo
+        FROM recorrentes r JOIN contas ct ON ct.id = r.conta_id
+        WHERE r.ativa = 1 AND r.pausada = 0 AND r.valor_centavos < 0
+        """
+    ).fetchall()
+    for molde in moldes:
+        for a, m in chaves:
+            chave = f"{a}-{m:02d}"
+            data = data_no_mes(a, m, molde["dia_do_mes"])
+            if (molde["id"], chave) in ja_gerados or data < date.fromisoformat(molde["inicio"]):
+                continue
+            if molde["fim"] and data > date.fromisoformat(molde["fim"]):
+                continue
+            por_mes[chave]["cartao" if molde["tipo"] == "cartao" else "contas"] += -molde["valor_centavos"]
+
+    linhas = [{"mes": k, "cartao": v["cartao"], "contas": v["contas"], "total": v["cartao"] + v["contas"]} for k, v in por_mes.items()]
+    return pd.DataFrame(linhas, columns=["mes", "cartao", "contas", "total"]).astype(
+        {"cartao": "int64", "contas": "int64", "total": "int64"}
+    )

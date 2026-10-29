@@ -155,6 +155,16 @@ def _dia(valor: int | None, rotulo: str) -> int | None:
     return valor
 
 
+def _final(valor: str | None) -> str | None:
+    """Os 4 últimos dígitos do cartão: vazio vira None; senão tem de ser exatamente 4 dígitos."""
+    texto = (valor or "").strip()
+    if not texto:
+        return None
+    if not (len(texto) == 4 and texto.isascii() and texto.isdigit()):
+        raise ValueError("O final do cartão tem 4 dígitos, como 1234.")
+    return texto
+
+
 def contas_por_tipo(
     conn: sqlite3.Connection, tipos: tuple[str, ...], incluir_inativas: bool = False
 ) -> list[sqlite3.Row]:
@@ -172,17 +182,61 @@ def criar_cartao(
     banco: str | None = None,
     dia_fechamento: int | None = None,
     dia_vencimento: int | None = None,
+    final: str | None = None,
 ) -> int:
-    """Cria um cartão de crédito ativo e devolve o id. Nome único; dias de 1 a 31 (opcionais)."""
+    """Cria um cartão de crédito ativo e devolve o id. Nome único; dias de 1 a 31 e final (4 dígitos) opcionais."""
     nome = _nome_livre(conn, nome)
     banco = (banco or "").strip() or None
     fechamento = _dia(dia_fechamento, "fechamento")
     vencimento = _dia(dia_vencimento, "vencimento")
+    final = _final(final)
     with conn:
         return conn.execute(
-            "INSERT INTO contas (nome, tipo, banco, dia_fechamento, dia_vencimento) VALUES (?, 'cartao', ?, ?, ?)",
-            (nome, banco, fechamento, vencimento),
+            "INSERT INTO contas (nome, tipo, banco, dia_fechamento, dia_vencimento, final)"
+            " VALUES (?, 'cartao', ?, ?, ?, ?)",
+            (nome, banco, fechamento, vencimento, final),
         ).lastrowid
+
+
+def _cartao(conn: sqlite3.Connection, conta_id: int) -> sqlite3.Row:
+    conta = _conta(conn, conta_id)
+    if conta["tipo"] != "cartao":
+        raise ValueError(f"{conta['nome']} não é um cartão.")
+    return conta
+
+
+def editar_cartao(
+    conn: sqlite3.Connection,
+    conta_id: int,
+    *,
+    banco: str | None,
+    dia_fechamento: int | None,
+    dia_vencimento: int | None,
+    final: str | None,
+) -> None:
+    """Troca banco, dias de fechamento e vencimento e final do cartão (None/vazio limpa o campo).
+
+    Mudar os dias muda a fatura em que cada compra cai (a regra é aplicada na hora de mostrar),
+    mas não mexe em faturas já marcadas como pagas.
+    """
+    _cartao(conn, conta_id)
+    banco = (banco or "").strip() or None
+    fechamento = _dia(dia_fechamento, "fechamento")
+    vencimento = _dia(dia_vencimento, "vencimento")
+    final = _final(final)
+    with conn:
+        conn.execute(
+            "UPDATE contas SET banco = ?, dia_fechamento = ?, dia_vencimento = ?, final = ? WHERE id = ?",
+            (banco, fechamento, vencimento, final, conta_id),
+        )
+
+
+def definir_final(conn: sqlite3.Connection, conta_id: int, final: str | None) -> None:
+    """Os 4 últimos dígitos do cartão (vazio apaga)."""
+    _cartao(conn, conta_id)
+    final = _final(final)
+    with conn:
+        conn.execute("UPDATE contas SET final = ? WHERE id = ?", (final, conta_id))
 
 
 def renomear_conta(conn: sqlite3.Connection, conta_id: int, nome: str) -> None:

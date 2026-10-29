@@ -1,6 +1,6 @@
-"""Janela principal (docs/design/telas.md): abas "Início" e "Assinaturas/fixos" com dados reais.
+"""Janela principal (docs/design/telas.md): abas "Início", "Assinaturas/fixos" e "Cartões" com dados reais.
 
-Início: painel (gráficos do mês escolhido), resumo e recentes (sempre "agora"), em 2 colunas ou 1.
+Início: painel (gráficos do mês escolhido, ou os próximos meses), resumo e recentes (sempre "agora"), em 2 colunas ou 1.
 `atualizar()` gera as recorrentes do mês e recarrega tudo; os diálogos chamam depois de salvar ou excluir.
 """
 
@@ -24,24 +24,26 @@ from PySide6.QtWidgets import (
 )
 
 from meu_cofre import lancamentos, recorrentes, relatorios
-from meu_cofre.lancamentos import formatar_brl, formatar_brl_inteiro
+from meu_cofre.lancamentos import formatar_brl, formatar_brl_inteiro, nome_com_final
 from meu_cofre.ui import tema
 from meu_cofre.ui.componentes import (
     BotaoPrimario,
     BotaoSecundario,
     Cartao,
     ItemLancamento,
-    LinhaResponsiva,
+    GradeResponsiva,
     NumeroDestaque,
     Pilula,
     Segmentado,
 )
+from meu_cofre.ui.aba_cartoes import AbaCartoes
 from meu_cofre.ui.aba_recorrentes import AbaRecorrentes
 from meu_cofre.ui.dialogo_contas import DialogoContas
 from meu_cofre.ui.dialogo_lancamento import DialogoLancamento
 from meu_cofre.ui.graficos import (
     MESES_CURTOS,
     OPCAO_FLUXO,
+    OPCAO_PROXIMOS,
     OPCAO_ROSCA,
     EstadoVazio,
     PainelGraficos,
@@ -49,9 +51,10 @@ from meu_cofre.ui.graficos import (
 )
 
 LARGURA_DUAS_COLUNAS = 1100  # abaixo disso, RECENTES desce para baixo do RESUMO
-ABA_INICIO, ABA_RECORRENTES = "Início", "Assinaturas/fixos"
-ABAS = {"inicio": ABA_INICIO, "recorrentes": ABA_RECORRENTES}
-OPCOES_PAINEL = [OPCAO_FLUXO, OPCAO_ROSCA]
+ABA_INICIO, ABA_RECORRENTES, ABA_CARTOES = "Início", "Assinaturas/fixos", "Cartões"
+ABAS = {"inicio": ABA_INICIO, "recorrentes": ABA_RECORRENTES, "cartoes": ABA_CARTOES}
+OPCOES_PAINEL = [OPCAO_FLUXO, OPCAO_ROSCA, OPCAO_PROXIMOS]
+MESES_PROXIMOS = 6
 OPCOES_RECENTES = {"Todos": "todos", "Entradas": "entradas", "Saídas": "saidas"}
 VAZIO_RECENTES = {
     "todos": "Nenhum lançamento ainda",
@@ -67,6 +70,11 @@ def _data_curta(dia: date, hoje: date) -> str:
     if (hoje - dia).days == 1:
         return "ontem"
     return f"{dia.day} {MESES_CURTOS[dia.month - 1]}"
+
+
+def _sem_quebra(texto: str) -> str:
+    """Troca o espaço de "R$ 1.267" por um que não quebra a linha (o valor não se parte no meio)."""
+    return texto.replace(" ", "\u00a0")
 
 
 class JanelaPrincipal(QMainWindow):
@@ -122,9 +130,12 @@ class JanelaPrincipal(QMainWindow):
 
         self.aba_recorrentes = AbaRecorrentes(self.conn, self._hoje)
         self.aba_recorrentes.alterado.connect(self._lancamento_gravado)
+        self.aba_cartoes = AbaCartoes(self.conn, self._hoje)
+        self.aba_cartoes.alterado.connect(self._lancamento_gravado)
         self._paginas = QStackedWidget()
         self._paginas.addWidget(rolagem)
         self._paginas.addWidget(self.aba_recorrentes)
+        self._paginas.addWidget(self.aba_cartoes)
         coluna.addWidget(self._paginas, 1)
 
     def _montar_cabecalho(self) -> QWidget:
@@ -138,7 +149,7 @@ class JanelaPrincipal(QMainWindow):
         marca.setObjectName("Marca")
         linha.addWidget(marca, 0, Qt.AlignmentFlag.AlignVCenter)
 
-        self.abas = Segmentado([ABA_INICIO, ABA_RECORRENTES])
+        self.abas = Segmentado([ABA_INICIO, ABA_RECORRENTES, ABA_CARTOES])
         self.abas.escolhido.connect(self._trocar_aba)
         linha.addSpacing(tema.ESPACO)
         linha.addWidget(self.abas, 0, Qt.AlignmentFlag.AlignVCenter)
@@ -193,13 +204,14 @@ class JanelaPrincipal(QMainWindow):
         cartao = Cartao("Resumo")
         self._em_conta = NumeroDestaque("Em conta", "", "Saldo de hoje nas contas e na carteira")
         self._devo = NumeroDestaque("Devo", "", "Cartão em aberto, com parcelas futuras")
+        self._gastei = NumeroDestaque("Gastei no mês", "", "")
         self._livre = NumeroDestaque("Livre até o fim do mês", "", "Depois do cartão e do que ainda vai sair", destaque=True)
         self._pilula_livre = Pilula("", "neutra")
         self._livre.adicionar(self._pilula_livre)
-        linha = LinhaResponsiva(largura_minima_item=220, espaco=3 * tema.ESPACO)
-        for numero in (self._em_conta, self._devo, self._livre):
-            linha.adicionar(numero)
-        cartao.corpo.addWidget(linha)
+        grade = GradeResponsiva(largura_minima_item=185, espaco=3 * tema.ESPACO)
+        for numero in (self._em_conta, self._devo, self._gastei, self._livre):
+            grade.adicionar(numero)
+        cartao.corpo.addWidget(grade)
         return cartao
 
     def _montar_recentes(self) -> Cartao:
@@ -224,6 +236,7 @@ class JanelaPrincipal(QMainWindow):
         self._carregar_recentes()
         self._carregar_painel()
         self.aba_recorrentes.recarregar()
+        self.aba_cartoes.recarregar()
 
     def _carregar_resumo(self) -> None:
         hoje = self._hoje()
@@ -232,6 +245,11 @@ class JanelaPrincipal(QMainWindow):
         self._em_conta.definir(formatar_brl(em_conta))
         self._devo.definir(formatar_brl(relatorios.devo(self.conn)))
         self._livre.definir(formatar_brl(livre))
+        total, da_conta, no_cartao = relatorios.gastei_no_mes(self.conn, hoje.year, hoje.month, ate=hoje)
+        self._gastei.definir(
+            formatar_brl(total),
+            f"{_sem_quebra(formatar_brl_inteiro(da_conta))} já saiu da conta · {_sem_quebra(formatar_brl_inteiro(no_cartao))} no cartão",
+        )
         if livre < 0:
             self._pilula_livre.definir(f"{formatar_brl_inteiro(-livre)} acima do disponível", "atencao")
         else:
@@ -255,7 +273,7 @@ class JanelaPrincipal(QMainWindow):
                 int(linha.id),
                 linha.descricao,
                 "A categorizar" if pd.isna(linha.categoria) else linha.categoria,  # NaN do pandas é truthy
-                linha.conta,
+                nome_com_final(linha.conta, linha.conta_final),
                 _data_curta(linha.data.date(), hoje),
                 int(linha.valor_centavos),
                 parcela,
@@ -272,10 +290,23 @@ class JanelaPrincipal(QMainWindow):
         mes_atual = (ano, mes) == (hoje.year, hoje.month)
         gastos_dia = relatorios.gastos_por_dia(self.conn, ano, mes, hoje if mes_atual else None)
         categorias = relatorios.gastos_top_categorias(self.conn, ano, mes)
-        self._painel_grafico.atualizar(ano, mes, mes_atual, gastos_dia, categorias)
+        comprometido = relatorios.comprometido_proximos_meses(self.conn, hoje, MESES_PROXIMOS)
+        self._painel_grafico.atualizar(ano, mes, mes_atual, gastos_dia, categorias, comprometido)
         self.rotulo_mes.setText(nome_do_mes(ano, mes))
-        self._cartao_painel.subtitulo.setText(nome_do_mes(ano, mes))
+        self._atualizar_subtitulo_painel()
         self.botao_mes_seguinte.setEnabled(not mes_atual)
+
+    def _atualizar_subtitulo_painel(self) -> None:
+        if self.seletor_painel.atual() == OPCAO_PROXIMOS:
+            self._cartao_painel.subtitulo.setText(f"Próximos {MESES_PROXIMOS} meses · o que já está garantido")
+        else:
+            self._cartao_painel.subtitulo.setText(nome_do_mes(*self._mes))
+
+    def _atualizar_navegacao_mes(self) -> None:
+        """Os botões de mês são do painel da tela inicial, e só valem pros gráficos do mês."""
+        visivel = self.aba_atual == "inicio" and self.seletor_painel.atual() != OPCAO_PROXIMOS
+        for w in self._navegacao_mes:
+            w.setVisible(visivel)
 
     # --- Comportamento -----------------------------------------------------------
     def _mudar_mes(self, passo: int) -> None:
@@ -290,27 +321,28 @@ class JanelaPrincipal(QMainWindow):
         self._carregar_painel()
 
     def _trocar_aba(self, rotulo: str) -> None:
-        self._paginas.setCurrentIndex(0 if rotulo == ABA_INICIO else 1)
-        for w in self._navegacao_mes:  # os botões de mês são do painel da tela inicial
-            w.setVisible(rotulo == ABA_INICIO)
+        self._paginas.setCurrentIndex(list(ABAS.values()).index(rotulo))
+        self._atualizar_navegacao_mes()
 
     def mostrar_aba(self, nome: str) -> None:
-        """Troca de aba por código ("inicio" ou "recorrentes"), como se clicasse nela."""
+        """Troca de aba por código ("inicio", "recorrentes" ou "cartoes"), como se clicasse nela."""
         rotulo = ABAS[nome]
         self.abas.definir(rotulo)
         self._trocar_aba(rotulo)
 
     @property
     def aba_atual(self) -> str:
-        return "inicio" if self._paginas.currentIndex() == 0 else "recorrentes"
+        return list(ABAS)[self._paginas.currentIndex()]
 
     def _trocar_painel(self, opcao: str) -> None:
         self._painel_grafico.mostrar(opcao)
+        self._atualizar_subtitulo_painel()
+        self._atualizar_navegacao_mes()
 
     def mostrar_painel(self, opcao: str) -> None:
         """Escolhe o gráfico do painel por código (usado no modo screenshot)."""
         self.seletor_painel.definir(opcao)
-        self._painel_grafico.mostrar(opcao)
+        self._trocar_painel(opcao)
 
     def _abrir_lancamento(self, id_lancamento: int) -> DialogoLancamento | None:
         """Clique num item dos Recentes: abre o lançamento pra ver, editar ou excluir."""

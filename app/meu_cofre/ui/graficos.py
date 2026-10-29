@@ -1,6 +1,8 @@
-"""Gráficos da tela inicial (QtCharts) no visual da direção visual.
+"""Gráficos da tela inicial no visual da direção visual.
 
-- `PainelGraficos`: troca entre o fluxo (área, gasto por dia) e a rosca (gasto por categoria).
+- `PainelGraficos`: troca entre o fluxo (área, gasto por dia), a rosca (gasto por categoria) e os próximos
+  meses (barras empilhadas do que já está comprometido). Fluxo e rosca usam QtCharts; as barras são
+  desenhadas à mão (QtCharts não arredonda os cantos das barras).
 - Os gráficos recebem DataFrames prontos (de `relatorios`) e não conhecem o banco.
 - Fundo transparente: quem dá a cor é o `Cartao` por trás.
 """
@@ -19,14 +21,15 @@ from PySide6.QtCharts import (
     QPieSeries,
     QScatterSeries,
 )
-from PySide6.QtCore import QMargins, QPointF, QRectF, Qt, QTimer
-from PySide6.QtGui import QBrush, QColor, QCursor, QFont, QFontMetrics, QLinearGradient, QPainter, QPen
+from PySide6.QtCore import QMargins, QPointF, QRectF, QSize, Qt, QTimer
+from PySide6.QtGui import QBrush, QColor, QCursor, QFont, QFontMetrics, QLinearGradient, QPainter, QPainterPath, QPen
 from PySide6.QtWidgets import (
     QApplication,
     QBoxLayout,
     QFrame,
     QGraphicsSimpleTextItem,
     QGridLayout,
+    QHBoxLayout,
     QLabel,
     QStackedLayout,
     QStackedWidget,
@@ -47,6 +50,7 @@ MESES_CURTOS = ["jan", "fev", "mar", "abr", "mai", "jun", "jul", "ago", "set", "
 
 OPCAO_FLUXO = "Fluxo"
 OPCAO_ROSCA = "Para onde foi"
+OPCAO_PROXIMOS = "Próximos meses"
 
 ROSCA_FURO = 0.62  # fração do diâmetro que é buraco
 ROSCA_TAMANHO = 0.9  # fração da área do gráfico ocupada pela rosca
@@ -139,6 +143,11 @@ class _Vista(QChartView):
         self.setBackgroundBrush(QBrush(Qt.GlobalColor.transparent))
         self.viewport().setAutoFillBackground(False)
 
+    def sizeHint(self) -> QSize:
+        # O padrão do QGraphicsView é o tamanho da cena, que acompanha o gráfico: a cada vez que a janela
+        # crescia o "tamanho ideal" crescia junto e nunca mais voltava, empurrando o resumo pra fora da tela.
+        return QSize(480, 280)
+
 
 def _estilizar_eixo(eixo: QCategoryAxis, grade: bool) -> None:
     eixo.setLabelsBrush(QBrush(QColor(tema.TEXTO_APAGADO)))
@@ -152,7 +161,7 @@ def _estilizar_eixo(eixo: QCategoryAxis, grade: bool) -> None:
 
 
 class EstadoVazio(QWidget):
-    """Ícone discreto + título + dica, centralizados. `icone`: "linha", "rosca" ou "lista"."""
+    """Ícone discreto + título + dica, centralizados. `icone`: "linha", "rosca", "barras" ou "lista"."""
 
     def __init__(self, icone: str, titulo: str = "", dica: str = "", parent: QWidget | None = None):
         super().__init__(parent)
@@ -193,6 +202,10 @@ class EstadoVazio(QWidget):
         if self._icone == "rosca":
             p.drawEllipse(QRectF(8, 8, 40, 40))
             p.drawEllipse(QRectF(20, 20, 16, 16))
+        elif self._icone == "barras":
+            p.drawLine(10, 46, 48, 46)
+            for x, altura in ((14, 14), (26, 26), (38, 20)):
+                p.drawRoundedRect(QRectF(x, 46 - altura, 8, altura), 2, 2)
         elif self._icone == "lista":
             for y in (16, 28, 40):
                 p.drawLine(12, y, 12, y)
@@ -522,21 +535,212 @@ class PainelRosca(QWidget):
         super().resizeEvent(evento)
 
 
+# --- Próximos meses: o que já está comprometido ------------------------------------------------
+
+
+def _caminho_barra(retangulo: QRectF, raio_topo: float, raio_base: float) -> QPainterPath:
+    """Retângulo com raio de canto diferente em cima e embaixo (0 = canto reto)."""
+    x0, y0, x1, y1 = retangulo.left(), retangulo.top(), retangulo.right(), retangulo.bottom()
+    t, b = raio_topo, raio_base
+    caminho = QPainterPath()
+    caminho.moveTo(x0, y0 + t)
+    if t:
+        caminho.arcTo(QRectF(x0, y0, 2 * t, 2 * t), 180, -90)
+    caminho.lineTo(x1 - t, y0)
+    if t:
+        caminho.arcTo(QRectF(x1 - 2 * t, y0, 2 * t, 2 * t), 90, -90)
+    caminho.lineTo(x1, y1 - b)
+    if b:
+        caminho.arcTo(QRectF(x1 - 2 * b, y1 - 2 * b, 2 * b, 2 * b), 0, -90)
+    caminho.lineTo(x0 + b, y1)
+    if b:
+        caminho.arcTo(QRectF(x0, y1 - 2 * b, 2 * b, 2 * b), 270, -90)
+    caminho.closeSubpath()
+    return caminho
+
+
+class _Barras(QWidget):
+    """Barras empilhadas (cartão embaixo, contas em cima) por mês, desenhadas à mão.
+
+    2px de espaço entre os segmentos, cantos de fora arredondados, total acima de cada barra, eixo em BRL
+    curto e tooltip ao passar o mouse.
+    """
+
+    MARGEM = QMargins(66, 22, 8, 26)
+    GAP = 2
+    COR_CARTAO, COR_CONTAS = tema.SERIES[0], tema.SERIES[1]
+
+    def __init__(self, parent: QWidget | None = None):
+        super().__init__(parent)
+        self.setMinimumHeight(240)
+        self.setMouseTracking(True)
+        self._meses: list[dict] = []
+        self._ticks: list[float] = [0, 100]
+        self._sobre: int | None = None
+
+    def definir(self, comprometido: pd.DataFrame) -> None:
+        """`comprometido`: saída de `relatorios.comprometido_proximos_meses`."""
+        self._meses = []
+        for linha in comprometido.itertuples():
+            ano, mes = int(linha.mes[:4]), int(linha.mes[5:])
+            self._meses.append(
+                {
+                    "curto": MESES_CURTOS[mes - 1].capitalize(),
+                    "longo": f"{MESES_CURTOS[mes - 1].capitalize()}/{ano}",
+                    "cartao": int(linha.cartao),
+                    "contas": int(linha.contas),
+                }
+            )
+        maior = max((m["cartao"] + m["contas"] for m in self._meses), default=0)
+        self._ticks = ticks_bonitos(0, max(maior / 100, 1), 4)
+        self._sobre = None
+        self.update()
+
+    def dica_do_mes(self, indice: int) -> str:
+        m = self._meses[indice]
+        total = m["cartao"] + m["contas"]
+        return (
+            f"{m['longo']} · {formatar_brl_inteiro(total)} "
+            f"(cartão {formatar_brl_inteiro(m['cartao'])} · contas {formatar_brl_inteiro(m['contas'])})"
+        )
+
+    def _plano(self) -> QRectF:
+        return QRectF(self.rect().adjusted(self.MARGEM.left(), self.MARGEM.top(), -self.MARGEM.right(), -self.MARGEM.bottom()))
+
+    def _faixa(self, indice: int) -> QRectF:
+        plano = self._plano()
+        largura = plano.width() / len(self._meses)
+        return QRectF(plano.left() + indice * largura, plano.top(), largura, plano.height())
+
+    def _indice_em(self, x: float, y: float) -> int | None:
+        plano = self._plano()
+        if not self._meses or not plano.contains(x, y):
+            return None
+        return min(int((x - plano.left()) / (plano.width() / len(self._meses))), len(self._meses) - 1)
+
+    def mouseMoveEvent(self, evento) -> None:
+        ponto = evento.position()
+        indice = self._indice_em(ponto.x(), ponto.y())
+        if indice != self._sobre:
+            self._sobre = indice
+            self.update()
+        if indice is None:
+            QToolTip.hideText()
+        else:
+            QToolTip.showText(evento.globalPosition().toPoint(), self.dica_do_mes(indice), self)
+
+    def leaveEvent(self, evento) -> None:
+        self._sobre = None
+        QToolTip.hideText()
+        self.update()
+        super().leaveEvent(evento)
+
+    def paintEvent(self, _evento) -> None:
+        if not self._meses:
+            return
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        plano = self._plano()
+        topo_escala = self._ticks[-1] * 100  # centavos
+        fonte = _fonte(11)
+        p.setFont(fonte)
+
+        for tick in self._ticks:  # grade quase invisível + rótulos do eixo
+            y = plano.bottom() - plano.height() * (tick * 100 / topo_escala)
+            p.setPen(QPen(_cor(tema.TEXTO, 0.07), 1))
+            p.drawLine(QPointF(plano.left(), y), QPointF(plano.right(), y))
+            p.setPen(QColor(tema.TEXTO_APAGADO))
+            p.drawText(QRectF(0, y - 8, self.MARGEM.left() - 8, 16), Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter, brl_curto(tick * 100))
+
+        for i, m in enumerate(self._meses):
+            faixa = self._faixa(i)
+            if i == self._sobre:
+                p.setPen(Qt.PenStyle.NoPen)
+                p.setBrush(_cor(tema.TEXTO, 0.05))
+                p.drawRoundedRect(faixa.adjusted(4, 0, -4, 0), 8, 8)
+            largura = min(52.0, faixa.width() * 0.5)
+            x = faixa.center().x() - largura / 2
+            y_base = plano.bottom()
+            segmentos = [(m["cartao"], self.COR_CARTAO), (m["contas"], self.COR_CONTAS)]
+            segmentos = [(v, c) for v, c in segmentos if v > 0]
+            for n, (valor, cor) in enumerate(segmentos):
+                altura = max(3.0, plano.height() * valor / topo_escala)
+                ultimo = n == len(segmentos) - 1
+                topo = y_base - altura
+                # 2px entre segmentos: cada um cede 1px na borda que encosta no vizinho
+                borda_de_cima = topo + (0 if ultimo else self.GAP / 2)
+                borda_de_baixo = y_base - (self.GAP / 2 if n else 0)
+                retangulo = QRectF(x, borda_de_cima, largura, borda_de_baixo - borda_de_cima)
+                raio_topo = min(6.0, largura / 2, retangulo.height() / 2) if ultimo else 2.0
+                p.setPen(Qt.PenStyle.NoPen)
+                p.setBrush(QColor(cor))
+                p.drawPath(_caminho_barra(retangulo, raio_topo, 0 if n == 0 else 2.0))
+                y_base = topo
+            if segmentos:
+                p.setPen(QColor(tema.TEXTO_SECUNDARIO))
+                p.drawText(QRectF(faixa.left(), y_base - 20, faixa.width(), 16), Qt.AlignmentFlag.AlignCenter, brl_curto(m["cartao"] + m["contas"]))
+            p.setPen(QColor(tema.TEXTO_APAGADO))
+            p.drawText(QRectF(faixa.left(), plano.bottom() + 6, faixa.width(), 16), Qt.AlignmentFlag.AlignCenter, m["curto"])
+        p.end()
+
+
+class PainelProximos(QWidget):
+    """Quanto já está comprometido em cada um dos próximos meses: cartão × contas, com legenda."""
+
+    def __init__(self, parent: QWidget | None = None):
+        super().__init__(parent)
+        self._barras = _Barras()
+        self._vazio = EstadoVazio("barras", "Nada comprometido nos próximos meses", "Parcelas no cartão e assinaturas aparecem aqui")
+        conteudo = QWidget()
+        coluna = QVBoxLayout(conteudo)
+        coluna.setContentsMargins(0, 0, 0, 0)
+        coluna.setSpacing(tema.ESPACO)
+        legenda = QHBoxLayout()
+        legenda.setSpacing(tema.ESPACO)
+        for cor, nome in ((_Barras.COR_CARTAO, "Cartão"), (_Barras.COR_CONTAS, "Contas")):
+            quadro = QFrame()
+            quadro.setFixedSize(10, 10)
+            quadro.setStyleSheet(f"background: {cor}; border-radius: 3px; border: none;")
+            legenda.addWidget(quadro, 0, Qt.AlignmentFlag.AlignVCenter)
+            legenda.addWidget(QLabel(nome, objectName="LegendaNome"))
+            legenda.addSpacing(tema.ESPACO)
+        nota = QLabel("Parcelas, assinaturas e fixos já garantidos, no mês de cada data")
+        nota.setObjectName("CartaoSubtitulo")
+        legenda.addStretch(1)
+        legenda.addWidget(nota)
+        coluna.addLayout(legenda)
+        coluna.addWidget(self._barras, 1)
+        self._pilha = QStackedLayout(self)
+        self._pilha.setContentsMargins(0, 0, 0, 0)
+        self._pilha.addWidget(conteudo)
+        self._pilha.addWidget(self._vazio)
+        self._conteudo = conteudo
+
+    def definir(self, comprometido: pd.DataFrame) -> None:
+        if comprometido.empty or int(comprometido["total"].sum()) == 0:
+            self._pilha.setCurrentWidget(self._vazio)
+            return
+        self._barras.definir(comprometido)
+        self._pilha.setCurrentWidget(self._conteudo)
+
+
 # --- Painel ---------------------------------------------------------------------------------
 
 
 class PainelGraficos(QStackedWidget):
-    """Mostra o gráfico escolhido no seletor do painel. Atualiza os dois de uma vez."""
+    """Mostra o gráfico escolhido no seletor do painel. Atualiza todos de uma vez."""
 
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
         self.fluxo = PainelFluxo()
         self.rosca = PainelRosca()
+        self.proximos = PainelProximos()
         self.addWidget(self.fluxo)
         self.addWidget(self.rosca)
+        self.addWidget(self.proximos)
 
     def mostrar(self, opcao: str) -> None:
-        self.setCurrentWidget(self.rosca if opcao == OPCAO_ROSCA else self.fluxo)
+        self.setCurrentWidget({OPCAO_ROSCA: self.rosca, OPCAO_PROXIMOS: self.proximos}.get(opcao, self.fluxo))
 
     def atualizar(
         self,
@@ -545,6 +749,9 @@ class PainelGraficos(QStackedWidget):
         mes_atual: bool,
         gastos_dia: pd.DataFrame,
         categorias: pd.DataFrame,
+        comprometido: pd.DataFrame | None = None,
     ) -> None:
         self.fluxo.definir(gastos_dia, ano, mes, mes_atual)
         self.rosca.definir(categorias, ano, mes, mes_atual)
+        if comprometido is not None:
+            self.proximos.definir(comprometido)

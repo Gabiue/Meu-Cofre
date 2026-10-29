@@ -9,6 +9,7 @@ from PySide6.QtWidgets import (
     QComboBox,
     QDateEdit,
     QFrame,
+    QGridLayout,
     QHBoxLayout,
     QLabel,
     QPushButton,
@@ -218,6 +219,46 @@ class LinhaResponsiva(QWidget):
         direcao = QBoxLayout.Direction.LeftToRight if lado_a_lado else QBoxLayout.Direction.TopToBottom
         if self._layout.direction() != direcao:
             self._layout.setDirection(direcao)
+        super().resizeEvent(evento)
+
+
+class GradeResponsiva(QWidget):
+    """Itens em grade: tantas colunas quantas couberem (cada item com `largura_minima_item`), até um item por
+    coluna. Com 4 itens: 4 lado a lado, 2 × 2 ou empilhados, conforme a largura."""
+
+    def __init__(self, largura_minima_item: int = 200, espaco: int = 24, parent: QWidget | None = None):
+        super().__init__(parent)
+        self._minimo = largura_minima_item
+        self._itens: list[QWidget] = []
+        self._colunas = 0
+        self._grade = QGridLayout(self)
+        self._grade.setContentsMargins(0, 0, 0, 0)
+        self._grade.setSpacing(espaco)
+
+    def adicionar(self, widget: QWidget) -> None:
+        self._itens.append(widget)
+        self._distribuir(max(self._colunas, 1))
+
+    def colunas(self) -> int:
+        return self._colunas
+
+    def _distribuir(self, colunas: int) -> None:
+        for w in self._itens:
+            self._grade.removeWidget(w)
+        for c in range(len(self._itens)):
+            self._grade.setColumnStretch(c, 1 if c < colunas else 0)
+        for i, w in enumerate(self._itens):
+            self._grade.addWidget(w, i // colunas, i % colunas)
+        self._colunas = colunas
+
+    def resizeEvent(self, evento) -> None:
+        espaco = self._grade.spacing()
+        cabem = (evento.size().width() + espaco) // (self._minimo + espaco)
+        colunas = max(1, min(len(self._itens), cabem))
+        if len(self._itens) == 4 and colunas == 3:  # 3 + 1 fica torto: prefira 2 × 2
+            colunas = 2
+        if colunas != self._colunas:
+            self._distribuir(colunas)
         super().resizeEvent(evento)
 
 

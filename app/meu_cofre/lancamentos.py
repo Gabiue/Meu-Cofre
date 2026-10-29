@@ -59,6 +59,11 @@ def formatar_brl_inteiro(centavos: int) -> str:
     return f"{sinal}R$ {reais:,}".replace(",", ".")
 
 
+def nome_com_final(nome: str, final: str | None) -> str:
+    """"Caixa Visa" + "1234" -> "Caixa Visa •••• 1234"; sem final, só o nome."""
+    return f"{nome} •••• {final}" if isinstance(final, str) and final else nome
+
+
 # --- Datas e parcelas ---------------------------------------------------------
 
 
@@ -67,6 +72,11 @@ def somar_meses(d: date, meses: int) -> date:
     total = d.month - 1 + meses
     ano, mes = d.year + total // 12, total % 12 + 1
     return date(ano, mes, min(d.day, calendar.monthrange(ano, mes)[1]))
+
+
+def data_no_mes(ano: int, mes: int, dia: int) -> date:
+    """O dia pedido no mês; se não existe (31 em fevereiro), o último dia dele."""
+    return date(ano, mes, min(dia, calendar.monthrange(ano, mes)[1]))
 
 
 def dividir_em_parcelas(total_centavos: int, n: int) -> list[int]:
@@ -305,7 +315,7 @@ def recentes(conn: sqlite3.Connection, hoje: date, n: int = 10, filtro: str = "t
 
     Previstos e parcelas futuras ficam de fora até a data chegar; o lançamento que acabou de ser feito
     hoje continua no topo. `filtro`: "todos", "entradas" ou "saidas" (transferências só em "todos").
-    Colunas: id, descricao, categoria, conta, metodo, data, valor_centavos, parcela_atual, parcela_total,
+    Colunas: id, descricao, categoria, conta, conta_final (final do cartão ou nulo), metodo, data, valor_centavos, parcela_atual, parcela_total,
     recorrente_id (nulo se não for de uma recorrente).
     """
     if filtro not in ("todos", "entradas", "saidas"):
@@ -318,7 +328,7 @@ def recentes(conn: sqlite3.Connection, hoje: date, n: int = 10, filtro: str = "t
               AND COALESCE(l.metodo, '') <> 'transferencia'"""
     return pd.read_sql_query(
         f"""
-        SELECT l.id, l.descricao, c.nome AS categoria, ct.nome AS conta, l.metodo, l.data,
+        SELECT l.id, l.descricao, c.nome AS categoria, ct.nome AS conta, ct.final AS conta_final, l.metodo, l.data,
                l.valor_centavos, l.parcela_atual, l.parcela_total, l.recorrente_id
         FROM lancamentos l
         JOIN contas ct ON ct.id = l.conta_id
@@ -334,11 +344,11 @@ def recentes(conn: sqlite3.Connection, hoje: date, n: int = 10, filtro: str = "t
 
 
 def obter(conn: sqlite3.Connection, lancamento_id: int) -> dict | None:
-    """Um lançamento com todos os campos, mais `conta`, `categoria` e `categoria_tipo` (nomes) e, se vier de
+    """Um lançamento com todos os campos, mais `conta`, `conta_final`, `categoria` e `categoria_tipo` (nomes) e, se vier de
     uma recorrente, `recorrente_dia` (dia do mês), `recorrente_assinatura` e `recorrente_ativa` (senão, None)."""
     linha = conn.execute(
         """
-        SELECT l.*, ct.nome AS conta, c.nome AS categoria, c.tipo AS categoria_tipo,
+        SELECT l.*, ct.nome AS conta, ct.final AS conta_final, c.nome AS categoria, c.tipo AS categoria_tipo,
                r.dia_do_mes AS recorrente_dia, r.assinatura AS recorrente_assinatura, r.ativa AS recorrente_ativa
         FROM lancamentos l
         JOIN contas ct ON ct.id = l.conta_id

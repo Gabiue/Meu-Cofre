@@ -22,9 +22,14 @@ def _tamanho_screenshot() -> tuple[int, int]:
 
 
 def _abrir_dialogo_de_revisao(janela: JanelaPrincipal, app: QApplication, modo: str):
-    """MEU_COFRE_DIALOGO=novo|cartao|repetir|contas|editar:<id>|excluir:<id>|recorrente:<id>: abre o diálogo
-    já preparado (screenshots)."""
+    """MEU_COFRE_DIALOGO=novo|cartao|repetir|contas|editar:<id>|excluir:<id>|recorrente:<id>|pagar: abre o diálogo
+    já preparado (screenshots). `pagar` não é diálogo: abre a confirmação de pagamento da aba Cartões."""
     nome, _, id_texto = modo.partition(":")
+    if nome == "pagar":
+        janela.aba_cartoes.pedir_pagamento_da_proxima()
+        for _ in range(3):  # a lista de faturas é refeita: dá tempo do layout assentar
+            app.processEvents()
+        return None
     if nome == "contas":
         dialogo = janela.abrir_contas()
         dialogo.mostrar_desativados(True)
@@ -86,7 +91,9 @@ def main() -> int:
         largura, altura = _tamanho_screenshot()
         janela.resize(largura, altura)
         janela.mostrar_aba(os.environ.get("MEU_COFRE_ABA", "inicio"))
-        painel = {"fluxo": "Fluxo", "rosca": "Para onde foi"}.get(os.environ.get("MEU_COFRE_PAINEL", ""))
+        painel = {"fluxo": "Fluxo", "rosca": "Para onde foi", "proximos": "Próximos meses"}.get(
+            os.environ.get("MEU_COFRE_PAINEL", "")
+        )
         if painel:
             janela.mostrar_painel(painel)
         janela.show()

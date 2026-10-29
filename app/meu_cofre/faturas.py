@@ -26,6 +26,7 @@ from datetime import date
 import pandas as pd
 
 from meu_cofre.lancamentos import data_no_mes, nome_com_final
+from meu_cofre.relatorios import top_com_outros
 
 DIA_VENCIMENTO_PADRAO = 10
 SITUACOES = ("aberta", "fechada", "paga", "futura")
@@ -187,6 +188,30 @@ def faturas_do_cartao(conn: sqlite3.Connection, cartao_id: int, hoje: date) -> l
             )
         )
     return faturas
+
+
+def gastos_por_categoria(conn: sqlite3.Connection, cartao_id: int, referencia: str, n: int = 5) -> pd.DataFrame:
+    """Pra onde foi a fatura: as `n` maiores categorias + "Outros", no formato de `relatorios.gastos_top_categorias`.
+
+    Conta só as compras da fatura (parcelas que caem nela inclusive); estorno e o pagamento não entram.
+    Sem categoria = "A categorizar". Colunas: categoria, centavos, percentual (0 a 100).
+    """
+    _ano_mes(referencia)
+    cartao = _cartao(conn, cartao_id)
+    fechamento, venc = cartao["dia_fechamento"], cartao["dia_vencimento"]
+    inicio, fim = periodo(referencia, fechamento, venc)
+    compras = pd.read_sql_query(
+        """
+        SELECT COALESCE(c.nome, 'A categorizar') AS categoria, -l.valor_centavos AS centavos
+        FROM lancamentos l LEFT JOIN categorias c ON c.id = l.categoria_id
+        WHERE l.conta_id = ? AND l.valor_centavos < 0
+          AND COALESCE(c.tipo, '') <> 'transferencia' AND COALESCE(l.metodo, '') <> 'transferencia'
+          AND l.data >= ? AND l.data < ?
+        """,
+        conn,
+        params=(cartao_id, inicio.isoformat(), fim.isoformat()),
+    )
+    return top_com_outros(compras.groupby("categoria", as_index=False)["centavos"].sum(), n)
 
 
 # --- Pagar e desfazer --------------------------------------------------------------------------

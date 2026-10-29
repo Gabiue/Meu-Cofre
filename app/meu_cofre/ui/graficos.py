@@ -385,9 +385,10 @@ class _VistaRosca(_Vista):
     escondia a rosca inteira (offscreen não mostrava o problema).
     """
 
-    def __init__(self, parent: QWidget | None = None):
+    def __init__(self, rotulo: str = "gasto no mês", parent: QWidget | None = None):
         super().__init__(parent)
         self._total = ""
+        self._rotulo = rotulo
 
     def definir_total(self, total_centavos: int) -> None:
         self._total = formatar_brl(total_centavos)
@@ -423,7 +424,7 @@ class _VistaRosca(_Vista):
         p.drawText(
             QRectF(centro.x() - diametro_furo / 2, centro.y() + 2, diametro_furo, p.fontMetrics().height() + 2),
             Qt.AlignmentFlag.AlignCenter,
-            "gasto no mês",
+            self._rotulo,
         )
         p.restore()
 
@@ -443,8 +444,10 @@ class _Legenda(QWidget):
         """linhas: (cor, nome, centavos, percentual 0-100)."""
         while self._grade.count():
             item = self._grade.takeAt(0)
-            if item.widget():
-                item.widget().deleteLater()
+            antigo = item.widget()
+            if antigo:
+                antigo.setParent(None)  # sai já da tela; só o deleteLater deixava o antigo sobreposto
+                antigo.deleteLater()
         for i, (cor, nome, centavos, percentual) in enumerate(linhas):
             quadro = QFrame()
             quadro.setFixedSize(10, 10)
@@ -466,9 +469,13 @@ class PainelRosca(QWidget):
 
     LARGURA_LADO_A_LADO = 560
 
-    def __init__(self, parent: QWidget | None = None):
+    def __init__(
+        self, rotulo_centro: str = "gasto no mês", largura_lado_a_lado: int = LARGURA_LADO_A_LADO,
+        parent: QWidget | None = None,
+    ):
         super().__init__(parent)
-        self._vista = _VistaRosca()
+        self._largura_lado_a_lado = largura_lado_a_lado
+        self._vista = _VistaRosca(rotulo_centro)
         self._vista.setMinimumSize(220, 220)
         self._legenda = _Legenda()
         self._vazio = EstadoVazio("rosca")
@@ -492,11 +499,16 @@ class PainelRosca(QWidget):
         self._pilha.addWidget(self._vazio)
         self._conteudo = conteudo
 
-    def definir(self, categorias: pd.DataFrame, ano: int, mes: int, mes_atual: bool) -> None:
-        """`categorias`: saída de `relatorios.gastos_top_categorias` (categoria, centavos, percentual)."""
+    def definir(
+        self, categorias: pd.DataFrame, ano: int, mes: int, mes_atual: bool, vazio: tuple[str, str] | None = None
+    ) -> None:
+        """`categorias`: saída de `relatorios.gastos_top_categorias` (categoria, centavos, percentual).
+
+        `vazio` (título, dica) troca o texto do estado vazio (ex.: o da fatura do cartão).
+        """
         if categorias.empty:
             sufixo = " ainda" if mes_atual else ""
-            self._vazio.definir(f"Nenhum gasto em {MESES[mes - 1]}{sufixo}", "Ctrl+N pra lançar")
+            self._vazio.definir(*(vazio or (f"Nenhum gasto em {MESES[mes - 1]}{sufixo}", "Ctrl+N pra lançar")))
             self._pilha.setCurrentWidget(self._vazio)
             return
 
@@ -528,10 +540,13 @@ class PainelRosca(QWidget):
         _dica(ativo, texto, self._vista)
 
     def resizeEvent(self, evento) -> None:
-        lado_a_lado = evento.size().width() >= self.LARGURA_LADO_A_LADO
+        lado_a_lado = evento.size().width() >= self._largura_lado_a_lado
         direcao = QBoxLayout.Direction.LeftToRight if lado_a_lado else QBoxLayout.Direction.TopToBottom
         if self._linha.direction() != direcao:
             self._linha.setDirection(direcao)
+            h, v = Qt.AlignmentFlag.AlignHCenter, Qt.AlignmentFlag.AlignVCenter
+            self._linha.setAlignment(self._vista, Qt.AlignmentFlag(0) if lado_a_lado else h)  # empilhada: centrada
+            self._linha.setAlignment(self._legenda, v if lado_a_lado else h)
         super().resizeEvent(evento)
 
 

@@ -46,9 +46,10 @@ from meu_cofre.ui.componentes import (
     _repolir,
 )
 from meu_cofre.ui.dialogo_contas import detalhe_cartao
-from meu_cofre.ui.graficos import MESES, MESES_CURTOS, EstadoVazio
+from meu_cofre.ui.graficos import MESES, MESES_CURTOS, EstadoVazio, PainelRosca
 
 LARGURA_MINIMA_BLOCO = 300
+LARGURA_ROSCA_LADO_A_LADO = 960  # largura do painel: janela de ~1100 px pra cima fica lado a lado
 _PAG_ACOES, _PAG_CONFIRMAR = 0, 1
 
 
@@ -427,6 +428,10 @@ class AbaCartoes(QScrollArea):
         self._desfazendo: str | None = None
         self._seletor: Segmentado | None = None
         self._seletor_nomes: list[str] = []
+        self._visao = "Aberta"  # qual fatura a rosca mostra: "Aberta" ou "Fechada"
+        self._ref_rosca: str | None = None
+        self._seg_fatura: Segmentado | None = None
+        self._seg_opcoes: tuple[str, ...] = ()
 
         self.setWidgetResizable(True)
         self.setFrameShape(QFrame.Shape.NoFrame)
@@ -440,6 +445,7 @@ class AbaCartoes(QScrollArea):
         self._barra = QHBoxLayout()
         coluna.addLayout(self._barra)
         coluna.addWidget(self._montar_destaque())
+        coluna.addWidget(self._montar_rosca())
         coluna.addWidget(self._montar_lista())
         self._vazio = EstadoVazio("lista", "Nenhum cartão", "Cadastre um cartão em Contas pra acompanhar as faturas")
         self._vazio.setMinimumHeight(260)
@@ -476,6 +482,16 @@ class AbaCartoes(QScrollArea):
         self.form.setVisible(False)
         self._cartao_destaque.corpo.addWidget(self.form)
         return self._cartao_destaque
+
+    def _montar_rosca(self) -> Cartao:
+        self._acao_rosca = QWidget()
+        self._acao_rosca_linha = QHBoxLayout(self._acao_rosca)
+        self._acao_rosca_linha.setContentsMargins(0, 0, 0, 0)
+        self._cartao_rosca = Cartao("Para onde foi", "Fatura", acao=self._acao_rosca)
+        self.rosca = PainelRosca("gasto na fatura", largura_lado_a_lado=LARGURA_ROSCA_LADO_A_LADO)
+        self.rosca.setMinimumHeight(260)
+        self._cartao_rosca.corpo.addWidget(self.rosca)
+        return self._cartao_rosca
 
     def _montar_lista(self) -> Cartao:
         self._cartao_lista = Cartao("Faturas", "Toque numa fatura pra ver as compras")
@@ -542,6 +558,7 @@ class AbaCartoes(QScrollArea):
         existe = bool(self._cartoes)
         self._vazio.setVisible(not existe)
         self._cartao_destaque.setVisible(existe)
+        self._cartao_rosca.setVisible(existe)
         self._cartao_lista.setVisible(existe)
         if not existe:
             self._cartao_id = None
@@ -558,6 +575,7 @@ class AbaCartoes(QScrollArea):
         self._cartao_destaque.titulo.setText(nome.upper())
         self._cartao_destaque.subtitulo.setText(detalhe_cartao(cartao) + ("" if cartao["dia_fechamento"] else " · fatura = mês do calendário"))
         self._carregar_destaque(lista, hoje, nome)
+        self._carregar_rosca(lista, hoje, nome)
         self._carregar_lista(lista, hoje)
 
     def _carregar_destaque(self, lista: list[Fatura], hoje: date, nome_cartao: str) -> None:
@@ -604,6 +622,54 @@ class AbaCartoes(QScrollArea):
             self.form.setVisible(True)
         else:
             self.form.setVisible(False)
+
+    def _carregar_rosca(self, lista: list[Fatura], hoje: date, nome_cartao: str) -> None:
+        """Rosca de categorias da fatura aberta ou da fechada (a de vencimento mais próximo); só futuras: a próxima."""
+        por_vencimento = sorted(lista, key=lambda f: f.vencimento)
+        opcoes = {
+            "Aberta": next((f for f in por_vencimento if f.situacao == "aberta"), None),
+            "Fechada": next((f for f in por_vencimento if f.situacao == "fechada"), None),
+        }
+        opcoes = {nome: f for nome, f in opcoes.items() if f is not None}
+        if not opcoes:
+            proxima = next((f for f in por_vencimento if f.situacao == "futura"), None)
+            if proxima is None:
+                self._cartao_rosca.setVisible(False)
+                return
+            escolhida = proxima
+        else:
+            if self._visao not in opcoes:
+                self._visao = next(iter(opcoes))
+            escolhida = opcoes[self._visao]
+        self._atualizar_seletor_fatura(tuple(opcoes) if len(opcoes) > 1 else ())
+
+        self._ref_rosca = escolhida.referencia
+        self._cartao_rosca.subtitulo.setText(f"{titulo_da_fatura(escolhida, hoje)} · {nome_cartao}")
+        categorias = faturas.gastos_por_categoria(self.conn, self._cartao_id, escolhida.referencia)
+        self.rosca.definir(
+            categorias, int(escolhida.referencia[:4]), int(escolhida.referencia[5:]), False,
+            vazio=("Nenhuma compra nessa fatura ainda", ""),
+        )
+
+    def _atualizar_seletor_fatura(self, opcoes: tuple[str, ...]) -> None:
+        """Aberta | Fechada: só aparece quando há as duas."""
+        if opcoes != self._seg_opcoes:
+            if self._seg_fatura is not None:
+                self._acao_rosca_linha.removeWidget(self._seg_fatura)
+                self._seg_fatura.setParent(None)
+                self._seg_fatura.deleteLater()
+                self._seg_fatura = None
+            if opcoes:
+                self._seg_fatura = Segmentado(list(opcoes), self._visao)
+                self._seg_fatura.escolhido.connect(self._escolheu_fatura)
+                self._acao_rosca_linha.addWidget(self._seg_fatura)
+            self._seg_opcoes = opcoes
+        elif self._seg_fatura is not None:
+            self._seg_fatura.definir(self._visao)
+
+    def _escolheu_fatura(self, nome: str) -> None:
+        self._visao = nome
+        self.recarregar()
 
     def _carregar_lista(self, lista: list[Fatura], hoje: date) -> None:
         while self._lista.count():

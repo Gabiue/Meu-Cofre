@@ -465,3 +465,69 @@ def test_grade_responsiva_distribui_em_colunas(app):
     grade.resize(150, 50)
     QApplication.processEvents()
     assert grade.colunas() == 1
+
+
+# --- Rosca "Para onde foi" ----------------------------------------------------------------------
+
+
+def _compra_cat(conn, cartao, valor, dia, categoria):
+    return lanc.registrar(
+        conn, entrada=False, valor_centavos=valor, descricao=categoria, categoria_id=id_cat(conn, categoria),
+        metodo="cartao", conta_id=cartao, data=dia,
+    )
+
+
+def test_rosca_da_fatura_aberta_tem_grafico_com_a_serie(app, conn):
+    cartao = _visa(conn)
+    _compra_cat(conn, cartao, 5000, date(2026, 10, 10), "Mercado")
+    _compra_cat(conn, cartao, 3000, date(2026, 10, 11), "Transporte")
+    _compra_cat(conn, cartao, 2000, date(2026, 10, 12), "Lazer")
+    aba = _aba(conn)
+    series = aba.rosca._vista.chart().series()
+    assert len(series) == 1 and series[0].count() == 3
+    assert aba._cartao_rosca.titulo.text() == "PARA ONDE FOI"
+    assert aba._cartao_rosca.subtitulo.text() == "Fatura de novembro · Caixa Visa •••• 1234"
+    assert aba._seg_fatura is None  # só existe a aberta: sem seletor
+    aba.recarregar()  # redesenhar não pode cair nem perder a série
+    assert aba.rosca._vista.chart().series()[0].count() == 3
+
+
+def test_rosca_alterna_entre_aberta_e_fechada_e_acompanha_o_pagamento(app, conn):
+    inter = id_conta(conn, "Inter")
+    cartao = _visa(conn)
+    _compra_cat(conn, cartao, 30000, date(2026, 9, 15), "Mercado")  # fatura de outubro (fechada)
+    _compra_cat(conn, cartao, 8000, date(2026, 10, 15), "Lazer")
+    _compra_cat(conn, cartao, 2000, date(2026, 10, 16), "Transporte")
+    aba = _aba(conn)
+    assert aba._seg_fatura is not None and aba._seg_fatura.atual() == "Aberta"
+    assert aba.rosca._vista.chart().series()[0].count() == 2
+    assert aba._cartao_rosca.subtitulo.text().startswith("Fatura de novembro")
+
+    aba._seg_fatura.clicar("Fechada")
+    QApplication.processEvents()
+    assert aba._cartao_rosca.subtitulo.text().startswith("Fatura de outubro")
+    assert aba.rosca._vista.chart().series()[0].count() == 1
+
+    aba.pedir_pagamento("2026-10")
+    aba.form.valor.setText("300,00")
+    assert aba.form.confirmar()
+    QApplication.processEvents()
+    assert aba._seg_fatura is None  # a fechada foi paga: sobra só a aberta
+    assert aba._cartao_rosca.subtitulo.text().startswith("Fatura de novembro")
+    aba.desfazer_pagamento("2026-10")
+    assert aba._seg_fatura is not None and aba._seg_fatura.atual() == "Aberta"
+
+
+def test_rosca_vazia_e_troca_de_cartao(app, conn):
+    cartao = _visa(conn)
+    outro = cadastros.criar_cartao(conn, "Nubank", "Nubank", 20, 28, "9999")
+    _compra_cat(conn, cartao, 5000, date(2026, 10, 10), "Mercado")
+    aba = _aba(conn)
+    assert aba.rosca._vista.chart().series()[0].count() == 1
+    aba.selecionar_cartao(outro)
+    QApplication.processEvents()
+    assert aba.rosca._pilha.currentWidget() is aba.rosca._vazio
+    assert aba.rosca._vazio.titulo.text() == "Nenhuma compra nessa fatura ainda"
+    assert "Nubank" in aba._cartao_rosca.subtitulo.text()
+    aba.selecionar_cartao(cartao)
+    assert aba.rosca._pilha.currentWidget() is aba.rosca._conteudo

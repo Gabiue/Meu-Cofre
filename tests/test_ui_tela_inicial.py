@@ -239,7 +239,7 @@ def test_rosca_com_dados_tem_grafico_com_a_serie(app, conn):
     _reg(conn, 5000, cat="Mercado")
     _reg(conn, 3000, cat="Transporte")
     janela = _janela(conn)
-    rosca = janela.findChild(PainelRosca)
+    rosca = janela._painel_grafico.rosca
     janela.mostrar_painel(OPCAO_ROSCA)
     QApplication.processEvents()
     series = rosca._vista.chart().series()

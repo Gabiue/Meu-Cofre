@@ -259,7 +259,11 @@ def gastos_top_categorias(conn: sqlite3.Connection, ano: int, mes: int, n: int =
     A categoria "Outros" do seed entra sempre nessa última linha, pra não haver duas iguais.
     Colunas: categoria, centavos, percentual (0 a 100).
     """
-    df = gastos_por_categoria(conn, ano, mes)[["categoria", "centavos"]]
+    return top_com_outros(gastos_por_categoria(conn, ano, mes)[["categoria", "centavos"]], n)
+
+
+def top_com_outros(df: pd.DataFrame, n: int = 5) -> pd.DataFrame:
+    """`df` (categoria, centavos positivos, uma linha por categoria) -> top `n` + "Outros" + percentual."""
     if df.empty:
         return pd.DataFrame({"categoria": [], "centavos": [], "percentual": []}).astype(
             {"categoria": "object", "centavos": "int64", "percentual": "float64"}

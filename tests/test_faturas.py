@@ -432,3 +432,55 @@ def test_nome_com_final():
     assert lanc.nome_com_final("Caixa Visa", "1234") == "Caixa Visa •••• 1234"
     assert lanc.nome_com_final("Caixa Visa", None) == "Caixa Visa"
     assert lanc.nome_com_final("Caixa Visa", float("nan")) == "Caixa Visa"
+
+
+# --- Pra onde foi a fatura (rosca por categoria) -------------------------------------------------
+
+
+def test_gastos_por_categoria_da_fatura_soma_e_ordena(conn):
+    cartao = _visa(conn)
+    _compra(conn, cartao, 30000, date(2026, 10, 5), categoria="Mercado")
+    _compra(conn, cartao, 20000, date(2026, 10, 6), categoria="Mercado")
+    _compra(conn, cartao, 15000, date(2026, 10, 7), categoria="Transporte")
+    _compra(conn, cartao, 99900, date(2026, 11, 3), categoria="Lazer")  # outra fatura (dezembro)
+    df = faturas.gastos_por_categoria(conn, cartao, "2026-11")
+    assert list(df.columns) == ["categoria", "centavos", "percentual"]
+    assert df["categoria"].tolist() == ["Mercado", "Transporte"]
+    assert df["centavos"].tolist() == [50000, 15000]
+    assert df["percentual"].sum() == pytest.approx(100)
+
+
+def test_gastos_por_categoria_mesmo_formato_do_mes(conn):
+    cartao = _visa(conn)
+    for i, cat in enumerate(["Mercado", "Transporte", "Lazer", "Saúde", "Moradia", "Educação", "Compras pessoais"]):
+        _compra(conn, cartao, 10000 * (7 - i), date(2026, 10, 2), categoria=cat)
+    df = faturas.gastos_por_categoria(conn, cartao, "2026-11", n=3)
+    assert len(df) == 4 and df["categoria"].iloc[-1] == "Outros"
+    assert df["centavos"].sum() == 10000 * 28
+    mes = relatorios.gastos_top_categorias(conn, 2026, 10, n=3)
+    assert df.dtypes.to_dict() == mes.dtypes.to_dict()
+
+
+def test_gastos_por_categoria_sem_categoria_e_parcelas(conn):
+    cartao = _visa(conn)
+    lanc.registrar(conn, entrada=False, valor_centavos=4000, descricao="Sem cat", categoria_id=None,
+                   metodo="cartao", conta_id=cartao, data=date(2026, 10, 9))
+    _compra(conn, cartao, 30000, date(2026, 10, 10), parcelas=3, categoria="Lazer")  # 3x 100,00: out, nov, dez
+    nov = faturas.gastos_por_categoria(conn, cartao, "2026-11")
+    assert dict(zip(nov["categoria"], nov["centavos"])) == {"A categorizar": 4000, "Lazer": 10000}
+    dez = faturas.gastos_por_categoria(conn, cartao, "2026-12")  # a 2ª parcela cai na fatura seguinte
+    assert dict(zip(dez["categoria"], dez["centavos"])) == {"Lazer": 10000}
+
+
+def test_gastos_por_categoria_ignora_pagamento_e_estorno_e_vazia(conn):
+    cartao = _visa(conn)
+    inter = id_conta(conn, "Inter")
+    _compra(conn, cartao, 30000, date(2026, 9, 20), categoria="Mercado")
+    faturas.pagar_fatura(conn, cartao, "2026-10", 30000, inter, date(2026, 10, 10))  # entrada no cartão em 10/10
+    lanc.registrar(conn, entrada=True, valor_centavos=5000, descricao="Estorno", categoria_id=id_cat(conn, "Mercado"),
+                   metodo="cartao", conta_id=cartao, data=date(2026, 10, 12))
+    df = faturas.gastos_por_categoria(conn, cartao, "2026-11")
+    assert df.empty and list(df.columns) == ["categoria", "centavos", "percentual"]
+    assert faturas.gastos_por_categoria(conn, cartao, "2026-10")["centavos"].tolist() == [30000]
+    with pytest.raises(ValueError):
+        faturas.gastos_por_categoria(conn, id_conta(conn, "Inter"), "2026-11")

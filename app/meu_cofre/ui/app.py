@@ -24,9 +24,31 @@ def _tamanho_screenshot() -> tuple[int, int]:
 
 
 def _abrir_dialogo_de_revisao(janela: JanelaPrincipal, app: QApplication, modo: str):
-    """MEU_COFRE_DIALOGO=novo|cartao|repetir|contas|editar:<id>|excluir:<id>|recorrente:<id>|pagar: abre o diálogo
-    já preparado (screenshots). `pagar` não é diálogo: abre a confirmação de pagamento da aba Cartões."""
+    """MEU_COFRE_DIALOGO=novo|cartao|repetir|contas|editar:<id>|excluir:<id>|recorrente:<id>|meta|simulador|pagar: abre o diálogo
+    já preparado (screenshots). `pagar` não é diálogo: abre a confirmação de pagamento da aba Cartões. `meta` abre
+    a nova meta com uma prévia preenchida e `simulador` preenche e rola até o simulador da aba Metas."""
     nome, _, id_texto = modo.partition(":")
+    if nome == "simulador":  # não é diálogo: preenche o "Comprar agora ou parcelar?" da aba Metas e rola até ele
+        simulador = janela.aba_metas.simulador
+        simulador.valor.setText("1500")
+        simulador.parcelas.setCurrentIndex(simulador.parcelas.findData(10))
+        for _ in range(3):
+            app.processEvents()
+        barra = janela.aba_metas.verticalScrollBar()
+        barra.setValue(barra.maximum())
+        app.processEvents()
+        return None
+    if nome == "meta":
+        dialogo = janela.aba_metas.nova_meta()
+        dialogo.nome.setText("Viagem de fim de ano")
+        dialogo.valor.setText("4800")
+        dialogo.mes.setCurrentIndex(dialogo.mes.findData(12))
+        dialogo.ano.setCurrentIndex(dialogo.ano.findData(janela._hoje().year + 1))
+        for _ in range(3):
+            app.processEvents()
+        dialogo.resize(dialogo.width(), janela.height() - 60)
+        app.processEvents()
+        return dialogo
     if nome == "pagar":
         janela.aba_cartoes.pedir_pagamento_da_proxima()
         for _ in range(3):  # a lista de faturas é refeita: dá tempo do layout assentar

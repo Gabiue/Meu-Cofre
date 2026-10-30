@@ -419,7 +419,10 @@ def test_migracao_v2_para_v3_preserva_dados_e_cria_backup(tmp_path):
     db.conectar(caminho).close()
     c = sqlite3.connect(caminho)
     c.execute("DROP TABLE recorrentes_meses")
-    c.execute("DROP TABLE faturas_pagas")  # o banco de teste já nasce na última versão: tira o que é da v4
+    c.execute("DROP TABLE faturas_pagas")  # o banco de teste já nasce na última versão: tira o que é da v4 e da v5
+    c.execute("DROP INDEX ix_lancamentos_meta")
+    c.execute("ALTER TABLE lancamentos DROP COLUMN meta_id")
+    c.execute("DROP TABLE metas")
     c.execute("ALTER TABLE contas DROP COLUMN final")
     c.execute("PRAGMA user_version = 2")
     c.execute("INSERT INTO recorrentes (descricao, valor_centavos, conta_id, dia_do_mes, inicio, assinatura) "

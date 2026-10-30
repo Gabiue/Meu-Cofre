@@ -1,6 +1,6 @@
 """Componentes reutilizáveis da interface. A aparência vem do QSS global (ver `tema.py`)."""
 
-from PySide6.QtCore import QPointF, QSize, Qt, Signal
+from PySide6.QtCore import QPointF, QRectF, QSize, Qt, Signal
 from PySide6.QtGui import QColor, QPainter, QPen, QTextCharFormat
 from PySide6.QtWidgets import (
     QBoxLayout,
@@ -147,6 +147,46 @@ class Pilula(QLabel):
         self.setProperty("variante", variante)
         self.setText(self.ICONES[variante] + texto)
         _repolir(self)
+
+
+class BarraProgresso(QWidget):
+    """Barra de progresso fina: trilho escuro de cantos arredondados e, por cima, o preenchimento verde.
+
+    `definir(fracao)` vai de 0 a 1. Com `apagada=True` (meta encerrada) o preenchimento fica cinza esverdeado.
+    O percentual em texto fica a cargo de quem usa a barra (ao lado dela).
+    """
+
+    ALTURA = 10
+
+    def __init__(self, fracao: float = 0.0, apagada: bool = False, parent: QWidget | None = None):
+        super().__init__(parent)
+        self._fracao = 0.0
+        self._apagada = apagada
+        self.setFixedHeight(self.ALTURA)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self.definir(fracao)
+
+    def valor(self) -> float:
+        return self._fracao
+
+    def definir(self, fracao: float, apagada: bool | None = None) -> None:
+        self._fracao = min(1.0, max(0.0, float(fracao)))
+        if apagada is not None:
+            self._apagada = apagada
+        self.update()
+
+    def paintEvent(self, _evento) -> None:
+        pintor = QPainter(self)
+        pintor.setRenderHint(QPainter.RenderHint.Antialiasing)
+        pintor.setPen(Qt.PenStyle.NoPen)
+        trilho = QRectF(self.rect())
+        raio = trilho.height() / 2
+        pintor.setBrush(QColor(tema.BORDA))
+        pintor.drawRoundedRect(trilho, raio, raio)
+        if self._fracao > 0:
+            largura = max(trilho.height(), trilho.width() * self._fracao)  # nunca menor que a ponta arredondada
+            pintor.setBrush(QColor(tema.TEXTO_APAGADO if self._apagada else tema.VERDE))
+            pintor.drawRoundedRect(QRectF(trilho.x(), trilho.y(), largura, trilho.height()), raio, raio)
 
 
 class NumeroDestaque(QWidget):
@@ -334,6 +374,7 @@ class ItemLancamento(QFrame):
     cor do texto: quem diferencia entrada de saída é o marcador e o sinal (+ / −).
     `parcela` (ex.: "3/6") aparece apagada logo depois da descrição, que é quem encurta.
     `recorrente` põe um ↻ discreto antes da categoria (veio de uma assinatura ou gasto fixo).
+    `meta` é guardar/retirar dinheiro de uma meta: marcador neutro (◎) e valor sem sinal, pra não parecer gasto.
     """
 
     clicado = Signal(int)
@@ -348,6 +389,7 @@ class ItemLancamento(QFrame):
         valor_centavos: int,
         parcela: str = "",
         recorrente: bool = False,
+        meta: bool = False,
         parent: QWidget | None = None,
     ):
         super().__init__(parent)
@@ -357,9 +399,9 @@ class ItemLancamento(QFrame):
         self.setFixedHeight(60)
 
         entrada = valor_centavos > 0
-        marcador = QLabel("▲" if entrada else "▼")
+        marcador = QLabel("◎" if meta else "▲" if entrada else "▼")
         marcador.setObjectName("ItemMarcador")
-        marcador.setProperty("tipo", "entrada" if entrada else "saida")
+        marcador.setProperty("tipo", "meta" if meta else "entrada" if entrada else "saida")
         marcador.setFixedSize(32, 32)
         marcador.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
@@ -371,7 +413,7 @@ class ItemLancamento(QFrame):
         titulo.setSpacing(6)
         titulo.addWidget(self.descricao, 1)
         titulo.addWidget(self.parcela)
-        self.detalhe = RotuloElidido(f"{'↻ ' if recorrente else ''}{categoria} · {conta}", "ItemDetalhe")
+        self.detalhe = RotuloElidido(f"{'↻ ' if recorrente else ''}{'Meta' if meta else categoria} · {conta}", "ItemDetalhe")
         textos = QVBoxLayout()
         textos.setSpacing(2)
         textos.addStretch(1)
@@ -379,7 +421,7 @@ class ItemLancamento(QFrame):
         textos.addWidget(self.detalhe)
         textos.addStretch(1)
 
-        sinal = "+" if entrada else "−"
+        sinal = "" if meta else "+" if entrada else "−"
         self.valor = QLabel(f"{sinal}{formatar_brl(abs(valor_centavos))}")
         self.valor.setObjectName("ItemValor")
         self.data = QLabel(data)

@@ -9,6 +9,7 @@ CONTAS = [
     ("Caixa", "corrente", "Caixa"),
     ("Cartão de crédito", "cartao", None),
     ("Carteira", "dinheiro", None),
+    ("Caixinhas", "investimento", None),  # onde ficam os valores guardados das metas
 ]
 
 CATEGORIAS = [
@@ -34,6 +35,7 @@ CATEGORIAS = [
     ("Rendimentos", "receita", None),
     ("Transferência entre contas", "transferencia", None),
     ("Pagamento de fatura", "transferencia", None),
+    ("Guardar em meta", "transferencia", None),
     ("A categorizar", "despesa", None),
 ]
 

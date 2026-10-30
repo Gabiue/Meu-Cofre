@@ -108,6 +108,7 @@ QPushButton#BotaoPrimario:pressed {{ background: #35a072; }}
 QPushButton#BotaoSecundario {{ background: transparent; color: {TEXTO}; border: 1px solid {BORDA};
     border-radius: 10px; padding: 0 20px; min-height: 40px; font-size: {PX_TEXTO}px; font-weight: 600; }}
 QPushButton#BotaoSecundario:hover {{ background: {CARTAO_ELEVADO}; border-color: {TEXTO_APAGADO}; }}
+QPushButton#BotaoSecundario:disabled {{ color: {TEXTO_DESABILITADO}; border-color: {BORDA}; background: transparent; }}
 QPushButton:focus {{ outline: none; }}
 
 /* Segmentado */
@@ -125,6 +126,7 @@ QPushButton:focus {{ outline: none; }}
 #ItemMarcador {{ border-radius: 16px; font-size: 11px; font-weight: 700; }}
 #ItemMarcador[tipo="entrada"] {{ background: {VERDE_SUAVE}; color: {VERDE}; }}
 #ItemMarcador[tipo="saida"] {{ background: {BORDA}; color: {TEXTO_SECUNDARIO}; }}
+#ItemMarcador[tipo="meta"] {{ background: {BORDA}; color: {DOURADO}; font-size: 14px; }}
 #ItemDescricao {{ font-size: {PX_TEXTO}px; font-weight: 600; color: {TEXTO}; }}
 #ItemDetalhe {{ font-size: {PX_RODAPE}px; color: {TEXTO_APAGADO}; }}
 #ItemValor {{ font-size: {PX_TEXTO}px; font-weight: 600; color: {TEXTO}; }}
@@ -158,15 +160,15 @@ QPushButton#BotaoMes:disabled {{ color: {BORDA}; border-color: {BORDA}; backgrou
 #CampoErro {{ font-size: {PX_RODAPE}px; font-weight: 600; color: {VERMELHO}; }}
 #AvisoSalvo {{ font-size: {PX_TEXTO}px; font-weight: 600; color: {VERDE}; }}
 #ConfirmaTexto {{ font-size: {PX_TEXTO}px; font-weight: 600; color: {TEXTO}; }}
-#Dialogo QLineEdit, #Dialogo QComboBox, #Dialogo QDateEdit, #FormPagamento QLineEdit, #FormPagamento QComboBox, #FormPagamento QDateEdit {{
+#Dialogo QLineEdit, #Dialogo QComboBox, #Dialogo QDateEdit, #FormPagamento QLineEdit, #FormPagamento QComboBox, #FormPagamento QDateEdit, #FormMeta QLineEdit, #FormMeta QComboBox, #FormMeta QDateEdit {{
     background: {FUNDO}; color: {TEXTO}; border: 1px solid {BORDA}; border-radius: 8px;
     padding: 0 12px; min-height: 38px; selection-background-color: {VERDE}; selection-color: {TEXTO_SOBRE_VERDE}; }}
-#Dialogo QLineEdit:hover, #Dialogo QComboBox:hover, #Dialogo QDateEdit:hover, #FormPagamento QLineEdit:hover, #FormPagamento QComboBox:hover, #FormPagamento QDateEdit:hover {{ border-color: {TEXTO_APAGADO}; }}
-#Dialogo QLineEdit:focus, #Dialogo QComboBox:focus, #Dialogo QDateEdit:focus, #FormPagamento QLineEdit:focus, #FormPagamento QComboBox:focus, #FormPagamento QDateEdit:focus {{ border-color: {VERDE}; }}
-#Dialogo QLineEdit[erro="true"], #FormPagamento QLineEdit[erro="true"] {{ border-color: {VERMELHO}; }}
-#Dialogo QLineEdit#CampoValor, #FormPagamento QLineEdit#CampoValor {{ font-size: {PX_VALOR}px; font-weight: 700; min-height: 44px; }}
-#Dialogo QComboBox::drop-down, #Dialogo QDateEdit::drop-down, #FormPagamento QComboBox::drop-down, #FormPagamento QDateEdit::drop-down {{ width: 30px; border: none; background: transparent; }}
-#Dialogo QComboBox::down-arrow, #Dialogo QDateEdit::down-arrow, #FormPagamento QComboBox::down-arrow, #FormPagamento QDateEdit::down-arrow {{ image: none; width: 0; height: 0; }}
+#Dialogo QLineEdit:hover, #Dialogo QComboBox:hover, #Dialogo QDateEdit:hover, #FormPagamento QLineEdit:hover, #FormPagamento QComboBox:hover, #FormPagamento QDateEdit:hover, #FormMeta QLineEdit:hover, #FormMeta QComboBox:hover, #FormMeta QDateEdit:hover {{ border-color: {TEXTO_APAGADO}; }}
+#Dialogo QLineEdit:focus, #Dialogo QComboBox:focus, #Dialogo QDateEdit:focus, #FormPagamento QLineEdit:focus, #FormPagamento QComboBox:focus, #FormPagamento QDateEdit:focus, #FormMeta QLineEdit:focus, #FormMeta QComboBox:focus, #FormMeta QDateEdit:focus {{ border-color: {VERDE}; }}
+#Dialogo QLineEdit[erro="true"], #FormPagamento QLineEdit[erro="true"], #FormMeta QLineEdit[erro="true"] {{ border-color: {VERMELHO}; }}
+#Dialogo QLineEdit#CampoValor, #FormPagamento QLineEdit#CampoValor, #FormMeta QLineEdit#CampoValor {{ font-size: {PX_VALOR}px; font-weight: 700; min-height: 44px; }}
+#Dialogo QComboBox::drop-down, #Dialogo QDateEdit::drop-down, #FormPagamento QComboBox::drop-down, #FormPagamento QDateEdit::drop-down, #FormMeta QComboBox::drop-down, #FormMeta QDateEdit::drop-down {{ width: 30px; border: none; background: transparent; }}
+#Dialogo QComboBox::down-arrow, #Dialogo QDateEdit::down-arrow, #FormPagamento QComboBox::down-arrow, #FormPagamento QDateEdit::down-arrow, #FormMeta QComboBox::down-arrow, #FormMeta QDateEdit::down-arrow {{ image: none; width: 0; height: 0; }}
 QComboBox QAbstractItemView, QListView#CompletarPopup {{
     background: {CARTAO_ELEVADO}; color: {TEXTO}; border: 1px solid {BORDA}; border-radius: 8px;
     padding: 4px; outline: none; selection-background-color: {VERDE_SUAVE}; selection-color: {VERDE}; }}
@@ -219,6 +221,7 @@ QCheckBox#Marcador::indicator:checked:disabled {{ background: {BORDA}; border-co
 QPushButton#BotaoAcao {{ background: transparent; border: 1px solid transparent; border-radius: 8px; padding: 0 12px;
     min-height: 30px; font-size: {PX_RODAPE + 1}px; font-weight: 600; color: {TEXTO_SECUNDARIO}; }}
 QPushButton#BotaoAcao:hover {{ background: {CARTAO_ELEVADO}; border-color: {BORDA}; color: {TEXTO}; }}
+QPushButton#BotaoAcao:disabled {{ color: {TEXTO_DESABILITADO}; background: transparent; border-color: transparent; }}
 QPushButton#BotaoAcao[perigo="true"]:hover {{ background: {VERMELHO_SUAVE}; border-color: {VERMELHO_SUAVE_BORDA}; color: {VERMELHO}; }}
 #RecorrenteNome {{ font-size: {PX_TEXTO + 1}px; font-weight: 600; color: {TEXTO}; }}
 #RecorrenteNome[apagada="true"] {{ color: {TEXTO_APAGADO}; }}
@@ -243,6 +246,25 @@ QPushButton#BotaoAcao[perigo="true"]:hover {{ background: {VERMELHO_SUAVE}; bord
 #CompraPago {{ font-size: {PX_RODAPE}px; color: {TEXTO_APAGADO}; }}
 #ParcelaTag {{ font-size: {PX_RODAPE}px; font-weight: 700; padding: 1px 8px; border-radius: 9px;
     background: {VERDE_SUAVE}; border: 1px solid {VERDE_SUAVE_BORDA}; color: {VERDE}; }}
+
+/* Aba "Metas" */
+#FormMeta {{ background: {CARTAO_ELEVADO}; border: 1px solid {BORDA}; border-radius: 10px; }}
+#MetaCard {{ background: transparent; border: 1px solid {BORDA}; border-radius: 10px; }}
+#MetaNome {{ font-size: {PX_TEXTO + 2}px; font-weight: 700; color: {TEXTO}; }}
+#MetaNome[encerrada="true"] {{ color: {TEXTO_SECUNDARIO}; }}
+#MetaPct {{ font-size: {PX_TEXTO}px; font-weight: 700; color: {TEXTO}; min-width: 40px; }}
+#MetaGuardado {{ font-size: {PX_TEXTO}px; font-weight: 600; color: {TEXTO}; }}
+#MetaInfo {{ font-size: {PX_RODAPE + 1}px; color: {TEXTO_SECUNDARIO}; }}
+#MetaDetalhe {{ font-size: {PX_RODAPE}px; color: {TEXTO_APAGADO}; }}
+#ReservaTexto {{ font-size: {PX_TEXTO + 1}px; font-weight: 600; color: {TEXTO}; }}
+#ReservaApoio {{ font-size: {PX_RODAPE + 1}px; color: {TEXTO_SECUNDARIO}; }}
+#SimBloco {{ background: transparent; border: 1px solid {BORDA}; border-radius: 10px; }}
+#SimTitulo {{ font-size: {PX_TITULO_CARTAO}px; font-weight: 600; color: {TEXTO_SECUNDARIO}; }}
+#SimDestaque {{ font-size: {PX_VALOR}px; font-weight: 700; color: {TEXTO}; }}
+#SimDetalhe {{ font-size: {PX_RODAPE + 1}px; color: {TEXTO_SECUNDARIO}; }}
+#PreviaMeta {{ background: {FUNDO}; border: 1px solid {BORDA}; border-radius: 10px; }}
+#PreviaDestaque {{ font-size: {PX_TEXTO + 2}px; font-weight: 700; color: {TEXTO}; }}
+#PreviaDetalhe {{ font-size: {PX_RODAPE + 1}px; color: {TEXTO_SECUNDARIO}; }}
 
 /* Barra de rolagem fina */
 QScrollBar:vertical {{ background: transparent; width: 10px; margin: 2px; }}

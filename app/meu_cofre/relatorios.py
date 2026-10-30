@@ -38,8 +38,11 @@ class ResumoMes:
         return self.sobra / self.entradas if self.entradas else None
 
 
-def resumo_mes(conn: sqlite3.Connection, ano: int, mes: int) -> ResumoMes:
+def resumo_mes(conn: sqlite3.Connection, ano: int, mes: int, ate: date | None = None) -> ResumoMes:
+    """Entradas e saídas do mês, sem transferências. `ate` corta os dias depois dele (o mês corrente até hoje)."""
     inicio, fim = limites_do_mes(ano, mes)
+    if ate is not None:
+        fim = min(fim, ate)
     linha = conn.execute(
         f"""
         SELECT COALESCE(SUM(CASE WHEN l.valor_centavos > 0 THEN l.valor_centavos END), 0) AS entradas,
@@ -92,6 +95,23 @@ def gastos_por_categoria(conn: sqlite3.Connection, ano: int, mes: int) -> pd.Dat
         conn,
         params=(inicio.isoformat(), fim.isoformat()),
     )
+
+
+def gastos_essenciais_mes(conn: sqlite3.Connection, ano: int, mes: int, ate: date | None = None) -> int:
+    """Gastos de natureza essencial do mês, sem transferências (centavos, positivo). `ate` corta os dias depois dele."""
+    inicio, fim = limites_do_mes(ano, mes)
+    if ate is not None:
+        fim = min(fim, ate)
+    return conn.execute(
+        f"""
+        SELECT COALESCE(-SUM(l.valor_centavos), 0)
+        {_SEM_TRANSFERENCIA}
+          AND c.natureza = 'essencial'
+          AND l.valor_centavos < 0
+          AND l.data BETWEEN ? AND ?
+        """,
+        (inicio.isoformat(), fim.isoformat()),
+    ).fetchone()[0]
 
 
 def gastos_por_natureza(conn: sqlite3.Connection, ano: int, mes: int) -> pd.DataFrame:

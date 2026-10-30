@@ -54,6 +54,33 @@ MIGRACOES: dict[int, list[str]] = {
     UNIQUE (cartao_id, referencia)
 )""",
     ],
+    # v5: metas (F7).
+    #  - metas: o que se quer juntar. `modo` 'prazo' (valor + data; o app calcula o mensal) ou 'mensal'
+    #    (valor + quanto guarda por mês; o app calcula a data). `prioridade` menor = mais importante.
+    #  - lancamentos.meta_id: liga os dois lados de um "guardar"/"retirar" à meta.
+    #  - conta "Caixinhas" (tipo investimento), onde o dinheiro guardado fica, e a categoria de
+    #    transferência "Guardar em meta". Só são criadas se ainda não existirem.
+    5: [
+        """CREATE TABLE IF NOT EXISTS metas (
+    id                  INTEGER PRIMARY KEY,
+    nome                TEXT    NOT NULL,
+    valor_alvo_centavos INTEGER NOT NULL CHECK (valor_alvo_centavos > 0),
+    modo                TEXT    NOT NULL CHECK (modo IN ('prazo', 'mensal')),
+    prazo               TEXT,
+    mensal_centavos     INTEGER,
+    prioridade          INTEGER NOT NULL DEFAULT 0,
+    reserva             INTEGER NOT NULL DEFAULT 0,
+    criada_em           TEXT    NOT NULL DEFAULT (date('now', 'localtime')),
+    concluida_em        TEXT,
+    arquivada           INTEGER NOT NULL DEFAULT 0
+)""",
+        "ALTER TABLE lancamentos ADD COLUMN meta_id INTEGER REFERENCES metas (id)",
+        "CREATE INDEX IF NOT EXISTS ix_lancamentos_meta ON lancamentos (meta_id)",
+        """INSERT INTO contas (nome, tipo)
+SELECT 'Caixinhas', 'investimento' WHERE NOT EXISTS (SELECT 1 FROM contas WHERE nome = 'Caixinhas')""",
+        """INSERT INTO categorias (nome, tipo)
+SELECT 'Guardar em meta', 'transferencia' WHERE NOT EXISTS (SELECT 1 FROM categorias WHERE nome = 'Guardar em meta')""",
+    ],
 }
 ULTIMA_VERSAO = max(MIGRACOES)
 

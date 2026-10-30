@@ -108,6 +108,15 @@ def _colunas(conn, tabela):
     return {r["name"] for r in conn.execute(f"PRAGMA table_info({tabela})")}
 
 
+def _tirar_v5(conn):
+    """O banco de teste já nasce na última versão: desfaz o que é da v5 (metas, meta_id, Caixinhas)."""
+    conn.execute("DROP INDEX ix_lancamentos_meta")
+    conn.execute("ALTER TABLE lancamentos DROP COLUMN meta_id")
+    conn.execute("DROP TABLE metas")
+    conn.execute("DELETE FROM contas WHERE nome = 'Caixinhas'")
+    conn.execute("DELETE FROM categorias WHERE nome = 'Guardar em meta'")
+
+
 def test_banco_novo_nasce_na_ultima_versao_sem_backup(tmp_path):
     caminho = tmp_path / "novo.db"
     conn = db.conectar(caminho)
@@ -115,6 +124,9 @@ def test_banco_novo_nasce_na_ultima_versao_sem_backup(tmp_path):
     assert {"assinatura", "pausada"} <= _colunas(conn, "recorrentes")
     assert "final" in _colunas(conn, "contas")
     assert {"cartao_id", "referencia", "transferencia_id"} <= _colunas(conn, "faturas_pagas")
+    assert {"valor_alvo_centavos", "modo", "prioridade", "reserva", "arquivada"} <= _colunas(conn, "metas")
+    assert "meta_id" in _colunas(conn, "lancamentos")
+    assert conn.execute("SELECT tipo FROM contas WHERE nome = 'Caixinhas'").fetchone()[0] == "investimento"
     assert not (tmp_path / "backups").exists()
 
 
@@ -146,17 +158,52 @@ def test_v3_para_v4_acrescenta_final_e_faturas_pagas_sem_perder_dados(tmp_path):
     conn.execute("INSERT INTO lancamentos (conta_id, data, valor_centavos, descricao) VALUES (1, '2026-10-01', -1500, 'Pão')")
     conn.execute("DROP TABLE faturas_pagas")
     conn.execute("ALTER TABLE contas DROP COLUMN final")
+    _tirar_v5(conn)
     conn.execute("PRAGMA user_version = 3")
     conn.commit()
     conn.close()
 
     conn = db.conectar(caminho)
-    assert migracoes.versao(conn) == 4
+    assert migracoes.versao(conn) == migracoes.ULTIMA_VERSAO
     assert "final" in _colunas(conn, "contas")
     assert conn.execute("SELECT final FROM contas").fetchone()[0] is None
     assert conn.execute("SELECT COUNT(*) FROM faturas_pagas").fetchone()[0] == 0
     assert conn.execute("SELECT descricao FROM lancamentos").fetchone()[0] == "Pão"
     assert len(list((tmp_path / "backups").glob("meu-*-v3.db"))) == 1
+
+
+def test_v4_para_v5_cria_metas_meta_id_e_caixinhas_sem_perder_dados(tmp_path):
+    caminho = tmp_path / "meu.db"
+    conn = db.conectar(caminho)
+    conn.execute("INSERT INTO lancamentos (conta_id, data, valor_centavos, descricao) VALUES (1, '2026-10-01', -1500, 'Pão')")
+    _tirar_v5(conn)
+    conn.execute("PRAGMA user_version = 4")
+    conn.commit()
+    conn.close()
+
+    conn = db.conectar(caminho)
+    assert migracoes.versao(conn) == 5
+    assert conn.execute("SELECT descricao, meta_id FROM lancamentos").fetchone()[:] == ("Pão", None)
+    assert conn.execute("SELECT COUNT(*) FROM metas").fetchone()[0] == 0
+    assert conn.execute("SELECT nome, tipo, ativa FROM contas WHERE nome = 'Caixinhas'").fetchone()[:] == ("Caixinhas", "investimento", 1)
+    assert conn.execute("SELECT tipo FROM categorias WHERE nome = 'Guardar em meta'").fetchone()[0] == "transferencia"
+    assert "ix_lancamentos_meta" in {r["name"] for r in conn.execute("PRAGMA index_list(lancamentos)")}
+    assert len(list((tmp_path / "backups").glob("meu-*-v4.db"))) == 1
+
+
+def test_v5_nao_duplica_caixinhas_que_ja_existe(tmp_path):
+    caminho = tmp_path / "meu.db"
+    conn = db.conectar(caminho)
+    n = conn.execute("SELECT COUNT(*) FROM contas").fetchone()[0]
+    conn.execute("DROP INDEX ix_lancamentos_meta")
+    conn.execute("ALTER TABLE lancamentos DROP COLUMN meta_id")
+    conn.execute("DROP TABLE metas")  # Caixinhas e a categoria ficam
+    conn.execute("PRAGMA user_version = 4")
+    conn.commit()
+    conn.close()
+    conn = db.conectar(caminho)
+    assert conn.execute("SELECT COUNT(*) FROM contas").fetchone()[0] == n
+    assert conn.execute("SELECT COUNT(*) FROM categorias WHERE nome = 'Guardar em meta'").fetchone()[0] == 1
 
 
 def test_conectar_de_novo_nao_reaplica_nem_refaz_backup(tmp_path):

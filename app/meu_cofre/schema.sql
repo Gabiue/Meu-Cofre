@@ -75,6 +75,23 @@ CREATE TABLE IF NOT EXISTS importacoes (
     linhas_duplicadas INTEGER NOT NULL DEFAULT 0
 );
 
+-- Metas (F7). `modo` 'prazo' = valor + data (o app calcula o mensal); 'mensal' = valor + quanto guarda por mês
+-- (o app calcula a data). `prioridade` menor = mais importante. O dinheiro guardado fica na conta "Caixinhas"
+-- (tipo investimento): cada guardar/retirar é uma transferência com `lancamentos.meta_id` nos dois lados.
+CREATE TABLE IF NOT EXISTS metas (
+    id                  INTEGER PRIMARY KEY,
+    nome                TEXT    NOT NULL,
+    valor_alvo_centavos INTEGER NOT NULL CHECK (valor_alvo_centavos > 0),
+    modo                TEXT    NOT NULL CHECK (modo IN ('prazo', 'mensal')),
+    prazo               TEXT,                          -- ISO; só no modo 'prazo'
+    mensal_centavos     INTEGER,                       -- só no modo 'mensal'
+    prioridade          INTEGER NOT NULL DEFAULT 0,
+    reserva             INTEGER NOT NULL DEFAULT 0,    -- 1 = reserva de emergência
+    criada_em           TEXT    NOT NULL DEFAULT (date('now', 'localtime')),
+    concluida_em        TEXT,
+    arquivada           INTEGER NOT NULL DEFAULT 0
+);
+
 CREATE TABLE IF NOT EXISTS lancamentos (
     id                 INTEGER PRIMARY KEY,
     conta_id           INTEGER NOT NULL REFERENCES contas (id),
@@ -89,6 +106,7 @@ CREATE TABLE IF NOT EXISTS lancamentos (
     recorrente_id      INTEGER REFERENCES recorrentes (id),
     importacao_id      INTEGER REFERENCES importacoes (id),
     transferencia_id   TEXT,                          -- liga os dois lados de uma transferência
+    meta_id            INTEGER REFERENCES metas (id), -- guardar/retirar de uma meta (os dois lados)
     grupo_parcelas     TEXT,                          -- liga as parcelas de uma mesma compra
     parcela_atual      INTEGER,
     parcela_total      INTEGER,
@@ -101,6 +119,7 @@ CREATE TABLE IF NOT EXISTS lancamentos (
 CREATE INDEX IF NOT EXISTS ix_lancamentos_data ON lancamentos (data);
 CREATE INDEX IF NOT EXISTS ix_lancamentos_conta ON lancamentos (conta_id);
 CREATE INDEX IF NOT EXISTS ix_lancamentos_recorrente ON lancamentos (recorrente_id);
+CREATE INDEX IF NOT EXISTS ix_lancamentos_meta ON lancamentos (meta_id);
 CREATE UNIQUE INDEX IF NOT EXISTS ux_lancamentos_fitid ON lancamentos (conta_id, fitid) WHERE fitid IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS regras_categorizacao (

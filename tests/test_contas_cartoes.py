@@ -113,7 +113,7 @@ def test_nao_desativa_ultima_conta_corrente_nem_carteira(conn):
         cadastros.desativar_conta(conn, id_conta(conn, "Inter"))
     with pytest.raises(ValueError, match="carteira"):
         cadastros.desativar_conta(conn, id_conta(conn, "Carteira"))
-    assert conn.execute("SELECT COUNT(*) FROM contas WHERE ativa = 1").fetchone()[0] == 3
+    assert conn.execute("SELECT COUNT(*) FROM contas WHERE ativa = 1").fetchone()[0] == 4
     cadastros.reativar_conta(conn, id_conta(conn, "Caixa"))
     cadastros.desativar_conta(conn, id_conta(conn, "Inter"))  # agora sobra a Caixa
 

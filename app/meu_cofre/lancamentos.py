@@ -315,8 +315,9 @@ def recentes(conn: sqlite3.Connection, hoje: date, n: int = 10, filtro: str = "t
 
     Previstos e parcelas futuras ficam de fora até a data chegar; o lançamento que acabou de ser feito
     hoje continua no topo. `filtro`: "todos", "entradas" ou "saidas" (transferências só em "todos").
+    Guardar e retirar de uma meta aparecem uma vez só, pelo lado da conta (o lado das Caixinhas fica de fora).
     Colunas: id, descricao, categoria, conta, conta_final (final do cartão ou nulo), metodo, data, valor_centavos, parcela_atual, parcela_total,
-    recorrente_id (nulo se não for de uma recorrente).
+    recorrente_id (nulo se não for de uma recorrente), meta_id (nulo se não for guardar/retirar de uma meta).
     """
     if filtro not in ("todos", "entradas", "saidas"):
         raise ValueError(f"Filtro desconhecido: {filtro}")
@@ -329,11 +330,11 @@ def recentes(conn: sqlite3.Connection, hoje: date, n: int = 10, filtro: str = "t
     return pd.read_sql_query(
         f"""
         SELECT l.id, l.descricao, c.nome AS categoria, ct.nome AS conta, ct.final AS conta_final, l.metodo, l.data,
-               l.valor_centavos, l.parcela_atual, l.parcela_total, l.recorrente_id
+               l.valor_centavos, l.parcela_atual, l.parcela_total, l.recorrente_id, l.meta_id
         FROM lancamentos l
         JOIN contas ct ON ct.id = l.conta_id
         LEFT JOIN categorias c ON c.id = l.categoria_id
-        WHERE l.data <= ? {extra}
+        WHERE l.data <= ? AND NOT (l.meta_id IS NOT NULL AND ct.tipo = 'investimento') {extra}
         ORDER BY l.data DESC, l.id DESC
         LIMIT ?
         """,

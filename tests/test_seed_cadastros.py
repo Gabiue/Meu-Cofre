@@ -6,9 +6,9 @@ from meu_cofre import cadastros, db
 
 
 def test_seed_inicial(conn):
-    assert conn.execute("SELECT COUNT(*) FROM categorias").fetchone()[0] == 22
+    assert conn.execute("SELECT COUNT(*) FROM categorias").fetchone()[0] == 23
     nomes = [r["nome"] for r in conn.execute("SELECT nome FROM contas ORDER BY id")]
-    assert nomes == ["Inter", "Caixa", "Cartão de crédito", "Carteira"]
+    assert nomes == ["Inter", "Caixa", "Cartão de crédito", "Carteira", "Caixinhas"]
 
 
 def test_seed_nao_recria_categoria_apagada(tmp_path):
@@ -18,7 +18,7 @@ def test_seed_nao_recria_categoria_apagada(tmp_path):
     c.close()
     c = db.conectar(tmp_path / "a.db")
     assert c.execute("SELECT COUNT(*) FROM categorias WHERE nome='Lazer'").fetchone()[0] == 0
-    assert c.execute("SELECT COUNT(*) FROM categorias").fetchone()[0] == 21
+    assert c.execute("SELECT COUNT(*) FROM categorias").fetchone()[0] == 22
 
 
 def test_salvar_categorias(conn):

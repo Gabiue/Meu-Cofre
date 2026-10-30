@@ -1,4 +1,4 @@
-"""Janela principal (docs/design/telas.md): abas "Início", "Assinaturas/fixos" e "Cartões" com dados reais.
+"""Janela principal (docs/design/telas.md): abas "Início", "Assinaturas/fixos", "Cartões" e "Metas" com dados reais.
 
 Início: painel (gráficos do mês escolhido, ou os próximos meses), resumo e recentes (sempre "agora"), em 2 colunas ou 1.
 `atualizar()` gera as recorrentes do mês e recarrega tudo; os diálogos chamam depois de salvar ou excluir.
@@ -37,6 +37,7 @@ from meu_cofre.ui.componentes import (
     Segmentado,
 )
 from meu_cofre.ui.aba_cartoes import AbaCartoes
+from meu_cofre.ui.aba_metas import AbaMetas
 from meu_cofre.ui.aba_recorrentes import AbaRecorrentes
 from meu_cofre.ui.dialogo_contas import DialogoContas
 from meu_cofre.ui.dialogo_lancamento import DialogoLancamento
@@ -51,8 +52,8 @@ from meu_cofre.ui.graficos import (
 )
 
 LARGURA_DUAS_COLUNAS = 1100  # abaixo disso, RECENTES desce para baixo do RESUMO
-ABA_INICIO, ABA_RECORRENTES, ABA_CARTOES = "Início", "Assinaturas/fixos", "Cartões"
-ABAS = {"inicio": ABA_INICIO, "recorrentes": ABA_RECORRENTES, "cartoes": ABA_CARTOES}
+ABA_INICIO, ABA_RECORRENTES, ABA_CARTOES, ABA_METAS = "Início", "Assinaturas/fixos", "Cartões", "Metas"
+ABAS = {"inicio": ABA_INICIO, "recorrentes": ABA_RECORRENTES, "cartoes": ABA_CARTOES, "metas": ABA_METAS}
 OPCOES_PAINEL = [OPCAO_FLUXO, OPCAO_ROSCA, OPCAO_PROXIMOS]
 MESES_PROXIMOS = 6
 OPCOES_RECENTES = {"Todos": "todos", "Entradas": "entradas", "Saídas": "saidas"}
@@ -132,10 +133,13 @@ class JanelaPrincipal(QMainWindow):
         self.aba_recorrentes.alterado.connect(self._lancamento_gravado)
         self.aba_cartoes = AbaCartoes(self.conn, self._hoje)
         self.aba_cartoes.alterado.connect(self._lancamento_gravado)
+        self.aba_metas = AbaMetas(self.conn, self._hoje)
+        self.aba_metas.alterado.connect(self._lancamento_gravado)
         self._paginas = QStackedWidget()
         self._paginas.addWidget(rolagem)
         self._paginas.addWidget(self.aba_recorrentes)
         self._paginas.addWidget(self.aba_cartoes)
+        self._paginas.addWidget(self.aba_metas)
         coluna.addWidget(self._paginas, 1)
 
     def _montar_cabecalho(self) -> QWidget:
@@ -149,7 +153,7 @@ class JanelaPrincipal(QMainWindow):
         marca.setObjectName("Marca")
         linha.addWidget(marca, 0, Qt.AlignmentFlag.AlignVCenter)
 
-        self.abas = Segmentado([ABA_INICIO, ABA_RECORRENTES, ABA_CARTOES])
+        self.abas = Segmentado(list(ABAS.values()))
         self.abas.escolhido.connect(self._trocar_aba)
         linha.addSpacing(tema.ESPACO)
         linha.addWidget(self.abas, 0, Qt.AlignmentFlag.AlignVCenter)
@@ -237,6 +241,7 @@ class JanelaPrincipal(QMainWindow):
         self._carregar_painel()
         self.aba_recorrentes.recarregar()
         self.aba_cartoes.recarregar()
+        self.aba_metas.recarregar()
 
     def _carregar_resumo(self) -> None:
         hoje = self._hoje()
@@ -278,8 +283,12 @@ class JanelaPrincipal(QMainWindow):
                 int(linha.valor_centavos),
                 parcela,
                 recorrente=not pd.isna(linha.recorrente_id),
+                meta=not pd.isna(linha.meta_id),
             )
-            item.clicado.connect(self._abrir_lancamento)
+            if pd.isna(linha.meta_id):
+                item.clicado.connect(self._abrir_lancamento)
+            else:  # guardar/retirar de uma meta se mexe na aba Metas, não no lançamento solto
+                item.clicado.connect(lambda _id: self.mostrar_aba("metas"))
             self._lista.addWidget(item)
         self._vazio_recentes.definir(VAZIO_RECENTES[filtro], "Ctrl+N pra lançar")
         self._vazio_recentes.setVisible(df.empty)
@@ -325,7 +334,7 @@ class JanelaPrincipal(QMainWindow):
         self._atualizar_navegacao_mes()
 
     def mostrar_aba(self, nome: str) -> None:
-        """Troca de aba por código ("inicio", "recorrentes" ou "cartoes"), como se clicasse nela."""
+        """Troca de aba por código ("inicio", "recorrentes", "cartoes" ou "metas"), como se clicasse nela."""
         rotulo = ABAS[nome]
         self.abas.definir(rotulo)
         self._trocar_aba(rotulo)

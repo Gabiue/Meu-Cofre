@@ -1,8 +1,10 @@
-"""Gráficos da tela inicial no visual da direção visual.
+"""Gráficos da tela inicial e da aba Investimentos no visual da direção visual.
 
 - `PainelGraficos`: troca entre o fluxo (área, gasto por dia), a rosca (gasto por categoria) e os próximos
   meses (barras empilhadas do que já está comprometido). Fluxo e rosca usam QtCharts; as barras são
   desenhadas à mão (QtCharts não arredonda os cantos das barras).
+- `PainelPatrimonio`: o patrimônio no ano (linha sólida até hoje, tracejada até 31/12), também desenhado à mão:
+  linha sólida e tracejada na mesma curva, rótulo do 31/12 e tooltip, sem depender do ciclo de vida das séries do QtCharts.
 - Os gráficos recebem DataFrames prontos (de `relatorios`) e não conhecem o banco.
 - Fundo transparente: quem dá a cor é o `Cartao` por trás.
 """
@@ -10,6 +12,7 @@
 import calendar
 import math
 import os
+from datetime import date
 
 import pandas as pd
 from PySide6.QtCharts import (
@@ -736,6 +739,207 @@ class PainelProximos(QWidget):
             self._pilha.setCurrentWidget(self._vazio)
             return
         self._barras.definir(comprometido)
+        self._pilha.setCurrentWidget(self._conteudo)
+
+
+# --- Patrimônio no ano ---------------------------------------------------------------------
+
+
+class _LinhaPatrimonio(QWidget):
+    """Linha do patrimônio no ano: sólida (verde, 2px, com área suave) até hoje e tracejada até 31/12.
+
+    O eixo X é o ano inteiro (1º de janeiro a 31 de dezembro); o Y vai em BRL curto com ticks redondos. O ponto
+    de hoje é verde, o de 31/12 é dourado e leva o valor. Ao passar o mouse perto de um ponto, tooltip.
+    """
+
+    MARGEM = QMargins(66, 28, 24, 26)
+    RAIO_HOVER = 18
+
+    def __init__(self, parent: QWidget | None = None):
+        super().__init__(parent)
+        self.setMinimumHeight(260)
+        self.setMouseTracking(True)
+        self._pontos: list[dict] = []  # data, reais, projetado
+        self._ticks: list[float] = [0, 100]
+        self._ano = date.today().year
+        self._sobre: int | None = None
+
+    def definir(self, serie: pd.DataFrame, ano: int) -> None:
+        """`serie`: saída de `investimentos.serie_patrimonio_no_ano` (data, centavos, projetado)."""
+        self._ano = ano
+        self._pontos = [
+            {"data": linha.data.date(), "reais": int(linha.centavos) / 100, "centavos": int(linha.centavos), "projetado": bool(linha.projetado)}
+            for linha in serie.itertuples()
+        ]
+        valores = [p["reais"] for p in self._pontos]
+        minimo, maximo = min(valores, default=0), max(valores, default=0)
+        folga = max((maximo - minimo) * 0.1, 1.0)
+        self._ticks = ticks_bonitos(minimo - folga if minimo < 0 else max(minimo - folga, 0), maximo + folga, 4)
+        self._sobre = None
+        self.update()
+
+    def dica_do_ponto(self, indice: int) -> str:
+        p = self._pontos[indice]
+        data = f"{p['data'].day} {MESES_CURTOS[p['data'].month - 1]}"
+        return f"{data} · previsão {formatar_brl(p['centavos'])}" if p["projetado"] else f"{data} · {formatar_brl(p['centavos'])}"
+
+    def _plano(self) -> QRectF:
+        return QRectF(self.rect().adjusted(self.MARGEM.left(), self.MARGEM.top(), -self.MARGEM.right(), -self.MARGEM.bottom()))
+
+    def _dias_do_ano(self) -> int:
+        return (date(self._ano, 12, 31) - date(self._ano, 1, 1)).days
+
+    def _x(self, d: date) -> float:
+        plano = self._plano()
+        return plano.left() + plano.width() * (d - date(self._ano, 1, 1)).days / self._dias_do_ano()
+
+    def _y(self, reais: float) -> float:
+        plano = self._plano()
+        minimo, maximo = self._ticks[0], self._ticks[-1]
+        return plano.bottom() - plano.height() * (reais - minimo) / (maximo - minimo)
+
+    def _posicao(self, p: dict) -> QPointF:
+        return QPointF(self._x(p["data"]), self._y(p["reais"]))
+
+    def _indice_perto(self, x: float, y: float) -> int | None:
+        melhor, distancia = None, self.RAIO_HOVER
+        for i, p in enumerate(self._pontos):
+            d = math.hypot(self._posicao(p).x() - x, self._posicao(p).y() - y)
+            if d <= distancia:
+                melhor, distancia = i, d
+        return melhor
+
+    def mouseMoveEvent(self, evento) -> None:
+        ponto = evento.position()
+        indice = self._indice_perto(ponto.x(), ponto.y())
+        if indice != self._sobre:
+            self._sobre = indice
+            self.update()
+        if indice is None:
+            QToolTip.hideText()
+        else:
+            QToolTip.showText(evento.globalPosition().toPoint(), self.dica_do_ponto(indice), self)
+
+    def leaveEvent(self, evento) -> None:
+        self._sobre = None
+        QToolTip.hideText()
+        self.update()
+        super().leaveEvent(evento)
+
+    def paintEvent(self, _evento) -> None:
+        if not self._pontos:
+            return
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        plano = self._plano()
+        p.setFont(_fonte(11))
+
+        for tick in self._ticks:  # grade quase invisível + rótulos do eixo
+            y = self._y(tick)
+            p.setPen(QPen(_cor(tema.TEXTO, 0.07), 1))
+            p.drawLine(QPointF(plano.left(), y), QPointF(plano.right(), y))
+            p.setPen(QColor(tema.TEXTO_APAGADO))
+            p.drawText(QRectF(0, y - 8, self.MARGEM.left() - 8, 16), Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter, brl_curto(tick * 100))
+        p.setPen(QColor(tema.TEXTO_APAGADO))  # meses no eixo X, no meio de cada um
+        for mes in range(1, 13):
+            inicio, fim = date(self._ano, mes, 1), date(self._ano, mes, calendar.monthrange(self._ano, mes)[1])
+            p.drawText(QRectF(self._x(inicio), plano.bottom() + 6, self._x(fim) - self._x(inicio), 16), Qt.AlignmentFlag.AlignCenter, MESES_CURTOS[mes - 1])
+
+        realizados = [self._posicao(q) for q in self._pontos if not q["projetado"]]
+        hoje = realizados[-1] if realizados else None
+        previstos = [self._posicao(q) for q in self._pontos if q["projetado"]]
+
+        if len(realizados) > 1:  # área suave sob o realizado
+            base = self._y(self._ticks[0])
+            area = QPainterPath(QPointF(realizados[0].x(), base))
+            for ponto in realizados:
+                area.lineTo(ponto)
+            area.lineTo(QPointF(realizados[-1].x(), base))
+            area.closeSubpath()
+            degrade = QLinearGradient(0, plano.top(), 0, base)
+            degrade.setColorAt(0, _cor(tema.VERDE, 0.30))
+            degrade.setColorAt(1, _cor(tema.VERDE, 0.0))
+            p.setPen(Qt.PenStyle.NoPen)
+            p.setBrush(QBrush(degrade))
+            p.drawPath(area)
+
+        def tracar(pontos: list[QPointF], estilo: Qt.PenStyle) -> None:
+            if len(pontos) < 2:
+                return
+            caneta = QPen(QColor(tema.VERDE), 2)
+            caneta.setStyle(estilo)
+            caneta.setCapStyle(Qt.PenCapStyle.RoundCap)
+            caneta.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+            caminho = QPainterPath(pontos[0])
+            for ponto in pontos[1:]:
+                caminho.lineTo(ponto)
+            p.setPen(caneta)
+            p.setBrush(Qt.BrushStyle.NoBrush)
+            p.drawPath(caminho)
+
+        tracar(realizados, Qt.PenStyle.SolidLine)
+        if hoje is not None:
+            tracar([hoje, *previstos], Qt.PenStyle.DashLine)
+
+        def bolinha(centro: QPointF, cor: str, raio: float = 5.0) -> None:
+            p.setPen(QPen(QColor(tema.CARTAO), 2))
+            p.setBrush(QColor(cor))
+            p.drawEllipse(centro, raio, raio)
+
+        if hoje is not None:
+            bolinha(hoje, tema.VERDE)
+        if previstos:
+            fim = previstos[-1]
+            bolinha(fim, tema.DOURADO)
+            texto = f"{formatar_brl_inteiro(self._pontos[-1]['centavos'])} em 31/12"
+            p.setFont(_fonte(12))
+            p.setPen(QColor(tema.DOURADO))
+            caixa = QRectF(fim.x() - 190, fim.y() - 26, 188, 18)
+            p.drawText(caixa, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter, texto)
+        if self._sobre is not None:
+            q = self._pontos[self._sobre]
+            bolinha(self._posicao(q), tema.DOURADO if q["projetado"] else tema.VERDE, 6.5)
+        p.end()
+
+
+class PainelPatrimonio(QWidget):
+    """O patrimônio no ano: legenda curta em cima e a linha embaixo; sem dados, o estado vazio."""
+
+    def __init__(self, parent: QWidget | None = None):
+        super().__init__(parent)
+        self._linha = _LinhaPatrimonio()
+        self._vazio = EstadoVazio("linha", "Sem dados no ano ainda", "Lance receitas e gastos pra ver o patrimônio crescer")
+        conteudo = QWidget()
+        coluna = QVBoxLayout(conteudo)
+        coluna.setContentsMargins(0, 0, 0, 0)
+        coluna.setSpacing(tema.ESPACO)
+        legenda = QHBoxLayout()
+        legenda.setSpacing(tema.ESPACO)
+        for tracejado, texto, cor in ((False, "realizado", tema.VERDE), (True, "previsão até 31/12", tema.DOURADO)):
+            amostra = QHBoxLayout()
+            amostra.setSpacing(3)
+            for _ in range(2 if tracejado else 1):
+                traco = QFrame()
+                traco.setFixedSize(6 if tracejado else 16, 2)
+                traco.setStyleSheet(f"background: {cor}; border: none;")
+                amostra.addWidget(traco, 0, Qt.AlignmentFlag.AlignVCenter)
+            legenda.addLayout(amostra)
+            legenda.addWidget(QLabel(texto, objectName="LegendaNome"))
+            legenda.addSpacing(2 * tema.ESPACO)
+        legenda.addStretch(1)
+        coluna.addLayout(legenda)
+        coluna.addWidget(self._linha, 1)
+        self._pilha = QStackedLayout(self)
+        self._pilha.setContentsMargins(0, 0, 0, 0)
+        self._pilha.addWidget(conteudo)
+        self._pilha.addWidget(self._vazio)
+        self._conteudo = conteudo
+
+    def definir(self, serie: pd.DataFrame, ano: int) -> None:
+        if serie.empty or int(serie["centavos"].abs().sum()) == 0:
+            self._pilha.setCurrentWidget(self._vazio)
+            return
+        self._linha.definir(serie, ano)
         self._pilha.setCurrentWidget(self._conteudo)
 
 

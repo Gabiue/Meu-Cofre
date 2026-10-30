@@ -10,6 +10,7 @@ CONTAS = [
     ("Cartão de crédito", "cartao", None),
     ("Carteira", "dinheiro", None),
     ("Caixinhas", "investimento", None),  # onde ficam os valores guardados das metas
+    ("Investimentos", "investimento", None),  # onde ficam os aportes em renda fixa e Tesouro
 ]
 
 CATEGORIAS = [

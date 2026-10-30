@@ -117,6 +117,14 @@ def _tirar_v5(conn):
     conn.execute("DELETE FROM categorias WHERE nome = 'Guardar em meta'")
 
 
+def _tirar_v6(conn):
+    """Desfaz o que é da v6 (investimentos, indicadores e a conta Investimentos)."""
+    conn.execute("DROP TABLE movimentacoes_ativos")
+    conn.execute("DROP TABLE ativos")
+    conn.execute("DROP TABLE indicadores")
+    conn.execute("DELETE FROM contas WHERE nome = 'Investimentos'")
+
+
 def test_banco_novo_nasce_na_ultima_versao_sem_backup(tmp_path):
     caminho = tmp_path / "novo.db"
     conn = db.conectar(caminho)
@@ -127,6 +135,10 @@ def test_banco_novo_nasce_na_ultima_versao_sem_backup(tmp_path):
     assert {"valor_alvo_centavos", "modo", "prioridade", "reserva", "arquivada"} <= _colunas(conn, "metas")
     assert "meta_id" in _colunas(conn, "lancamentos")
     assert conn.execute("SELECT tipo FROM contas WHERE nome = 'Caixinhas'").fetchone()[0] == "investimento"
+    assert {"nome", "tipo", "instituicao", "indexador", "taxa", "vencimento", "caixinhas", "ativo"} <= _colunas(conn, "ativos")
+    assert {"ativo_id", "tipo", "data", "valor_centavos", "transferencia_id"} <= _colunas(conn, "movimentacoes_ativos")
+    assert {"serie", "data", "valor"} == _colunas(conn, "indicadores")
+    assert conn.execute("SELECT tipo FROM contas WHERE nome = 'Investimentos'").fetchone()[0] == "investimento"
     assert not (tmp_path / "backups").exists()
 
 
@@ -182,13 +194,52 @@ def test_v4_para_v5_cria_metas_meta_id_e_caixinhas_sem_perder_dados(tmp_path):
     conn.close()
 
     conn = db.conectar(caminho)
-    assert migracoes.versao(conn) == 5
+    assert migracoes.versao(conn) == migracoes.ULTIMA_VERSAO
     assert conn.execute("SELECT descricao, meta_id FROM lancamentos").fetchone()[:] == ("Pão", None)
     assert conn.execute("SELECT COUNT(*) FROM metas").fetchone()[0] == 0
     assert conn.execute("SELECT nome, tipo, ativa FROM contas WHERE nome = 'Caixinhas'").fetchone()[:] == ("Caixinhas", "investimento", 1)
     assert conn.execute("SELECT tipo FROM categorias WHERE nome = 'Guardar em meta'").fetchone()[0] == "transferencia"
     assert "ix_lancamentos_meta" in {r["name"] for r in conn.execute("PRAGMA index_list(lancamentos)")}
     assert len(list((tmp_path / "backups").glob("meu-*-v4.db"))) == 1
+
+
+def test_v5_para_v6_cria_investimentos_sem_perder_dados(tmp_path):
+    caminho = tmp_path / "meu.db"
+    conn = db.conectar(caminho)
+    conn.execute("INSERT INTO lancamentos (conta_id, data, valor_centavos, descricao) VALUES (1, '2026-10-01', -1500, 'Pão')")
+    conn.execute("INSERT INTO metas (nome, valor_alvo_centavos, modo, prazo) VALUES ('Viagem', 100000, 'prazo', '2027-01-01')")
+    n_contas = conn.execute("SELECT COUNT(*) FROM contas").fetchone()[0]
+    _tirar_v6(conn)
+    conn.execute("PRAGMA user_version = 5")
+    conn.commit()
+    conn.close()
+
+    conn = db.conectar(caminho)
+    assert migracoes.versao(conn) == 6
+    assert conn.execute("SELECT descricao FROM lancamentos").fetchone()[0] == "Pão"
+    assert conn.execute("SELECT nome FROM metas").fetchone()[0] == "Viagem"
+    assert conn.execute("SELECT COUNT(*) FROM contas").fetchone()[0] == n_contas
+    assert conn.execute("SELECT nome, tipo, ativa FROM contas WHERE nome = 'Investimentos'").fetchone()[:] == ("Investimentos", "investimento", 1)
+    assert conn.execute("SELECT COUNT(*) FROM ativos").fetchone()[0] == 0
+    assert conn.execute("SELECT COUNT(*) FROM movimentacoes_ativos").fetchone()[0] == 0
+    assert conn.execute("SELECT COUNT(*) FROM indicadores").fetchone()[0] == 0
+    conn.execute("INSERT INTO ativos (nome, tipo, indexador, taxa) VALUES ('CDB', 'renda_fixa', 'cdi', 110)")
+    with pytest.raises(sqlite3.IntegrityError):
+        conn.execute("INSERT INTO ativos (nome, tipo) VALUES ('X', 'cripto')")
+    assert len(list((tmp_path / "backups").glob("meu-*-v5.db"))) == 1
+
+
+def test_v6_nao_duplica_a_conta_investimentos_que_ja_existe(tmp_path):
+    caminho = tmp_path / "meu.db"
+    conn = db.conectar(caminho)
+    n = conn.execute("SELECT COUNT(*) FROM contas").fetchone()[0]
+    for tabela in ("movimentacoes_ativos", "ativos", "indicadores"):
+        conn.execute(f"DROP TABLE {tabela}")  # a conta fica
+    conn.execute("PRAGMA user_version = 5")
+    conn.commit()
+    conn.close()
+    conn = db.conectar(caminho)
+    assert conn.execute("SELECT COUNT(*) FROM contas").fetchone()[0] == n
 
 
 def test_v5_nao_duplica_caixinhas_que_ja_existe(tmp_path):

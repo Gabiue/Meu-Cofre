@@ -315,7 +315,8 @@ def recentes(conn: sqlite3.Connection, hoje: date, n: int = 10, filtro: str = "t
 
     Previstos e parcelas futuras ficam de fora até a data chegar; o lançamento que acabou de ser feito
     hoje continua no topo. `filtro`: "todos", "entradas" ou "saidas" (transferências só em "todos").
-    Guardar e retirar de uma meta aparecem uma vez só, pelo lado da conta (o lado das Caixinhas fica de fora).
+    Guardar/retirar de uma meta e aportar/resgatar de um investimento aparecem uma vez só, pelo lado da conta
+    (o lado da conta de investimento fica de fora).
     Colunas: id, descricao, categoria, conta, conta_final (final do cartão ou nulo), metodo, data, valor_centavos, parcela_atual, parcela_total,
     recorrente_id (nulo se não for de uma recorrente), meta_id (nulo se não for guardar/retirar de uma meta).
     """
@@ -334,7 +335,7 @@ def recentes(conn: sqlite3.Connection, hoje: date, n: int = 10, filtro: str = "t
         FROM lancamentos l
         JOIN contas ct ON ct.id = l.conta_id
         LEFT JOIN categorias c ON c.id = l.categoria_id
-        WHERE l.data <= ? AND NOT (l.meta_id IS NOT NULL AND ct.tipo = 'investimento') {extra}
+        WHERE l.data <= ? AND NOT (ct.tipo = 'investimento' AND (l.meta_id IS NOT NULL OR l.transferencia_id IS NOT NULL)) {extra}
         ORDER BY l.data DESC, l.id DESC
         LIMIT ?
         """,

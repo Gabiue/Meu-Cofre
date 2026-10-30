@@ -266,6 +266,15 @@ QPushButton#BotaoAcao[perigo="true"]:hover {{ background: {VERMELHO_SUAVE}; bord
 #PreviaDestaque {{ font-size: {PX_TEXTO + 2}px; font-weight: 700; color: {TEXTO}; }}
 #PreviaDetalhe {{ font-size: {PX_RODAPE + 1}px; color: {TEXTO_SECUNDARIO}; }}
 
+/* Aba "Investimentos" */
+#AtivoCard {{ background: transparent; border: 1px solid {BORDA}; border-radius: 10px; }}
+#AtivoNome {{ font-size: {PX_TEXTO + 2}px; font-weight: 700; color: {TEXTO}; }}
+#AtivoNome[encerrado="true"] {{ color: {TEXTO_SECUNDARIO}; }}
+#AtivoInstituicao {{ font-size: {PX_RODAPE + 1}px; color: {TEXTO_APAGADO}; }}
+#AtivoValor {{ font-size: {PX_TEXTO + 3}px; font-weight: 700; color: {TEXTO}; }}
+#AtivoValor[tom="positivo"] {{ color: {VERDE}; }}
+#SeloTaxas {{ font-size: {PX_RODAPE}px; color: {TEXTO_APAGADO}; }}
+
 /* Barra de rolagem fina */
 QScrollBar:vertical {{ background: transparent; width: 10px; margin: 2px; }}
 QScrollBar::handle:vertical {{ background: {BORDA}; border-radius: 3px; min-height: 32px; }}

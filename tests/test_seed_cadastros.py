@@ -8,7 +8,7 @@ from meu_cofre import cadastros, db
 def test_seed_inicial(conn):
     assert conn.execute("SELECT COUNT(*) FROM categorias").fetchone()[0] == 23
     nomes = [r["nome"] for r in conn.execute("SELECT nome FROM contas ORDER BY id")]
-    assert nomes == ["Inter", "Caixa", "Cartão de crédito", "Carteira", "Caixinhas"]
+    assert nomes == ["Inter", "Caixa", "Cartão de crédito", "Carteira", "Caixinhas", "Investimentos"]
 
 
 def test_seed_nao_recria_categoria_apagada(tmp_path):

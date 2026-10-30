@@ -92,6 +92,41 @@ CREATE TABLE IF NOT EXISTS metas (
     arquivada           INTEGER NOT NULL DEFAULT 0
 );
 
+-- Investimentos (F8). `indexador` + `taxa`: cdi/selic = % do índice (100 = 100% do CDI); ipca = taxa real somada ao
+-- IPCA (6.2 = IPCA + 6,2%); pre = % ao ano. `caixinhas` = 1 marca o ativo que faz render o dinheiro das metas.
+CREATE TABLE IF NOT EXISTS ativos (
+    id          INTEGER PRIMARY KEY,
+    nome        TEXT    NOT NULL,
+    tipo        TEXT    NOT NULL CHECK (tipo IN ('renda_fixa', 'tesouro', 'acao', 'fii')),
+    instituicao TEXT,
+    indexador   TEXT    CHECK (indexador IN ('cdi', 'selic', 'ipca', 'pre')),
+    taxa        REAL,
+    vencimento  TEXT,
+    caixinhas   INTEGER NOT NULL DEFAULT 0,
+    ativo       INTEGER NOT NULL DEFAULT 1,
+    criado_em   TEXT    NOT NULL DEFAULT (date('now', 'localtime'))
+);
+
+-- aporte/resgate ligam-se à transferência conta <-> "Investimentos"; saldo_real é o saldo que o banco mostra.
+CREATE TABLE IF NOT EXISTS movimentacoes_ativos (
+    id               INTEGER PRIMARY KEY,
+    ativo_id         INTEGER NOT NULL REFERENCES ativos (id),
+    tipo             TEXT    NOT NULL CHECK (tipo IN ('aporte', 'resgate', 'saldo_real')),
+    data             TEXT    NOT NULL,
+    valor_centavos   INTEGER NOT NULL,
+    transferencia_id TEXT
+);
+
+CREATE INDEX IF NOT EXISTS ix_movimentacoes_ativo ON movimentacoes_ativos (ativo_id);
+
+-- Séries públicas do Banco Central: cdi e selic (% ao dia, dias úteis) e ipca (% ao mês, dia 1 do mês).
+CREATE TABLE IF NOT EXISTS indicadores (
+    serie TEXT NOT NULL,
+    data  TEXT NOT NULL,
+    valor REAL NOT NULL,
+    PRIMARY KEY (serie, data)
+);
+
 CREATE TABLE IF NOT EXISTS lancamentos (
     id                 INTEGER PRIMARY KEY,
     conta_id           INTEGER NOT NULL REFERENCES contas (id),

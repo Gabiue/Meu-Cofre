@@ -1,7 +1,12 @@
-"""Janela principal (docs/design/telas.md): abas "Início", "Assinaturas/fixos", "Cartões" e "Metas" com dados reais.
+"""Janela principal (docs/design/telas.md): abas "Início", "Assinaturas/fixos", "Cartões", "Metas" e "Investimentos".
 
 Início: painel (gráficos do mês escolhido, ou os próximos meses), resumo e recentes (sempre "agora"), em 2 colunas ou 1.
-`atualizar()` gera as recorrentes do mês e recarrega tudo; os diálogos chamam depois de salvar ou excluir.
+`atualizar()` gera as recorrentes do mês, recarrega tudo e pede (em segundo plano) as taxas do Banco Central; os
+diálogos chamam depois de salvar ou excluir.
+
+O cabeçalho (marca, abas, mês, Contas e Novo lançamento) se reorganiza pela largura: numa linha só; em duas (a marca
+e os botões em cima, as abas e o mês embaixo); ou em três (o mês na terceira). Quem decide é a largura mínima que
+cada arranjo realmente pede, medida uma vez, então nada é espremido nem cortado.
 """
 
 import sqlite3
@@ -37,8 +42,10 @@ from meu_cofre.ui.componentes import (
     Segmentado,
 )
 from meu_cofre.ui.aba_cartoes import AbaCartoes
+from meu_cofre.ui.aba_investimentos import AbaInvestimentos
 from meu_cofre.ui.aba_metas import AbaMetas
 from meu_cofre.ui.aba_recorrentes import AbaRecorrentes
+from meu_cofre.ui.atualizador import AtualizadorIndicadores
 from meu_cofre.ui.dialogo_contas import DialogoContas
 from meu_cofre.ui.dialogo_lancamento import DialogoLancamento
 from meu_cofre.ui.graficos import (
@@ -52,8 +59,13 @@ from meu_cofre.ui.graficos import (
 )
 
 LARGURA_DUAS_COLUNAS = 1100  # abaixo disso, RECENTES desce para baixo do RESUMO
-ABA_INICIO, ABA_RECORRENTES, ABA_CARTOES, ABA_METAS = "Início", "Assinaturas/fixos", "Cartões", "Metas"
-ABAS = {"inicio": ABA_INICIO, "recorrentes": ABA_RECORRENTES, "cartoes": ABA_CARTOES, "metas": ABA_METAS}
+ABA_INICIO, ABA_RECORRENTES, ABA_CARTOES, ABA_METAS, ABA_INVESTIMENTOS = (
+    "Início", "Assinaturas/fixos", "Cartões", "Metas", "Investimentos",
+)
+ABAS = {
+    "inicio": ABA_INICIO, "recorrentes": ABA_RECORRENTES, "cartoes": ABA_CARTOES, "metas": ABA_METAS,
+    "investimentos": ABA_INVESTIMENTOS,
+}
 OPCOES_PAINEL = [OPCAO_FLUXO, OPCAO_ROSCA, OPCAO_PROXIMOS]
 MESES_PROXIMOS = 6
 OPCOES_RECENTES = {"Todos": "todos", "Entradas": "entradas", "Saídas": "saidas"}
@@ -91,13 +103,18 @@ class JanelaPrincipal(QMainWindow):
         self.resize(1400, 900)
 
         self._duas_colunas: bool | None = None
+        self._arranjo_cabecalho: int | None = None  # 1, 2 ou 3 linhas
+        self._largura_do_arranjo: dict[tuple[bool, int], int] = {}
         self.dialogo: DialogoLancamento | None = None  # diálogo aberto (se houver)
         self.dialogo_contas: DialogoContas | None = None
         hoje = self._hoje()
         self._mes = (hoje.year, hoje.month)  # mês mostrado no painel
         self._montar()
+        self._atualizador = AtualizadorIndicadores(self.conn, self._hoje, parent=self)
+        self._atualizador.concluido.connect(self._taxas_atualizadas)
         self._atalho_novo = QShortcut(QKeySequence("Ctrl+N"), self, activated=self.novo_lancamento)
         self._aplicar_layout(self.width() >= LARGURA_DUAS_COLUNAS)
+        self._reorganizar_cabecalho()
         self.atualizar()
 
     def _hoje(self) -> date:
@@ -135,28 +152,33 @@ class JanelaPrincipal(QMainWindow):
         self.aba_cartoes.alterado.connect(self._lancamento_gravado)
         self.aba_metas = AbaMetas(self.conn, self._hoje)
         self.aba_metas.alterado.connect(self._lancamento_gravado)
+        self.aba_investimentos = AbaInvestimentos(self.conn, self._hoje)
+        self.aba_investimentos.alterado.connect(self._lancamento_gravado)
+        self.aba_investimentos.ver_metas.connect(lambda: self.mostrar_aba("metas"))
         self._paginas = QStackedWidget()
         self._paginas.addWidget(rolagem)
         self._paginas.addWidget(self.aba_recorrentes)
         self._paginas.addWidget(self.aba_cartoes)
         self._paginas.addWidget(self.aba_metas)
+        self._paginas.addWidget(self.aba_investimentos)
         coluna.addWidget(self._paginas, 1)
 
     def _montar_cabecalho(self) -> QWidget:
-        faixa = QWidget()
-        linha = QHBoxLayout(faixa)
+        self._faixa = QWidget()
+        self._linhas_cabecalho = QVBoxLayout(self._faixa)
         m = 3 * tema.ESPACO
-        linha.setContentsMargins(m, 2 * tema.ESPACO, m, tema.ESPACO)
-        linha.setSpacing(2 * tema.ESPACO)
+        self._linhas_cabecalho.setContentsMargins(m, 2 * tema.ESPACO, m, tema.ESPACO)
+        self._linhas_cabecalho.setSpacing(tema.ESPACO)
+        self._filas = [QHBoxLayout() for _ in range(3)]
+        for fila in self._filas:
+            fila.setSpacing(2 * tema.ESPACO)
+            self._linhas_cabecalho.addLayout(fila)
 
-        marca = QLabel("meu-cofre")
-        marca.setObjectName("Marca")
-        linha.addWidget(marca, 0, Qt.AlignmentFlag.AlignVCenter)
+        self.marca = QLabel("meu-cofre")
+        self.marca.setObjectName("Marca")
 
         self.abas = Segmentado(list(ABAS.values()))
         self.abas.escolhido.connect(self._trocar_aba)
-        linha.addSpacing(tema.ESPACO)
-        linha.addWidget(self.abas, 0, Qt.AlignmentFlag.AlignVCenter)
 
         self.botao_mes_anterior = self._botao_mes("‹", "Mês anterior")
         self.botao_mes_anterior.clicked.connect(lambda: self._mudar_mes(-1))
@@ -166,25 +188,80 @@ class JanelaPrincipal(QMainWindow):
         self.rotulo_mes.setObjectName("MesRotulo")
         self.rotulo_mes.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._navegacao_mes = (self.botao_mes_anterior, self.rotulo_mes, self.botao_mes_seguinte)
-        linha.addSpacing(tema.ESPACO)
-        for w in self._navegacao_mes:
-            linha.addWidget(w, 0, Qt.AlignmentFlag.AlignVCenter)
-        linha.addStretch(1)
 
         self.botao_contas = BotaoSecundario("Contas")
         self.botao_contas.setToolTip("Contas e cartões")
         self.botao_contas.clicked.connect(self.abrir_contas)
-        linha.addWidget(self.botao_contas)
-        linha.addSpacing(tema.ESPACO)
 
-        dica = QLabel("Ctrl+N")
-        dica.setObjectName("DicaAtalho")
+        self.dica_atalho = QLabel("Ctrl+N")
+        self.dica_atalho.setObjectName("DicaAtalho")
         self.botao_novo = BotaoPrimario("+ Novo lançamento")
         self.botao_novo.setToolTip("Novo lançamento (Ctrl+N)")
         self.botao_novo.clicked.connect(self.novo_lancamento)
-        linha.addWidget(dica, 0, Qt.AlignmentFlag.AlignVCenter)
-        linha.addWidget(self.botao_novo)
-        return faixa
+        return self._faixa
+
+    def _montar_arranjo(self, arranjo: int) -> None:
+        """Põe os widgets do cabeçalho em 1, 2 ou 3 linhas."""
+        for fila in self._filas:
+            while fila.count():
+                fila.takeAt(0)
+        centro = Qt.AlignmentFlag.AlignVCenter
+        a, b, c = self._filas
+
+        def pôr(fila: QHBoxLayout, *widgets: QWidget) -> None:
+            for w in widgets:
+                fila.addWidget(w, 0, centro)
+
+        self.dica_atalho.setVisible(arranjo == 1)
+        if arranjo == 1:
+            pôr(a, self.marca)
+            a.addSpacing(tema.ESPACO)
+            pôr(a, self.abas)
+            a.addSpacing(tema.ESPACO)
+            pôr(a, *self._navegacao_mes)
+            a.addStretch(1)
+            pôr(a, self.botao_contas, self.dica_atalho, self.botao_novo)
+            return
+        pôr(a, self.marca)
+        a.addStretch(1)
+        pôr(a, self.botao_contas, self.botao_novo)
+        pôr(b, self.abas)
+        if arranjo == 2:
+            b.addSpacing(tema.ESPACO)
+            pôr(b, *self._navegacao_mes)
+        else:
+            pôr(c, *self._navegacao_mes)
+            c.addStretch(1)
+        b.addStretch(1)
+
+    def _reorganizar_cabecalho(self) -> None:
+        """Escolhe o arranjo mais compacto que não aperta nada: o 1º cuja largura mínima cabe na janela.
+
+        A largura mínima de cada arranjo (com e sem o mês, que só aparece no Início) é medida uma vez, com o
+        estilo já aplicado.
+        """
+        nav = self._nav_deve_aparecer()
+        for w in self._navegacao_mes:
+            w.setVisible(nav)
+        escolhido = 3
+        for arranjo in (1, 2, 3):
+            if (nav, arranjo) not in self._largura_do_arranjo:
+                for w in self._faixa.findChildren(QWidget):
+                    w.ensurePolished()
+                self._montar_arranjo(arranjo)
+                self._arranjo_cabecalho = None
+                self._linhas_cabecalho.invalidate()  # fora do laço de eventos o tamanho em cache ficaria velho
+                self._largura_do_arranjo[(nav, arranjo)] = self._linhas_cabecalho.minimumSize().width()
+            if self._largura_do_arranjo[(nav, arranjo)] <= self.width():
+                escolhido = arranjo
+                break
+        if escolhido != self._arranjo_cabecalho:
+            self._montar_arranjo(escolhido)
+            self._arranjo_cabecalho = escolhido
+
+    def _nav_deve_aparecer(self) -> bool:
+        """O mês é do painel da tela inicial, e só vale pros gráficos do mês."""
+        return self.aba_atual == "inicio" and self.seletor_painel.atual() != OPCAO_PROXIMOS
 
     @staticmethod
     def _botao_mes(simbolo: str, dica: str) -> QPushButton:
@@ -236,12 +313,20 @@ class JanelaPrincipal(QMainWindow):
     def atualizar(self) -> None:
         """Gera o que as recorrentes devem até hoje e recarrega tudo do banco (os diálogos chamam depois de salvar)."""
         recorrentes.gerar_pendentes(self.conn, self._hoje())
+        self._atualizador.disparar()  # em segundo plano; sem MEU_COFRE_SEM_REDE e no máximo a cada 20 min
+        self.aba_investimentos.definir_status(self._atualizador.status, atualizando=self._atualizador.em_andamento)
         self._carregar_resumo()
         self._carregar_recentes()
         self._carregar_painel()
         self.aba_recorrentes.recarregar()
         self.aba_cartoes.recarregar()
         self.aba_metas.recarregar()
+        self.aba_investimentos.recarregar()
+
+    def _taxas_atualizadas(self, status: dict) -> None:
+        """A busca de taxas terminou (e os dados já estão gravados): refaz os números que dependem delas."""
+        self.aba_investimentos.definir_status(status)
+        self.aba_investimentos.recarregar()
 
     def _carregar_resumo(self) -> None:
         hoje = self._hoje()
@@ -312,10 +397,7 @@ class JanelaPrincipal(QMainWindow):
             self._cartao_painel.subtitulo.setText(nome_do_mes(*self._mes))
 
     def _atualizar_navegacao_mes(self) -> None:
-        """Os botões de mês são do painel da tela inicial, e só valem pros gráficos do mês."""
-        visivel = self.aba_atual == "inicio" and self.seletor_painel.atual() != OPCAO_PROXIMOS
-        for w in self._navegacao_mes:
-            w.setVisible(visivel)
+        self._reorganizar_cabecalho()
 
     # --- Comportamento -----------------------------------------------------------
     def _mudar_mes(self, passo: int) -> None:
@@ -334,7 +416,7 @@ class JanelaPrincipal(QMainWindow):
         self._atualizar_navegacao_mes()
 
     def mostrar_aba(self, nome: str) -> None:
-        """Troca de aba por código ("inicio", "recorrentes", "cartoes" ou "metas"), como se clicasse nela."""
+        """Troca de aba por código ("inicio", "recorrentes", "cartoes", "metas" ou "investimentos"), como se clicasse nela."""
         rotulo = ABAS[nome]
         self.abas.definir(rotulo)
         self._trocar_aba(rotulo)
@@ -419,3 +501,4 @@ class JanelaPrincipal(QMainWindow):
     def resizeEvent(self, evento) -> None:
         self._aplicar_layout(evento.size().width() >= LARGURA_DUAS_COLUNAS)
         super().resizeEvent(evento)
+        self._reorganizar_cabecalho()

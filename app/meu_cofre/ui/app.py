@@ -9,7 +9,7 @@ from importlib.resources import files
 from PySide6.QtGui import QColor, QIcon, QPainter, QPixmap
 from PySide6.QtWidgets import QApplication
 
-from meu_cofre import db
+from meu_cofre import db, indicadores
 from meu_cofre.ui import tema
 from meu_cofre.ui.janela import JanelaPrincipal
 
@@ -24,10 +24,31 @@ def _tamanho_screenshot() -> tuple[int, int]:
 
 
 def _abrir_dialogo_de_revisao(janela: JanelaPrincipal, app: QApplication, modo: str):
-    """MEU_COFRE_DIALOGO=novo|cartao|repetir|contas|editar:<id>|excluir:<id>|recorrente:<id>|meta|simulador|pagar: abre o diálogo
-    já preparado (screenshots). `pagar` não é diálogo: abre a confirmação de pagamento da aba Cartões. `meta` abre
-    a nova meta com uma prévia preenchida e `simulador` preenche e rola até o simulador da aba Metas."""
+    """MEU_COFRE_DIALOGO=novo|cartao|repetir|contas|editar:<id>|excluir:<id>|recorrente:<id>|meta|simulador|pagar|ativo|
+    aportar|saldo: abre o diálogo já preparado (screenshots). `pagar` não é diálogo: abre a confirmação de pagamento da
+    aba Cartões. `meta` abre a nova meta com uma prévia preenchida e `simulador` preenche e rola até o simulador da aba
+    Metas. `ativo` abre o novo investimento preenchido; `aportar` e `saldo` abrem o formulário na linha do segundo
+    investimento da aba Investimentos."""
     nome, _, id_texto = modo.partition(":")
+    if nome == "ativo":
+        dialogo = janela.aba_investimentos.novo_investimento()
+        dialogo.nome.setText("CDB Banco Inter")
+        dialogo.instituicao.setText("Inter")
+        dialogo.taxa.setText("110")
+        dialogo.tem_vencimento.setChecked(True)
+        for _ in range(3):
+            app.processEvents()
+        dialogo.resize(dialogo.width(), janela.height() - 60)
+        app.processEvents()
+        return dialogo
+    if nome in ("aportar", "saldo"):  # não é diálogo: abre o formulário inline de um investimento
+        cartoes = [c for c in janela.aba_investimentos.cartoes() if not c.posicao.ativo.caixinhas]
+        janela.aba_investimentos.abrir_form(cartoes[0].id_ativo, nome)
+        for _ in range(3):
+            app.processEvents()
+        janela.aba_investimentos.ensureWidgetVisible(cartoes[0], 0, 40)
+        app.processEvents()
+        return None
     if nome == "simulador":  # não é diálogo: preenche o "Comprar agora ou parcelar?" da aba Metas e rola até ele
         simulador = janela.aba_metas.simulador
         simulador.valor.setText("1500")
@@ -110,10 +131,12 @@ def main() -> int:
     app.setWindowIcon(QIcon(str(files("meu_cofre.ui").joinpath("icone.svg"))))
     tema.aplicar_tema(app)
 
+    destino = os.environ.get("MEU_COFRE_SCREENSHOT")
+    if destino:  # modo revisão: nunca vai pra rede
+        os.environ[indicadores.VAR_SEM_REDE] = "1"
     conn = db.conectar()  # respeita MEU_COFRE_DB
     janela = JanelaPrincipal(conn)
 
-    destino = os.environ.get("MEU_COFRE_SCREENSHOT")
     if destino:  # modo revisão: salva um PNG e sai
         largura, altura = _tamanho_screenshot()
         janela.resize(largura, altura)
@@ -133,6 +156,7 @@ def main() -> int:
 
     janela.show()
     codigo = app.exec()
+    janela._atualizador.aguardar()  # a busca de taxas, se estiver rodando, termina antes de fechar o banco
     conn.close()
     return codigo
 

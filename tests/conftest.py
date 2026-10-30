@@ -3,6 +3,8 @@ import os
 # Os testes de interface nunca podem abrir janelas de verdade no desktop (o ambiente pode
 # trazer QT_QPA_PLATFORM=wayland): força o modo offscreen antes de qualquer import do Qt.
 os.environ["QT_QPA_PLATFORM"] = "offscreen"
+# E nada de rede: a janela principal buscaria as taxas do Banco Central ao abrir (ver ui/atualizador.py).
+os.environ["MEU_COFRE_SEM_REDE"] = "1"
 
 import pytest
 

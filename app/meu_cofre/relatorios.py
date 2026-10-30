@@ -216,6 +216,11 @@ def devo(conn: sqlite3.Connection) -> int:
     return _divida_do_cartao(conn, None)
 
 
+def devo_ate(conn: sqlite3.Connection, dia: date) -> int:
+    """A dívida do cartão no fim de `dia`, só com o que estava lançado até lá (centavos, positivo)."""
+    return _divida_do_cartao(conn, dia)
+
+
 def livre_ate_fim_do_mes(conn: sqlite3.Connection, hoje: date) -> int:
     """Em conta, menos a dívida do cartão até o fim do mês, menos as saídas já lançadas
     (contas corrente/dinheiro) de amanhã até o fim do mês. Pode ser negativo.

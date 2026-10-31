@@ -25,11 +25,27 @@ def _tamanho_screenshot() -> tuple[int, int]:
 
 def _abrir_dialogo_de_revisao(janela: JanelaPrincipal, app: QApplication, modo: str):
     """MEU_COFRE_DIALOGO=novo|cartao|repetir|contas|editar:<id>|excluir:<id>|recorrente:<id>|meta|simulador|pagar|ativo|
-    aportar|saldo: abre o diálogo já preparado (screenshots). `pagar` não é diálogo: abre a confirmação de pagamento da
+    aportar|saldo|importar|comprar|provento|rolar:acoes|rolar:proventos: abre o diálogo já preparado (screenshots). `pagar` não é diálogo: abre a confirmação de pagamento da
     aba Cartões. `meta` abre a nova meta com uma prévia preenchida e `simulador` preenche e rola até o simulador da aba
     Metas. `ativo` abre o novo investimento preenchido; `aportar` e `saldo` abrem o formulário na linha do segundo
-    investimento da aba Investimentos."""
+    investimento da aba Investimentos. `importar` abre "Importar da B3" com a prévia da planilha em MEU_COFRE_PLANILHA;
+    `comprar` e `provento` abrem o formulário na primeira ação; `rolar:acoes` e `rolar:proventos` rolam a aba."""
     nome, _, id_texto = modo.partition(":")
+    if nome == "importar":
+        dialogo = janela.aba_investimentos.importar_b3(os.environ.get("MEU_COFRE_PLANILHA"))
+        for _ in range(3):
+            app.processEvents()
+        return dialogo
+    if nome in ("comprar", "provento", "rolar"):  # não são diálogos: formulário inline e rolagem da aba Investimentos
+        aba = janela.aba_investimentos
+        alvo = aba.cartoes_acoes()[0] if id_texto != "proventos" else aba._cartao_proventos
+        if nome != "rolar":
+            aba.abrir_form_acao(alvo.id_ativo, nome)
+        for _ in range(3):
+            app.processEvents()
+        aba.verticalScrollBar().setValue(alvo.mapTo(aba.widget(), QPoint(0, 0)).y() - 24)
+        app.processEvents()
+        return None
     if nome == "ativo":
         dialogo = janela.aba_investimentos.novo_investimento()
         dialogo.nome.setText("CDB Banco Inter")

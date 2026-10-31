@@ -589,7 +589,7 @@ def test_aportar_nao_muda_o_patrimonio(conn):
 
 
 def test_patrimonio_de_banco_vazio(conn):
-    assert inv.patrimonio(conn, HOJE) == {"em_conta": 0, "investimentos": 0, "caixinhas": 0, "divida": 0, "total": 0}
+    assert inv.patrimonio(conn, HOJE) == {"em_conta": 0, "investimentos": 0, "caixinhas": 0, "divida": 0, "renda_variavel": 0, "total": 0}
 
 
 def test_meses_ate_o_fim_do_ano_contam_fracao_pelo_dia():

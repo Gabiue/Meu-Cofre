@@ -1,8 +1,10 @@
 """Janela de novo investimento ou de edição (aba Investimentos).
 
-Tipo (Renda fixa | Tesouro Direto), nome, instituição, indexador (CDI, Selic, IPCA+, prefixado) e taxa, com o
-rótulo da taxa mudando conforme o indexador, e vencimento opcional. Embaixo do campo da taxa, como o investimento
-vai aparecer na lista. Erros ficam embaixo do campo, nada de caixa de mensagem.
+Tipo (Renda fixa | Tesouro Direto | Ação | FII), nome, instituição, indexador (CDI, Selic, IPCA+, prefixado) e taxa,
+com o rótulo da taxa mudando conforme o indexador, e vencimento opcional. Embaixo do campo da taxa, como o
+investimento vai aparecer na lista. Ação e FII trocam indexador, taxa e vencimento pelo **ticker** (maiúsculas, com
+validação). Erros ficam embaixo do campo, nada de caixa de mensagem. Ao editar, o tipo só alterna dentro da família
+(renda fixa/Tesouro ou ação/FII).
 Nas caixinhas das metas só o indexador e a taxa são editáveis. Quem abre escuta `gravado(mensagem)`.
 """
 
@@ -37,8 +39,8 @@ from meu_cofre.ui.componentes import (
 )
 
 LARGURA = 520
-RENDA_FIXA, TESOURO = "Renda fixa", "Tesouro Direto"
-TIPOS = {RENDA_FIXA: "renda_fixa", TESOURO: "tesouro"}
+RENDA_FIXA, TESOURO, ACAO, FII = "Renda fixa", "Tesouro Direto", "Ação", "FII"
+TIPOS = {RENDA_FIXA: "renda_fixa", TESOURO: "tesouro", ACAO: "acao", FII: "fii"}
 INDEXADORES = {
     "cdi": ("% do CDI", "% do CDI (ex.: 110)", "110"),
     "selic": ("% da Selic", "% da Selic (ex.: 100)", "100"),
@@ -46,7 +48,12 @@ INDEXADORES = {
     "pre": ("Prefixado", "Taxa prefixada, % ao ano (ex.: 12,5)", "12,5"),
 }
 INDEXADORES_DO_TIPO = {"renda_fixa": ("cdi", "selic", "ipca", "pre"), "tesouro": ("selic", "ipca", "pre")}
-EXEMPLOS_DE_NOME = {"renda_fixa": "Ex.: CDB do Banco Inter", "tesouro": "Ex.: Tesouro Selic 2029"}
+EXEMPLOS_DE_NOME = {
+    "renda_fixa": "Ex.: CDB do Banco Inter",
+    "tesouro": "Ex.: Tesouro Selic 2029",
+    "acao": "Ex.: Petrobras PN",
+    "fii": "Ex.: CSHG Logística",
+}
 
 
 def _rotulo(texto: str, nome: str) -> QLabel:
@@ -142,9 +149,22 @@ class DialogoAtivo(QDialog):
         dados.setSpacing(0)
         dados.addWidget(_rotulo("Tipo", "CampoRotulo"))
         dados.addSpacing(4)
-        self.tipo = Segmentado(list(TIPOS))
+        self.tipo = Segmentado(self._opcoes_de_tipo())
         dados.addWidget(self.tipo, 0, Qt.AlignmentFlag.AlignLeft)
         dados.addSpacing(tema.ESPACO + 4)
+        self._bloco_ticker = QWidget()  # só ações e FIIs
+        ticker = QVBoxLayout(self._bloco_ticker)
+        ticker.setContentsMargins(0, 0, 0, 0)
+        ticker.setSpacing(0)
+        ticker.addWidget(_rotulo("Ticker", "CampoRotulo"))
+        ticker.addSpacing(4)
+        self.ticker = QLineEdit()
+        self.ticker.setPlaceholderText("Ex.: PETR4 ou HGLG11")
+        self.ticker.setMaxLength(8)
+        ticker.addWidget(self.ticker)
+        self.erro_ticker = _rotulo_erro()
+        ticker.addWidget(self.erro_ticker)
+        dados.addWidget(self._bloco_ticker)
         dados.addWidget(_rotulo("Nome", "CampoRotulo"))
         dados.addSpacing(4)
         self.nome = QLineEdit()
@@ -159,23 +179,28 @@ class DialogoAtivo(QDialog):
         dados.addSpacing(tema.ESPACO + 6)
         form.addWidget(self._bloco_dados)
 
-        form.addWidget(_rotulo("Indexador", "CampoRotulo"))
-        form.addSpacing(4)
+        self._bloco_taxa = QWidget()  # só renda fixa e Tesouro
+        taxa = QVBoxLayout(self._bloco_taxa)
+        taxa.setContentsMargins(0, 0, 0, 0)
+        taxa.setSpacing(0)
+        taxa.addWidget(_rotulo("Indexador", "CampoRotulo"))
+        taxa.addSpacing(4)
         self.indexador = CampoLista()
-        form.addWidget(self.indexador)
-        form.addSpacing(tema.ESPACO + 6)
+        taxa.addWidget(self.indexador)
+        taxa.addSpacing(tema.ESPACO + 6)
 
         self.rotulo_taxa = _rotulo("", "CampoRotulo")
-        form.addWidget(self.rotulo_taxa)
-        form.addSpacing(4)
+        taxa.addWidget(self.rotulo_taxa)
+        taxa.addSpacing(4)
         self.taxa = QLineEdit()
         self.taxa.setObjectName("CampoValor")
-        form.addWidget(self.taxa)
+        taxa.addWidget(self.taxa)
         self.erro_taxa = _rotulo_erro()
-        form.addWidget(self.erro_taxa)
+        taxa.addWidget(self.erro_taxa)
         self.previa = _rotulo("", "CampoInfo")
-        form.addWidget(self.previa)
-        form.addSpacing(tema.ESPACO + 4)
+        taxa.addWidget(self.previa)
+        taxa.addSpacing(tema.ESPACO + 4)
+        form.addWidget(self._bloco_taxa)
 
         self._bloco_vencimento = QWidget()
         venc = QVBoxLayout(self._bloco_vencimento)
@@ -209,10 +234,18 @@ class DialogoAtivo(QDialog):
         self._bloco_dados.setVisible(not self._caixinhas)
         self._bloco_vencimento.setVisible(not self._caixinhas)
 
+    def _opcoes_de_tipo(self) -> list[str]:
+        """Novo: os quatro tipos. Editando: só os da mesma família (o histórico de um não serve pro outro)."""
+        if self._original is None:
+            return list(TIPOS)
+        renda_variavel = self._original.tipo in investimentos.TIPOS_RV
+        return [rotulo for rotulo, codigo in TIPOS.items() if (codigo in investimentos.TIPOS_RV) == renda_variavel]
+
     def _ligar(self) -> None:
         self.tipo.escolhido.connect(lambda _t: self._tipo_mudou())
         self.indexador.currentIndexChanged.connect(lambda _i: self._indexador_mudou())
         self.nome.textChanged.connect(lambda _t: self._limpar_erro(self.erro_nome, self.nome))
+        self.ticker.textEdited.connect(self._ticker_editado)
         self.taxa.textChanged.connect(lambda _t: self._taxa_mudou())
         self.tem_vencimento.toggled.connect(lambda ligado: self._vencimento_ligado(ligado))
         self.vencimento.dateChanged.connect(lambda _d: self.erro_vencimento.setText(""))
@@ -226,6 +259,7 @@ class DialogoAtivo(QDialog):
         self._carregar_indexadores(a.indexador if a is not None else None)
         if a is not None:
             self.nome.setText(a.nome)
+            self.ticker.setText(a.ticker or "")
             self.instituicao.setText(a.instituicao or "")
             self.taxa.setText(texto_taxa(a.taxa) if a.taxa is not None else "")
             if a.vencimento is not None:
@@ -247,11 +281,16 @@ class DialogoAtivo(QDialog):
     def indexador_atual(self) -> str:
         return self.indexador.currentData()
 
+    @property
+    def renda_variavel(self) -> bool:
+        """O tipo escolhido é ação ou FII (tem ticker, não tem taxa)."""
+        return self.tipo_atual in investimentos.TIPOS_RV
+
     def _carregar_indexadores(self, escolhido: str | None) -> None:
         """Os indexadores que o tipo aceita (Tesouro não rende pelo CDI); mantém o escolhido se ainda vale."""
         self.indexador.blockSignals(True)
         self.indexador.clear()
-        for codigo in INDEXADORES_DO_TIPO[self.tipo_atual]:
+        for codigo in INDEXADORES_DO_TIPO["tesouro" if self.renda_variavel else self.tipo_atual]:
             self.indexador.addItem(INDEXADORES[codigo][0], codigo)
         self.indexador.setCurrentIndex(max(self.indexador.findData(escolhido), 0))
         self.indexador.blockSignals(False)
@@ -260,8 +299,26 @@ class DialogoAtivo(QDialog):
         atual = self.indexador_atual if self.indexador.count() else None
         self._carregar_indexadores(atual)
         self.nome.setPlaceholderText(EXEMPLOS_DE_NOME[self.tipo_atual])
+        rv = self.renda_variavel
+        self._bloco_ticker.setVisible(rv)
+        self._bloco_taxa.setVisible(not rv)
+        self._bloco_vencimento.setVisible(not rv and not self._caixinhas)
+        if not self._caixinhas:
+            self.aviso.setText(
+                "Ações e FIIs. A cotação vem de uma fonte pública (só o ticker sai do PC); o preço médio e os proventos "
+                "vêm das compras e dos proventos que você registra."
+                if rv
+                else "Renda fixa e Tesouro Direto. O rendimento é estimado pelas taxas do Banco Central, bruto, sem IR."
+            )
         if not manter_indexador:
             self._indexador_mudou()
+
+    def _ticker_editado(self, texto: str) -> None:
+        """Maiúsculas enquanto digita (o cursor fica onde estava)."""
+        cursor = self.ticker.cursorPosition()
+        self.ticker.setText(texto.upper())
+        self.ticker.setCursorPosition(cursor)
+        self._limpar_erro(self.erro_ticker, self.ticker)
 
     def _indexador_mudou(self) -> None:
         _nome, rotulo, exemplo = INDEXADORES[self.indexador_atual]
@@ -298,6 +355,11 @@ class DialogoAtivo(QDialog):
 
     def _campos(self) -> dict:
         """Os campos no formato de `investimentos.criar`/`editar` (sem validar)."""
+        if self.renda_variavel:
+            return {
+                "nome": self.nome.text().strip(), "tipo": self.tipo_atual, "instituicao": self.instituicao.text().strip() or None,
+                "ticker": self.ticker.text().strip().upper(),
+            }
         vencimento = self.vencimento.date().toPython() if self.tem_vencimento.isChecked() and not self._caixinhas else None
         return {
             "nome": self.nome.text().strip(),
@@ -315,6 +377,17 @@ class DialogoAtivo(QDialog):
         if not self._caixinhas and not campos["nome"]:
             self._mostrar_erro(self.erro_nome, self.nome, "Dê um nome ao investimento.")
             primeiro = self.nome
+        if self.renda_variavel:
+            try:
+                investimentos.validar_ticker(self.conn, campos["ticker"], self.ativo_id)
+            except ValueError as erro:
+                self._mostrar_erro(self.erro_ticker, self.ticker, str(erro))
+                primeiro = self.ticker
+            if primeiro:
+                primeiro.setFocus()
+                primeiro.selectAll()
+                return None
+            return campos
         texto = self.taxa.text().strip()
         if not texto:
             self._mostrar_erro(self.erro_taxa, self.taxa, "Digite a taxa, como 110 ou 6,2.")
@@ -355,7 +428,8 @@ class DialogoAtivo(QDialog):
                 investimentos.editar(self.conn, self._hoje, self.ativo_id, **campos)
                 mensagem = f"Investimento salvo: {self._original.nome if self._caixinhas else campos['nome']}"
         except ValueError as erro:  # regra de negócio que a tela não previu
-            self._mostrar_erro(self.erro_taxa, self.taxa, str(erro))
+            campo = (self.erro_ticker, self.ticker) if self.renda_variavel else (self.erro_taxa, self.taxa)
+            self._mostrar_erro(*campo, str(erro))
             return False
         self.gravado.emit(mensagem)
         self.accept()

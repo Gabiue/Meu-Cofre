@@ -104,8 +104,12 @@ CREATE TABLE IF NOT EXISTS ativos (
     vencimento  TEXT,
     caixinhas   INTEGER NOT NULL DEFAULT 0,
     ativo       INTEGER NOT NULL DEFAULT 1,
-    criado_em   TEXT    NOT NULL DEFAULT (date('now', 'localtime'))
+    criado_em   TEXT    NOT NULL DEFAULT (date('now', 'localtime')),
+    ticker      TEXT
 );
+
+-- Renda variável (F9): ações e FIIs têm ticker (único) em vez de indexador e taxa.
+CREATE UNIQUE INDEX IF NOT EXISTS ux_ativos_ticker ON ativos (ticker) WHERE ticker IS NOT NULL;
 
 -- aporte/resgate ligam-se à transferência conta <-> "Investimentos"; saldo_real é o saldo que o banco mostra.
 CREATE TABLE IF NOT EXISTS movimentacoes_ativos (
@@ -125,6 +129,44 @@ CREATE TABLE IF NOT EXISTS indicadores (
     data  TEXT NOT NULL,
     valor REAL NOT NULL,
     PRIMARY KEY (serie, data)
+);
+
+-- Compras, vendas e proventos de ações e FIIs. `afeta_conta` = 1: mexeu numa conta (transferência com a conta
+-- "Investimentos" ou entrada de provento, ligadas por `transferencia_id` / `lancamento_id`); 0: só a posição (histórico
+-- importado). `valor_centavos` = quantidade × preço (compra/venda, sem as taxas) ou o total recebido (provento).
+-- `chave_dedup` evita gravar duas vezes a mesma linha da planilha da B3 (NULL nas operações manuais).
+CREATE TABLE IF NOT EXISTS operacoes_rv (
+    id               INTEGER PRIMARY KEY,
+    ativo_id         INTEGER NOT NULL REFERENCES ativos (id),
+    tipo             TEXT    NOT NULL CHECK (tipo IN ('compra', 'venda', 'dividendo', 'jcp', 'rendimento')),
+    data             TEXT    NOT NULL,
+    quantidade       REAL,
+    preco_centavos   INTEGER,
+    valor_centavos   INTEGER NOT NULL,
+    taxas_centavos   INTEGER NOT NULL DEFAULT 0,
+    afeta_conta      INTEGER NOT NULL DEFAULT 0,
+    transferencia_id TEXT,
+    lancamento_id    INTEGER REFERENCES lancamentos (id) ON DELETE SET NULL,
+    origem           TEXT    NOT NULL DEFAULT 'manual' CHECK (origem IN ('manual', 'b3')),
+    chave_dedup      TEXT UNIQUE
+);
+
+CREATE INDEX IF NOT EXISTS ix_operacoes_rv_ativo ON operacoes_rv (ativo_id);
+
+-- Cotações (fechamento diário) de ações e FIIs, buscadas em fonte pública, e o histórico público de proventos por cota
+-- (base da estimativa de proventos futuros).
+CREATE TABLE IF NOT EXISTS cotacoes (
+    ticker         TEXT    NOT NULL,
+    data           TEXT    NOT NULL,
+    preco_centavos INTEGER NOT NULL,
+    PRIMARY KEY (ticker, data)
+);
+
+CREATE TABLE IF NOT EXISTS proventos_ref (
+    ticker         TEXT NOT NULL,
+    data           TEXT NOT NULL,
+    valor_por_cota REAL NOT NULL,
+    PRIMARY KEY (ticker, data)
 );
 
 CREATE TABLE IF NOT EXISTS lancamentos (

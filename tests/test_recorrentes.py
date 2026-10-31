@@ -419,6 +419,9 @@ def test_migracao_v2_para_v3_preserva_dados_e_cria_backup(tmp_path):
     db.conectar(caminho).close()
     c = sqlite3.connect(caminho)
     c.execute("DROP TABLE recorrentes_meses")
+    c.execute("DROP TABLE operacoes_rv")  # tira também o que é da v7
+    c.execute("DROP INDEX ux_ativos_ticker")
+    c.execute("ALTER TABLE ativos DROP COLUMN ticker")
     c.execute("DROP TABLE faturas_pagas")  # o banco de teste já nasce na última versão: tira o que é da v4 e da v5
     c.execute("DROP INDEX ix_lancamentos_meta")
     c.execute("ALTER TABLE lancamentos DROP COLUMN meta_id")

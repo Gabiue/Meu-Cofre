@@ -121,6 +121,43 @@ SELECT 'Guardar em meta', 'transferencia' WHERE NOT EXISTS (SELECT 1 FROM catego
         """INSERT INTO contas (nome, tipo)
 SELECT 'Investimentos', 'investimento' WHERE NOT EXISTS (SELECT 1 FROM contas WHERE nome = 'Investimentos')""",
     ],
+    # v7: ações e FIIs (F9).
+    #  - ativos.ticker: o código na bolsa ("PETR4", "HGLG11"), único quando existe.
+    #  - operacoes_rv: compras, vendas e proventos (dividendo, jcp, rendimento). `afeta_conta` 1 = mexeu numa conta,
+    #    0 = só a posição (histórico importado da B3). `chave_dedup` único impede importar a mesma linha duas vezes.
+    #  - cotacoes: fechamento diário por ticker; proventos_ref: proventos por cota (histórico público) pra estimativa.
+    7: [
+        "ALTER TABLE ativos ADD COLUMN ticker TEXT",
+        "CREATE UNIQUE INDEX IF NOT EXISTS ux_ativos_ticker ON ativos (ticker) WHERE ticker IS NOT NULL",
+        """CREATE TABLE IF NOT EXISTS operacoes_rv (
+    id               INTEGER PRIMARY KEY,
+    ativo_id         INTEGER NOT NULL REFERENCES ativos (id),
+    tipo             TEXT    NOT NULL CHECK (tipo IN ('compra', 'venda', 'dividendo', 'jcp', 'rendimento')),
+    data             TEXT    NOT NULL,
+    quantidade       REAL,
+    preco_centavos   INTEGER,
+    valor_centavos   INTEGER NOT NULL,
+    taxas_centavos   INTEGER NOT NULL DEFAULT 0,
+    afeta_conta      INTEGER NOT NULL DEFAULT 0,
+    transferencia_id TEXT,
+    lancamento_id    INTEGER REFERENCES lancamentos (id) ON DELETE SET NULL,
+    origem           TEXT    NOT NULL DEFAULT 'manual' CHECK (origem IN ('manual', 'b3')),
+    chave_dedup      TEXT UNIQUE
+)""",
+        "CREATE INDEX IF NOT EXISTS ix_operacoes_rv_ativo ON operacoes_rv (ativo_id)",
+        """CREATE TABLE IF NOT EXISTS cotacoes (
+    ticker         TEXT    NOT NULL,
+    data           TEXT    NOT NULL,
+    preco_centavos INTEGER NOT NULL,
+    PRIMARY KEY (ticker, data)
+)""",
+        """CREATE TABLE IF NOT EXISTS proventos_ref (
+    ticker         TEXT NOT NULL,
+    data           TEXT NOT NULL,
+    valor_por_cota REAL NOT NULL,
+    PRIMARY KEY (ticker, data)
+)""",
+    ],
 }
 ULTIMA_VERSAO = max(MIGRACOES)
 

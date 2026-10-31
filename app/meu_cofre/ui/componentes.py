@@ -264,11 +264,19 @@ class LinhaResponsiva(QWidget):
 
 class GradeResponsiva(QWidget):
     """Itens em grade: tantas colunas quantas couberem (cada item com `largura_minima_item`), até um item por
-    coluna. Com 4 itens: 4 lado a lado, 2 × 2 ou empilhados, conforme a largura."""
+    coluna. Com 4 itens: 4 lado a lado, 2 × 2 ou empilhados, conforme a largura. `colunas_permitidas` restringe quantas
+    colunas a grade pode ter (a maior que cabe)."""
 
-    def __init__(self, largura_minima_item: int = 200, espaco: int = 24, parent: QWidget | None = None):
+    def __init__(
+        self,
+        largura_minima_item: int = 200,
+        espaco: int = 24,
+        parent: QWidget | None = None,
+        colunas_permitidas: tuple[int, ...] | None = None,
+    ):
         super().__init__(parent)
         self._minimo = largura_minima_item
+        self._permitidas = colunas_permitidas  # ex.: (6, 3, 2, 1) com 6 itens: nunca 5 + 1
         self._itens: list[QWidget] = []
         self._colunas = 0
         self._grade = QGridLayout(self)
@@ -297,6 +305,8 @@ class GradeResponsiva(QWidget):
         colunas = max(1, min(len(self._itens), cabem))
         if len(self._itens) == 4 and colunas == 3:  # 3 + 1 fica torto: prefira 2 × 2
             colunas = 2
+        if self._permitidas:
+            colunas = max((c for c in self._permitidas if c <= colunas), default=1)
         if colunas != self._colunas:
             self._distribuir(colunas)
         super().resizeEvent(evento)

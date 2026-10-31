@@ -273,6 +273,9 @@ QPushButton#BotaoAcao[perigo="true"]:hover {{ background: {VERMELHO_SUAVE}; bord
 #AtivoInstituicao {{ font-size: {PX_RODAPE + 1}px; color: {TEXTO_APAGADO}; }}
 #AtivoValor {{ font-size: {PX_TEXTO + 3}px; font-weight: 700; color: {TEXTO}; }}
 #AtivoValor[tom="positivo"] {{ color: {VERDE}; }}
+#AtivoValor[tom="negativo"] {{ color: {VERMELHO}; }}
+#AtivoTicker {{ font-size: {PX_TEXTO + 5}px; font-weight: 800; color: {TEXTO}; letter-spacing: 1px; }}
+#AtivoTicker[encerrado="true"] {{ color: {TEXTO_SECUNDARIO}; }}
 #SeloTaxas {{ font-size: {PX_RODAPE}px; color: {TEXTO_APAGADO}; }}
 
 /* Barra de rolagem fina */

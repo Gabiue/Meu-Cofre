@@ -1,8 +1,10 @@
-"""Aba "Investimentos" (docs/design/telas.md, F8): renda fixa e Tesouro Direto, patrimônio e previsão de fim de ano.
+"""Aba "Investimentos" (docs/design/telas.md, F8 e F9): renda fixa, Tesouro Direto, ações e FIIs, patrimônio e previsão.
 
-Topo: Patrimônio hoje, Investido (valor atual), Rendimento no ano (com "x% do CDI") e a Previsão 31/12 (dourado), com o
-selo das taxas do Banco Central. Depois o gráfico do patrimônio no ano, e a lista agrupada por tipo (as caixinhas das
-metas na renda fixa) com as ações Aportar, Resgatar, Atualizar saldo e Editar; os formulários abrem na própria linha.
+Topo: Patrimônio hoje, Investido (valor atual), Rendimento no ano (com "x% do CDI", só renda fixa e Tesouro) e a
+Previsão 31/12 (dourado), com o selo das taxas do Banco Central e das cotações. Depois o gráfico do patrimônio no ano,
+e a lista agrupada por tipo (as caixinhas das metas na renda fixa) com as ações Aportar, Resgatar, Atualizar saldo e
+Editar; em ações e FIIs, Comprar, Vender, Provento e Editar. Os formulários abrem na própria linha. No fim, o cartão
+Proventos (recebidos no ano e a estimativa dos próximos 12 meses). "Importar da B3" abre a janela de importação.
 `alterado(mensagem)` avisa a janela principal; `ver_metas` pede a aba Metas (o dinheiro das caixinhas se move lá).
 """
 
@@ -22,7 +24,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from meu_cofre import cadastros, indicadores, investimentos
+from meu_cofre import cadastros, cotacoes, indicadores, investimentos, renda_variavel
 from meu_cofre.investimentos import NOMES_TIPO, Posicao
 from meu_cofre.lancamentos import formatar_brl, formatar_brl_inteiro
 from meu_cofre.ui import tema
@@ -37,13 +39,15 @@ from meu_cofre.ui.componentes import (
     RotuloElidido,
     _espacar_letras,
 )
+from meu_cofre.ui.cartao_acao import CartaoAcao
 from meu_cofre.ui.dialogo_ativo import DialogoAtivo
+from meu_cofre.ui.dialogo_importar_b3 import DialogoImportarB3
 from meu_cofre.ui.dialogo_meta import reais
-from meu_cofre.ui.graficos import EstadoVazio, PainelPatrimonio
+from meu_cofre.ui.graficos import EstadoVazio, PainelPatrimonio, PainelProventos
 
 LARGURA_MINIMA_NUMERO = 230  # cabe "R$ 123.456,78" em 30 px
 LARGURA_CARTAO_ESTREITO = 520  # abaixo disso, Editar e Encerrar descem pra uma segunda fila
-ORDEM_DOS_GRUPOS = ("renda_fixa", "tesouro")
+ORDEM_DOS_GRUPOS = ("renda_fixa", "tesouro", "acao", "fii")
 
 
 # --- Textos ----------------------------------------------------------------------------------------
@@ -73,10 +77,12 @@ def texto_da_previsao(prev: dict) -> str:
 
     parcelas = prev.get("parcelas_futuras", 0)
     trecho_parcelas = f" + {valor(parcelas)} de parcelas futuras (já na sobra)" if parcelas > 0 else ""
+    proventos = prev.get("proventos_projetados", 0)
+    trecho_proventos = f" + {valor(proventos)} de proventos" if proventos > 0 else ""
     return (
         f"{valor(prev['patrimonio_hoje'])} hoje{trecho_parcelas} {sinal(prev['sobra_projetada'])} "
         f"{valor(prev['sobra_projetada'])} de sobra "
-        f"{sinal(prev['rendimento_projetado'])} {valor(prev['rendimento_projetado'])} de rendimento"
+        f"{sinal(prev['rendimento_projetado'])} {valor(prev['rendimento_projetado'])} de rendimento{trecho_proventos}"
     )
 
 
@@ -86,6 +92,8 @@ def explicacao_da_previsao(prev: dict) -> str:
         f"Patrimônio de hoje + sobra média ({reais(prev['sobra_mensal'])}/mês × {meses} meses) + rendimento dos "
         "investimentos e caixinhas até 31/12, com as taxas de hoje e sem novos aportes."
     )
+    if prev.get("proventos_projetados"):
+        texto += " Ações e FIIs ficam com a cotação de hoje; só os proventos estimados pelo histórico são somados."
     return texto + (" A sobra está estimada com poucos dados." if prev["sobra_estimativa"] else "")
 
 
@@ -100,7 +108,31 @@ def texto_do_selo(conn: sqlite3.Connection, status: dict | None, atualizando: bo
         base = f"taxas do Banco Central de {_curto(ultima)}"
     else:
         base = "ainda sem taxas do Banco Central: o rendimento não é estimado"
-    return f"{base} · valores brutos, antes do IR"
+    nota = " · histórico de preços e proventos: opcional, com token gratuito da brapi" if cotacoes.sem_fonte_de_historico(conn) else ""
+    return f"{base}{texto_das_cotacoes(conn, status)}{nota} · valores brutos, antes do IR"
+
+
+def texto_das_cotacoes(conn: sqlite3.Connection, status: dict | None) -> str:
+    """" · cotações de 29/10" (vazio sem ações nem FIIs). Avisa quando a busca das cotações falhou."""
+    tickers = cotacoes.tickers_ativos(conn)
+    if not tickers:
+        return ""
+    datas = [d for d in (cotacoes.ultima(conn, t, date.max) for t in tickers) if d]
+    ultima = max(d for _p, d in datas) if datas else None
+    falhou = bool(status and status.get("cotacoes", {}).get("sem_rede"))
+    if ultima is None:
+        return " · sem cotações de ações e FIIs ainda" + (" (sem internet)" if falhou else "")
+    return f" · cotações de {_curto(ultima)}" + (" (sem internet)" if falhou else "")
+
+
+def _ativo_de(p: Posicao | dict):
+    """O `Ativo` de uma posição, seja de renda fixa (`Posicao`) ou de ação/FII (dict de `renda_variavel.posicao`)."""
+    return p["ativo"] if isinstance(p, dict) else p.ativo
+
+
+def _valor_do_grupo(p: Posicao | dict) -> int:
+    """O valor que entra no subtotal do grupo (ação sem cotação ainda não tem valor)."""
+    return (p["valor_atual"] or 0) if isinstance(p, dict) else p.valor_atual
 
 
 # --- Um investimento -------------------------------------------------------------------------------------
@@ -320,6 +352,7 @@ class AbaInvestimentos(QScrollArea):
         self._status: dict | None = None
         self._atualizando = False
         self.dialogo: DialogoAtivo | None = None
+        self.dialogo_b3: DialogoImportarB3 | None = None
 
         self.setWidgetResizable(True)
         self.setFrameShape(QFrame.Shape.NoFrame)
@@ -333,6 +366,7 @@ class AbaInvestimentos(QScrollArea):
         coluna.addWidget(self._montar_resumo())
         coluna.addWidget(self._montar_grafico())
         coluna.addWidget(self._montar_lista())
+        coluna.addWidget(self._montar_proventos())
         coluna.addStretch(1)
         self.setWidget(conteudo)
         self.recarregar()
@@ -340,9 +374,18 @@ class AbaInvestimentos(QScrollArea):
     # --- Montagem --------------------------------------------------------------------
     def _montar_resumo(self) -> Cartao:
         self.botao_novo = BotaoPrimario("+ Novo investimento")
-        self.botao_novo.setToolTip("Cadastrar um CDB, uma caixinha, um título do Tesouro...")
+        self.botao_novo.setToolTip("Cadastrar um CDB, uma caixinha, um título do Tesouro, uma ação ou um FII...")
         self.botao_novo.clicked.connect(lambda: self.novo_investimento())
-        cartao = Cartao("Investimentos", "Patrimônio, rendimento e a previsão até o fim do ano", acao=self.botao_novo)
+        self.botao_importar = BotaoSecundario("Importar da B3")
+        self.botao_importar.setToolTip("Trazer compras, vendas e proventos da planilha de movimentações da B3")
+        self.botao_importar.clicked.connect(lambda: self.importar_b3())
+        botoes = QWidget()
+        linha = QHBoxLayout(botoes)
+        linha.setContentsMargins(0, 0, 0, 0)
+        linha.setSpacing(tema.ESPACO)
+        linha.addWidget(self.botao_importar)
+        linha.addWidget(self.botao_novo)
+        cartao = Cartao("Investimentos", "Patrimônio, rendimento e a previsão até o fim do ano", acao=botoes)
         self._patrimonio = NumeroDestaque("Patrimônio hoje", "", "")
         self._investido = NumeroDestaque("Investido", "", "")
         self._rendimento = NumeroDestaque("Rendimento no ano", "", "")
@@ -366,7 +409,9 @@ class AbaInvestimentos(QScrollArea):
         return self._cartao_grafico
 
     def _montar_lista(self) -> Cartao:
-        self._cartao_lista = Cartao("Seus investimentos", "Valores estimados pelas taxas do Banco Central, brutos, sem IR")
+        self._cartao_lista = Cartao(
+            "Seus investimentos", "Renda fixa estimada pelas taxas do Banco Central, ações e FIIs pela última cotação; tudo bruto, sem IR"
+        )
         self._lista = QVBoxLayout()
         self._lista.setSpacing(tema.ESPACO + 4)
         self._cartao_lista.corpo.addLayout(self._lista)
@@ -383,22 +428,38 @@ class AbaInvestimentos(QScrollArea):
         self._cartao_lista.corpo.addWidget(self.botao_encerrados, 0, Qt.AlignmentFlag.AlignLeft)
         return self._cartao_lista
 
+    def _montar_proventos(self) -> Cartao:
+        self._cartao_proventos = Cartao("Proventos", "Dividendos, JCP e rendimentos de ações e FIIs")
+        self._recebidos = NumeroDestaque("Recebidos no ano", "", "")
+        self._estimativa = NumeroDestaque("Próximos 12 meses (estimativa)", "", "pelo que cada cota pagou nos últimos 12 meses", destaque=True)
+        grade = GradeResponsiva(largura_minima_item=LARGURA_MINIMA_NUMERO, espaco=3 * tema.ESPACO)
+        grade.adicionar(self._recebidos)
+        grade.adicionar(self._estimativa)
+        self._cartao_proventos.corpo.addWidget(grade)
+        self.grafico_proventos = PainelProventos()
+        self.grafico_proventos.setMinimumHeight(260)
+        self._cartao_proventos.corpo.addWidget(self.grafico_proventos, 1)
+        return self._cartao_proventos
+
     # --- Dados ------------------------------------------------------------------------
     def recarregar(self) -> None:
         hoje = self._hoje()
         r = investimentos.resumo(self.conn, hoje)
         posicoes = investimentos.listar(self.conn, hoje, incluir_encerrados=True)
-        ativas = [p for p in posicoes if p.ativo.ativo]
-        encerrados = [p for p in posicoes if not p.ativo.ativo]
+        acoes = renda_variavel.listar(self.conn, hoje, incluir_encerrados=True)
+        ativas = [p for p in posicoes if p.ativo.ativo] + [p for p in acoes if p["ativo"].ativo]
+        encerrados = [p for p in posicoes if not p.ativo.ativo] + [p for p in acoes if not p["ativo"].ativo]
 
         self._carregar_numeros(r)
         self._cartao_grafico.titulo.setText(f"PATRIMÔNIO EM {hoje.year}")
         self.grafico.definir(investimentos.serie_patrimonio_no_ano(self.conn, hoje), hoje.year)
         self._carregar_selo()
 
+        self._carregar_proventos(hoje, [p for p in acoes if p["ativo"].ativo])
+
         self._esvaziar()
         for tipo in ORDEM_DOS_GRUPOS:
-            grupo = [p for p in ativas if p.ativo.tipo == tipo]
+            grupo = [p for p in ativas if _ativo_de(p).tipo == tipo]
             if grupo:
                 self._lista.addWidget(self._montar_grupo(tipo, grupo))
         if self._mostrar_encerrados and encerrados:
@@ -416,9 +477,12 @@ class AbaInvestimentos(QScrollArea):
     def _carregar_numeros(self, r: investimentos.ResumoInvestimentos) -> None:
         pat = r.patrimonio
         self._patrimonio.definir(formatar_brl(pat["total"]), "em conta + investido − cartão")
-        self._investido.definir(
-            formatar_brl(r.investido), f"inclui {reais(pat['caixinhas'])} das caixinhas" if pat["caixinhas"] else "valor atual, bruto"
-        )
+        partes = []
+        if pat["caixinhas"]:
+            partes.append(f"inclui {reais(pat['caixinhas'])} das caixinhas")
+        if pat["renda_variavel"]:
+            partes.append(f"{reais(pat['renda_variavel'])} em ações e FIIs")
+        self._investido.definir(formatar_brl(r.investido), ", ".join(partes) if partes else "valor atual, bruto")
         rend = r.rendimento_ano
         self._rendimento.definir(
             _brl_com_sinal(rend.centavos), _pct(rend.percentual, sinal=True) + " no ano" if rend.percentual is not None else "ainda sem aplicações"
@@ -429,8 +493,21 @@ class AbaInvestimentos(QScrollArea):
             self._pilula_cdi.definir(f"{r.pct_cdi:.0f}% do CDI", "bom" if r.pct_cdi >= 100 else "neutra")
             self._pilula_cdi.setToolTip("O que rendeu no ano comparado ao que o mesmo dinheiro teria rendido a 100% do CDI")
             self._pilula_cdi.setVisible(True)
+        self._rendimento.setToolTip("Só renda fixa e Tesouro: ações e FIIs variam com o preço e aparecem no resultado de cada um")
         self._previsao.definir(formatar_brl(r.previsao["total"]), texto_da_previsao(r.previsao))
         self._previsao.setToolTip(explicacao_da_previsao(r.previsao))
+
+    def _carregar_proventos(self, hoje: date, ativas: list[dict]) -> None:
+        """O cartão Proventos: só aparece quando há ação ou FII ativo."""
+        self._cartao_proventos.setVisible(bool(ativas))
+        if not ativas:
+            return
+        estimativa = renda_variavel.estimar_proventos_carteira(self.conn, hoje)
+        self._recebidos.definir(
+            formatar_brl(renda_variavel.proventos_recebidos_no_ano(self.conn, hoje)), f"em {hoje.year}, até hoje"
+        )
+        self._estimativa.definir(formatar_brl(int(estimativa["centavos"].sum())))
+        self.grafico_proventos.definir(estimativa)
 
     def _carregar_selo(self) -> None:
         self.selo.setText(texto_do_selo(self.conn, self._status, self._atualizando))
@@ -447,15 +524,15 @@ class AbaInvestimentos(QScrollArea):
                 widget.setParent(None)
                 widget.deleteLater()
 
-    def _montar_grupo(self, tipo: str, posicoes: list[Posicao]) -> QWidget:
+    def _montar_grupo(self, tipo: str, posicoes: list) -> QWidget:
         caixa = QWidget()
         coluna = QVBoxLayout(caixa)
         coluna.setContentsMargins(0, 0, 0, 0)
         coluna.setSpacing(tema.ESPACO)
         cabecalho = QHBoxLayout()
-        nome = _rotulo(NOMES_TIPO[tipo].upper(), "GrupoNome")
+        nome = _rotulo("FIIs" if tipo == "fii" else NOMES_TIPO[tipo].upper(), "GrupoNome")
         _espacar_letras(nome, 1.0)
-        subtotal = _rotulo(formatar_brl(sum(p.valor_atual for p in posicoes)), "GrupoSubtotal")
+        subtotal = _rotulo(formatar_brl(sum(_valor_do_grupo(p) for p in posicoes)), "GrupoSubtotal")
         cabecalho.addWidget(nome)
         cabecalho.addStretch(1)
         cabecalho.addWidget(subtotal)
@@ -464,7 +541,9 @@ class AbaInvestimentos(QScrollArea):
             coluna.addWidget(self._montar_cartao(p))
         return caixa
 
-    def _montar_cartao(self, p: Posicao) -> CartaoAtivo:
+    def _montar_cartao(self, p: Posicao | dict) -> CartaoAtivo | CartaoAcao:
+        if isinstance(p, dict):
+            return self._montar_cartao_acao(p)
         cartao = CartaoAtivo(p)
         cartao.aportar.connect(lambda i: self.abrir_form(i, "aportar"))
         cartao.resgatar.connect(lambda i: self.abrir_form(i, "resgatar"))
@@ -476,11 +555,28 @@ class AbaInvestimentos(QScrollArea):
         cartao.movimento.connect(self._movimento)
         return cartao
 
+    def _montar_cartao_acao(self, p: dict) -> CartaoAcao:
+        cartao = CartaoAcao(p)
+        cartao.comprar.connect(lambda i: self.abrir_form_acao(i, "comprar"))
+        cartao.vender.connect(lambda i: self.abrir_form_acao(i, "vender"))
+        cartao.provento.connect(lambda i: self.abrir_form_acao(i, "provento"))
+        cartao.editar.connect(self.editar_investimento)
+        cartao.encerrar.connect(self.encerrar)
+        cartao.reativar.connect(self.reativar)
+        cartao.operacao.connect(self._operacao_rv)
+        return cartao
+
     def cartoes(self) -> list[CartaoAtivo]:
         return self.findChildren(CartaoAtivo)
 
     def cartao_do_ativo(self, ativo_id: int) -> CartaoAtivo | None:
         return next((c for c in self.cartoes() if c.id_ativo == ativo_id), None)
+
+    def cartoes_acoes(self) -> list[CartaoAcao]:
+        return self.findChildren(CartaoAcao)
+
+    def cartao_da_acao(self, ativo_id: int) -> CartaoAcao | None:
+        return next((c for c in self.cartoes_acoes() if c.id_ativo == ativo_id), None)
 
     # --- Ações ------------------------------------------------------------------------------
     def mostrar_encerrados(self, mostrar: bool) -> None:
@@ -492,12 +588,43 @@ class AbaInvestimentos(QScrollArea):
 
     def abrir_form(self, ativo_id: int, tipo: str) -> None:
         """Abre o formulário na linha do investimento; só um fica aberto por vez."""
-        for c in self.cartoes():
-            if c.id_ativo != ativo_id:
-                c.fechar_form()
+        self._fechar_formularios(menos=ativo_id)
         cartao = self.cartao_do_ativo(ativo_id)
         if cartao is not None:
             cartao.abrir_form(tipo, self._hoje(), self._contas_do_formulario())
+
+    def _fechar_formularios(self, menos: int | None = None) -> None:
+        for c in self.cartoes() + self.cartoes_acoes():
+            if c.id_ativo != menos:
+                c.fechar_form()
+
+    def abrir_form_acao(self, ativo_id: int, modo: str) -> None:
+        """Abre Comprar, Vender ou Provento na linha da ação ou FII; só um formulário fica aberto por vez."""
+        self._fechar_formularios(menos=ativo_id)
+        cartao = self.cartao_da_acao(ativo_id)
+        if cartao is not None:
+            cartao.abrir_form(modo, self._hoje(), self._contas_do_formulario())
+
+    def _operacao_rv(self, ativo_id: int, dados: dict) -> None:
+        """Grava a compra, venda ou provento do formulário. Erro de regra fica dentro do formulário."""
+        cartao = self.cartao_da_acao(ativo_id)
+        try:
+            ticker = investimentos.obter(self.conn, ativo_id).ticker
+            modo, conta = dados["modo"], dados["conta_id"]
+            if modo == "comprar":
+                renda_variavel.comprar(self.conn, ativo_id, dados["data"], dados["quantidade"], dados["preco"], dados["taxas"], conta)
+                mensagem = f"Compra registrada: {ticker}"
+            elif modo == "vender":
+                renda_variavel.vender(self.conn, ativo_id, dados["data"], dados["quantidade"], dados["preco"], dados["taxas"], conta)
+                mensagem = f"Venda registrada: {ticker}"
+            else:
+                renda_variavel.registrar_provento(self.conn, ativo_id, dados["tipo"], dados["data"], dados["preco"], conta)
+                mensagem = f"{renda_variavel.NOMES_PROVENTO[dados['tipo']]} registrado: {ticker}"
+        except ValueError as erro:
+            if cartao is not None:
+                cartao.form.mostrar_erro(str(erro))
+            return
+        self._avisar(mensagem)
 
     def _movimento(self, ativo_id: int, tipo: str, centavos: int, conta_id: int, data: date) -> None:
         cartao = self.cartao_do_ativo(ativo_id)
@@ -522,11 +649,14 @@ class AbaInvestimentos(QScrollArea):
         try:
             nome = investimentos.obter(self.conn, ativo_id).nome
             investimentos.encerrar(self.conn, self._hoje(), ativo_id)
-        except ValueError as erro:  # ainda há dinheiro: o aviso aparece na própria linha
+        except ValueError as erro:  # ainda há dinheiro ou cotas: o aviso aparece na própria linha
             cartao = self.cartao_do_ativo(ativo_id)
             if cartao is not None:
                 cartao.abrir_form("resgatar", self._hoje(), self._contas_do_formulario())
                 cartao.form.mostrar_erro(str(erro))
+            elif (acao := self.cartao_da_acao(ativo_id)) is not None:
+                self.abrir_form_acao(ativo_id, "vender")
+                acao.form.mostrar_erro(str(erro))
             return
         self._avisar(f"Investimento encerrado: {nome}")
 
@@ -550,6 +680,18 @@ class AbaInvestimentos(QScrollArea):
         dialogo.finished.connect(lambda _codigo: setattr(self, "dialogo", None))
         self.dialogo = dialogo
         dialogo.open()
+        return dialogo
+
+    def importar_b3(self, caminho: str | None = None) -> DialogoImportarB3:
+        """"Importar da B3": abre a janela (já com a prévia de `caminho`, se dado)."""
+        dialogo = DialogoImportarB3(self.conn, parent=self, hoje=self._hoje())
+        dialogo.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+        dialogo.gravado.connect(self._avisar)
+        dialogo.finished.connect(lambda _codigo: setattr(self, "dialogo_b3", None))
+        self.dialogo_b3 = dialogo
+        dialogo.open()
+        if caminho:
+            dialogo.carregar(caminho)
         return dialogo
 
     def novo_investimento(self) -> DialogoAtivo | None:

@@ -3,6 +3,7 @@
 - `PainelGraficos`: troca entre o fluxo (área, gasto por dia), a rosca (gasto por categoria) e os próximos
   meses (barras empilhadas do que já está comprometido). Fluxo e rosca usam QtCharts; as barras são
   desenhadas à mão (QtCharts não arredonda os cantos das barras).
+- `PainelProventos`: a estimativa de proventos dos próximos 12 meses (F9), com as mesmas barras desenhadas à mão.
 - `PainelPatrimonio`: o patrimônio no ano (linha sólida até hoje, tracejada até 31/12), também desenhado à mão:
   linha sólida e tracejada na mesma curva, rótulo do 31/12 e tooltip, sem depender do ciclo de vida das séries do QtCharts.
 - Os gráficos recebem DataFrames prontos (de `relatorios`) e não conhecem o banco.
@@ -739,6 +740,51 @@ class PainelProximos(QWidget):
             self._pilha.setCurrentWidget(self._vazio)
             return
         self._barras.definir(comprometido)
+        self._pilha.setCurrentWidget(self._conteudo)
+
+
+class _BarrasProventos(_Barras):
+    """As mesmas barras do "Próximos meses", com uma série só (dourado: é projeção): usa o segmento `contas`."""
+
+    COR_CONTAS = tema.DOURADO
+
+    def definir(self, estimativa: pd.DataFrame) -> None:  # type: ignore[override]
+        """`estimativa`: saída de `renda_variavel.estimar_proventos_carteira` (colunas `mes` e `centavos`)."""
+        super().definir(pd.DataFrame({"mes": estimativa["mes"], "cartao": 0, "contas": estimativa["centavos"]}))
+
+    def dica_do_mes(self, indice: int) -> str:
+        m = self._meses[indice]
+        return f"{m['longo']} · {formatar_brl_inteiro(m['contas'])} estimados" if m["contas"] else f"{m['longo']} · nenhum provento previsto"
+
+
+class PainelProventos(QWidget):
+    """Estimativa de proventos mês a mês nos próximos 12 meses (barras douradas) e a nota de que é só projeção."""
+
+    def __init__(self, parent: QWidget | None = None):
+        super().__init__(parent)
+        self._barras = _BarrasProventos()
+        self._vazio = EstadoVazio(
+            "barras", "Sem estimativa ainda", "Quando as cotações e o histórico de proventos chegarem, a estimativa aparece aqui"
+        )
+        conteudo = QWidget()
+        coluna = QVBoxLayout(conteudo)
+        coluna.setContentsMargins(0, 0, 0, 0)
+        coluna.setSpacing(tema.ESPACO)
+        nota = QLabel("Projeção pelo histórico de cada cota, não é garantia")
+        nota.setObjectName("CartaoSubtitulo")
+        coluna.addWidget(nota)
+        coluna.addWidget(self._barras, 1)
+        self._pilha = QStackedLayout(self)
+        self._pilha.setContentsMargins(0, 0, 0, 0)
+        self._pilha.addWidget(conteudo)
+        self._pilha.addWidget(self._vazio)
+        self._conteudo = conteudo
+
+    def definir(self, estimativa: pd.DataFrame) -> None:
+        if estimativa.empty or int(estimativa["centavos"].sum()) == 0:
+            self._pilha.setCurrentWidget(self._vazio)
+            return
+        self._barras.definir(estimativa)
         self._pilha.setCurrentWidget(self._conteudo)
 
 

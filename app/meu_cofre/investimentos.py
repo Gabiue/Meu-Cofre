@@ -1,5 +1,9 @@
 """Investimentos (docs/design/telas.md, F8): renda fixa e Tesouro Direto, patrimônio e previsão de fim de ano.
 
+**Renda variável (F9).** Ações e FIIs ficam em `renda_variavel.py`; aqui eles entram no patrimônio (valor atual pela
+última cotação), na previsão de 31/12 (sem supor alta de preço: só somam os proventos estimados até lá) e no gráfico.
+O rendimento do ano e o "% do CDI" continuam sendo só da renda fixa e do Tesouro.
+
 **Onde o dinheiro fica.** Aportar R$ X é uma **transferência** da conta corrente (ou carteira) pra conta
 "Investimentos" (tipo investimento), e resgatar é a volta; não é gasto nem renda e o dinheiro sai do "Em conta".
 Cada movimento também vira uma linha em `movimentacoes_ativos`, ligada ao ativo pelo `transferencia_id`.
@@ -29,18 +33,19 @@ import uuid
 from bisect import bisect_right
 from dataclasses import dataclass
 from datetime import date, timedelta
-from functools import lru_cache
+from functools import cached_property, lru_cache
 
 import pandas as pd
 
-from meu_cofre import indicadores, metas, relatorios
+from meu_cofre import cotacoes, indicadores, metas, relatorios, renda_variavel
 from meu_cofre.lancamentos import formatar_brl
 
 NOME_CONTA = "Investimentos"
 NOME_CAIXINHAS = "Caixinhas (metas)"
 CATEGORIA_TRANSFERENCIA = "Transferência entre contas"
 TIPOS = ("renda_fixa", "tesouro", "acao", "fii")
-TIPOS_F8 = ("renda_fixa", "tesouro")  # ações e FIIs entram na F9
+TIPOS_F8 = ("renda_fixa", "tesouro")
+TIPOS_RV = ("acao", "fii")  # têm ticker em vez de indexador e taxa
 INDEXADORES = ("cdi", "selic", "ipca", "pre")
 NOMES_TIPO = {"renda_fixa": "Renda fixa", "tesouro": "Tesouro Direto", "acao": "Ações", "fii": "FIIs"}
 DIAS_UTEIS_ANO = indicadores.DIAS_UTEIS_ANO
@@ -244,6 +249,7 @@ class Ativo:
     caixinhas: bool
     ativo: bool
     criado_em: date
+    ticker: str | None = None
 
     @property
     def descricao_taxa(self) -> str:
@@ -258,6 +264,7 @@ def _ativo_da_linha(r: sqlite3.Row) -> Ativo:
     return Ativo(
         id=r["id"], nome=r["nome"], tipo=r["tipo"], instituicao=r["instituicao"], indexador=r["indexador"], taxa=r["taxa"],
         vencimento=_data(r["vencimento"]), caixinhas=bool(r["caixinhas"]), ativo=bool(r["ativo"]), criado_em=_data(r["criado_em"]),
+        ticker=r["ticker"],
     )
 
 
@@ -345,6 +352,30 @@ def _validar(
     return nome, (instituicao or "").strip() or None, vencimento
 
 
+def validar_ticker(conn: sqlite3.Connection, ticker: str | None, ativo_id: int | None = None) -> str:
+    """O ticker em maiúsculas ("petr4" -> "PETR4"). ValueError se vazio, fora do padrão ou de outro ativo."""
+    ticker = cotacoes.normalizar_ticker(ticker)
+    if not ticker:
+        raise ValueError("Digite o ticker, como PETR4 ou HGLG11.")
+    if not cotacoes.ticker_valido(ticker):
+        raise ValueError("Ticker inválido. Use 4 letras e o número, como PETR4 ou HGLG11.")
+    outro = conn.execute("SELECT id FROM ativos WHERE ticker = ? AND id IS NOT ?", (ticker, ativo_id)).fetchone()
+    if outro:
+        raise ValueError(f"Já existe um ativo com o ticker {ticker}.")
+    return ticker
+
+
+def _campos_do_tipo(
+    conn: sqlite3.Connection, tipo: str, ticker: str | None, indexador: str | None, taxa: float | None,
+    vencimento: date | None, ativo_id: int | None = None,
+) -> tuple[str | None, str | None, float | None, date | None]:
+    """(ticker, indexador, taxa, vencimento) coerentes com o tipo: ações e FIIs têm ticker e nada de taxa nem vencimento;
+    renda fixa e Tesouro têm taxa e nada de ticker."""
+    if tipo in TIPOS_RV:
+        return validar_ticker(conn, ticker, ativo_id), None, None, None
+    return None, indexador, taxa, vencimento
+
+
 def criar(
     conn: sqlite3.Connection,
     hoje: date,
@@ -352,19 +383,22 @@ def criar(
     nome: str,
     tipo: str,
     instituicao: str | None = None,
-    indexador: str | None,
-    taxa: float | None,
+    indexador: str | None = None,
+    taxa: float | None = None,
     vencimento: date | None = None,
+    ticker: str | None = None,
 ) -> int:
-    """Cria o investimento e devolve o id. `taxa` em %: 110 = 110% do CDI; 6.2 = IPCA + 6,2%; 12.5 = 12,5% a.a."""
+    """Cria o investimento e devolve o id. `taxa` em %: 110 = 110% do CDI; 6.2 = IPCA + 6,2%; 12.5 = 12,5% a.a.
+    Ações e FIIs (`tipo` "acao" ou "fii") usam `ticker` em vez de indexador e taxa."""
+    ticker, indexador, taxa, vencimento = _campos_do_tipo(conn, tipo, ticker, indexador, taxa, vencimento)
     nome, instituicao, vencimento = _validar(hoje, nome, tipo, instituicao, indexador, taxa, vencimento)
     with conn:
         return conn.execute(
             """
-            INSERT INTO ativos (nome, tipo, instituicao, indexador, taxa, vencimento, criado_em)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO ativos (nome, tipo, instituicao, indexador, taxa, vencimento, criado_em, ticker)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            (nome, tipo, instituicao, indexador, taxa, vencimento.isoformat() if vencimento else None, hoje.isoformat()),
+            (nome, tipo, instituicao, indexador, taxa, vencimento.isoformat() if vencimento else None, hoje.isoformat(), ticker),
         ).lastrowid
 
 
@@ -376,21 +410,26 @@ def editar(
     nome: str,
     tipo: str,
     instituicao: str | None = None,
-    indexador: str | None,
-    taxa: float | None,
+    indexador: str | None = None,
+    taxa: float | None = None,
     vencimento: date | None = None,
+    ticker: str | None = None,
 ) -> None:
-    """Troca os dados (o histórico de aportes fica). Nas caixinhas só o indexador e a taxa mudam."""
+    """Troca os dados (o histórico de aportes e operações fica). Nas caixinhas só o indexador e a taxa mudam. Não dá
+    pra trocar entre renda fixa/Tesouro e ação/FII: o histórico de um não serve pro outro."""
     atual = obter(conn, ativo_id)
     if atual.caixinhas:
         nome, tipo, instituicao, vencimento = atual.nome, atual.tipo, atual.instituicao, atual.vencimento
+    if (tipo in TIPOS_RV) != (atual.tipo in TIPOS_RV):
+        raise ValueError("Não dá pra trocar entre renda fixa/Tesouro e ações/FIIs. Crie outro investimento.")
+    ticker, indexador, taxa, vencimento = _campos_do_tipo(conn, tipo, ticker, indexador, taxa, vencimento, ativo_id)
     nome, instituicao, vencimento = _validar(
         hoje, nome, tipo, instituicao, indexador, taxa, vencimento, vencimento_atual=atual.vencimento
     )
     with conn:
         conn.execute(
-            "UPDATE ativos SET nome = ?, tipo = ?, instituicao = ?, indexador = ?, taxa = ?, vencimento = ? WHERE id = ?",
-            (nome, tipo, instituicao, indexador, taxa, vencimento.isoformat() if vencimento else None, ativo_id),
+            "UPDATE ativos SET nome = ?, tipo = ?, instituicao = ?, indexador = ?, taxa = ?, vencimento = ?, ticker = ? WHERE id = ?",
+            (nome, tipo, instituicao, indexador, taxa, vencimento.isoformat() if vencimento else None, ticker, ativo_id),
         )
 
 
@@ -399,7 +438,10 @@ def encerrar(conn: sqlite3.Connection, hoje: date, ativo_id: int) -> None:
     ativo = obter(conn, ativo_id)
     if ativo.caixinhas:
         raise ValueError("As caixinhas das metas não se encerram: o dinheiro delas é gerido na aba Metas.")
-    if valor_atual(conn, ativo_id, hoje)[0] > 0:
+    if ativo.tipo in TIPOS_RV:
+        if renda_variavel.posicao(conn, ativo_id, hoje)["quantidade"] > 0:
+            raise ValueError("Ainda há cotas na carteira. Venda tudo antes de encerrar.")
+    elif valor_atual(conn, ativo_id, hoje)[0] > 0:
         raise ValueError("Ainda há dinheiro aplicado. Resgate tudo antes de encerrar.")
     with conn:
         conn.execute("UPDATE ativos SET ativo = 0 WHERE id = ?", (ativo_id,))
@@ -582,6 +624,12 @@ class _Contexto:
         self.eventos = {a.id: _eventos(conn, a, hoje) for a in self.ativos}
         inicio = min([inicio_necessario(conn, hoje)] + [ev[0].data for ev in self.eventos.values() if ev]) - timedelta(days=1)
         self.mercado = _Mercado(conn, hoje, inicio, max(hoje, fim or hoje))
+        self._proventos: list[tuple[date, int]] | None = None
+
+    @cached_property
+    def carteira(self) -> renda_variavel.Carteira:
+        """Ações e FIIs (só carrega se alguém pedir)."""
+        return renda_variavel.Carteira(self.conn, self.hoje)
 
     def curva(self, a: Ativo) -> _Curva:
         return self.mercado.curva(a.indexador, a.taxa, a.vencimento)
@@ -590,12 +638,19 @@ class _Contexto:
         return _avaliar(self.eventos[a.id], self.curva(a), alvo)
 
     def total(self, alvo: date, so: str | None = None) -> int:
-        """Soma dos valores na data. `so`: "caixinhas" ou "outros" restringe."""
-        return sum(
+        """Soma dos valores na data, ações e FIIs incluídos (em "outros"). `so`: "caixinhas" ou "outros" restringe."""
+        soma = sum(
             self.valor(a, alvo).centavos
             for a in self.ativos
             if so is None or (so == "caixinhas") == a.caixinhas
         )
+        return soma + (self.carteira.valor(alvo) if so != "caixinhas" else 0)
+
+    def proventos_ate(self, alvo: date) -> int:
+        """Proventos de ações e FIIs previstos de hoje (exclusive) até `alvo`, pelo histórico de 12 meses."""
+        if self._proventos is None:
+            self._proventos = renda_variavel.proventos_projetados(self.conn, self.hoje, carteira=self.carteira)
+        return renda_variavel.proventos_ate(self._proventos, alvo)
 
 
 def valor_atual(conn: sqlite3.Connection, ativo_id: int, hoje: date) -> tuple[int, bool, date | None]:
@@ -708,6 +763,7 @@ def _patrimonio(conn: sqlite3.Connection, hoje: date, ctx: _Contexto) -> dict:
     investimentos, caixinhas = ctx.total(hoje, "outros"), ctx.total(hoje, "caixinhas")
     return {
         "em_conta": em_conta, "investimentos": investimentos, "caixinhas": caixinhas, "divida": divida,
+        "renda_variavel": ctx.carteira.valor(hoje),
         "total": em_conta + investimentos + caixinhas - divida,
     }
 
@@ -715,7 +771,8 @@ def _patrimonio(conn: sqlite3.Connection, hoje: date, ctx: _Contexto) -> dict:
 def patrimonio(conn: sqlite3.Connection, hoje: date) -> dict:
     """Quanto você tem hoje: em conta + investimentos + caixinhas − dívida do cartão (parcelas futuras incluídas).
 
-    Chaves: `em_conta`, `investimentos`, `caixinhas`, `divida`, `total` (centavos).
+    Chaves: `em_conta`, `investimentos` (renda fixa, Tesouro, ações e FIIs), `caixinhas`, `divida`, `renda_variavel` (a
+    parte de ações e FIIs, já dentro de `investimentos`), `total` (centavos).
     """
     return _patrimonio(conn, hoje, _Contexto(conn, hoje))
 
@@ -738,7 +795,8 @@ def previsao_fim_do_ano(conn: sqlite3.Connection, hoje: date) -> dict:
     Chaves: `alvo`, `patrimonio_hoje` (igual a `patrimonio()["total"]`), `parcelas_futuras` (parcelas do cartão
     depois de hoje: o patrimônio de hoje já as desconta, mas elas também pesam na sobra média, então voltam aqui
     pra não contar duas vezes), `sobra_mensal`, `sobra_estimativa` (poucos dados), `meses_restantes`,
-    `sobra_projetada`, `rendimento_projetado`, `total` (centavos, exceto datas e meses).
+    `sobra_projetada`, `rendimento_projetado`, `proventos_projetados` (ações e FIIs: o histórico de proventos por cota
+    repetido até 31/12; os preços ficam como estão hoje), `total` (centavos, exceto datas e meses).
     """
     ctx = _Contexto(conn, hoje, fim=date(hoje.year, 12, 31))
     return _previsao(conn, hoje, ctx)
@@ -769,10 +827,11 @@ def _projetar(hoje: date, alvo: date, ctx: _Contexto, patrimonio_hoje: int, sobr
     meses = _meses_entre(hoje, alvo)
     projetada = round(sobra * meses)
     rendimento_projetado = ctx.total(alvo) - ctx.total(hoje)
+    proventos = ctx.proventos_ate(alvo)
     return {
         "alvo": alvo, "patrimonio_hoje": patrimonio_hoje, "sobra_mensal": sobra, "sobra_estimativa": estimativa,
         "meses_restantes": meses, "sobra_projetada": projetada, "rendimento_projetado": rendimento_projetado,
-        "total": patrimonio_hoje + projetada + rendimento_projetado,
+        "proventos_projetados": proventos, "total": patrimonio_hoje + projetada + rendimento_projetado + proventos,
     }
 
 

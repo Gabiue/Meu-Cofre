@@ -1,4 +1,5 @@
-"""Atualização das taxas do Banco Central em segundo plano (F8): a janela nunca espera a rede.
+"""Atualização das taxas do Banco Central e das cotações de ações e FIIs em segundo plano (F8, F9): a janela nunca
+espera a rede.
 
 Só a busca de rede roda numa thread (`QThreadPool`); ler o plano e gravar o resultado acontece na thread principal,
 a única que mexe no banco. `MEU_COFRE_SEM_REDE=1` desliga tudo (testes e screenshots). Pra não repetir a busca a cada
@@ -12,38 +13,45 @@ from datetime import date
 
 from PySide6.QtCore import QObject, QRunnable, QThreadPool, Signal
 
-from meu_cofre import indicadores, investimentos
+from meu_cofre import cotacoes, indicadores, investimentos
 
 INTERVALO = 20 * 60  # segundos entre tentativas
 
 
 class _Sinais(QObject):
-    pronto = Signal(object, object)  # pontos por série, erros por série
+    pronto = Signal(object, object, object, object)  # pontos por série, erros por série, dados por ticker, erros por ticker
 
 
 class _Busca(QRunnable):
     """A busca de rede, na thread do pool. Não toca no banco."""
 
-    def __init__(self, plano: list, buscar: Callable | None, sinais: _Sinais):
+    def __init__(self, plano: list, tickers: list[str], buscar: Callable | None, buscar_cotacao: Callable | None, sinais: _Sinais):
         super().__init__()
-        self._plano, self._buscar, self._sinais = plano, buscar, sinais
+        self._plano, self._tickers, self._buscar, self._buscar_cotacao, self._sinais = plano, tickers, buscar, buscar_cotacao, sinais
 
     def run(self) -> None:
         pontos, erros = indicadores.buscar_plano(self._plano, self._buscar or indicadores._buscar_http)
-        self._sinais.pronto.emit(pontos, erros)
+        dados, erros_cotacoes = cotacoes.buscar_lote(self._tickers, self._buscar_cotacao or cotacoes._buscar_http)
+        self._sinais.pronto.emit(pontos, erros, dados, erros_cotacoes)
 
 
 class AtualizadorIndicadores(QObject):
     """`disparar()` começa uma atualização (se couber); `concluido(status)` avisa na thread principal, já com os dados
-    gravados (só quando houve busca de rede). `status` é o dict de `indicadores.montar_status`."""
+    gravados (só quando houve busca de rede). `status` é o dict de `indicadores.montar_status`, mais a chave `cotacoes`
+    (o de `cotacoes.montar_status`) com o resultado da busca das cotações dos ativos ativos (sempre os mesmos 20 minutos)."""
 
     concluido = Signal(dict)
 
     def __init__(
-        self, conn: sqlite3.Connection, hoje: Callable[[], date], buscar: Callable | None = None, parent: QObject | None = None
+        self,
+        conn: sqlite3.Connection,
+        hoje: Callable[[], date],
+        buscar: Callable | None = None,
+        parent: QObject | None = None,
+        buscar_cotacao: Callable | None = None,
     ):
         super().__init__(parent)
-        self.conn, self._hoje, self._buscar = conn, hoje, buscar
+        self.conn, self._hoje, self._buscar, self._buscar_cotacao = conn, hoje, buscar, buscar_cotacao
         self._sinais = _Sinais(self)
         self._sinais.pronto.connect(self._terminou)
         self._pool = QThreadPool(self)
@@ -62,17 +70,19 @@ class AtualizadorIndicadores(QObject):
         self._tentou_em = agora
         hoje = self._hoje()
         plano = indicadores.plano_de_busca(self.conn, hoje, investimentos.inicio_necessario(self.conn, hoje))
-        if not plano:  # tudo em dia: nada a buscar
+        tickers = cotacoes.tickers_ativos(self.conn)  # as cotações mudam o dia todo: sempre buscam
+        if not plano and not tickers:  # tudo em dia: nada a buscar
             self.status = indicadores.montar_status(self.conn, 0, {})
             return False
         self.em_andamento = True
-        self._pool.start(_Busca(plano, self._buscar, self._sinais))
+        self._pool.start(_Busca(plano, tickers, self._buscar, self._buscar_cotacao, self._sinais))
         return True
 
-    def _terminou(self, pontos: dict, erros: dict) -> None:
+    def _terminou(self, pontos: dict, erros: dict, dados: dict, erros_cotacoes: dict) -> None:
         """Na thread principal: grava o que chegou e avisa."""
         self.em_andamento = False
         self.status = indicadores.montar_status(self.conn, indicadores.gravar(self.conn, pontos), erros)
+        self.status["cotacoes"] = cotacoes.montar_status(cotacoes.gravar(self.conn, dados), erros_cotacoes, dados)
         self.concluido.emit(self.status)
 
     def aguardar(self, ms: int = 5000) -> bool:

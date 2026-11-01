@@ -182,7 +182,7 @@ def test_recentes_ordem_por_data_e_limite(conn):
     ]
     assert len(lanc.recentes(conn, HOJE, n=1)) == 1
     assert list(df.columns) == ["id", "descricao", "categoria", "conta", "conta_final", "metodo", "data",
-                                "valor_centavos", "parcela_atual", "parcela_total", "recorrente_id", "meta_id"]
+                                "valor_centavos", "parcela_atual", "parcela_total", "recorrente_id", "meta_id", "transferencia_destino"]
 
 
 def test_recentes_nao_mostra_o_futuro(conn):

@@ -2,6 +2,8 @@
 
 Modo novo (`id_lancamento=None`): jornada em 4 passos (entrada/saída, valor, o que foi, método).
 Modo ver/editar: o mesmo formulário preenchido, com os detalhes do lançamento e o botão Excluir.
+O tipo "Transferência" (de uma conta própria pra outra) troca categoria, método, parcelas e repetir por De / Para;
+grava e apaga os dois lados juntos.
 Todo erro aparece embaixo do campo; nada de caixa de mensagem. Quem abre o diálogo escuta
 `gravado(mensagem)` para atualizar a tela e mostrar a mensagem na barra de status.
 No modo novo, "Repetir todo mês" (com "É assinatura") faz do lançamento o primeiro de uma recorrente;
@@ -44,7 +46,7 @@ from meu_cofre.ui.componentes import (
 )
 
 LARGURA = 520
-SAIDA, ENTRADA = "Saída", "Entrada"
+SAIDA, ENTRADA, TRANSFERENCIA = "Saída", "Entrada", "Transferência"
 METODO_POR_ROTULO = {rotulo: codigo for codigo, rotulo in METODOS.items()}
 PARCELAS_MAX = 24
 ORIGENS = {"manual": "lançamento manual", "importacao": "importado do extrato", "recorrente": "recorrente"}
@@ -92,9 +94,12 @@ class DialogoLancamento(QDialog):
             self._original = lancamentos.obter(conn, id_lancamento)
             if self._original is None:
                 raise ValueError(f"Lançamento {id_lancamento} não existe.")
-        # Parcela ou lançamento sem método da lista (transferência): só valor, descrição, categoria e data mudam.
+        # Transferência entre contas próprias (os dois lados editam juntos), ou None.
+        self._transf = lancamentos.obter_transferencia(conn, id_lancamento) if id_lancamento is not None else None
+        # Parcela ou lançamento sem método da lista (fatura, meta, aporte): só valor, descrição, categoria e data mudam.
         self._restrito = bool(
             self._original
+            and not self._transf
             and (self._original["grupo_parcelas"] or self._original["metodo"] not in METODOS)
         )
 
@@ -110,6 +115,7 @@ class DialogoLancamento(QDialog):
         if self._original:
             self._preencher(self._original)
         self._atualizar_metodo()
+        self._atualizar_modo()
         self._ajustado = False
         self.valor.setFocus()
 
@@ -140,14 +146,14 @@ class DialogoLancamento(QDialog):
         titulo = _rotulo("Lançamento" if self.editando else "Novo lançamento", "DialogoTitulo")
         form.addWidget(titulo)
         if self.editando:
-            self.detalhes = _rotulo(self._texto_detalhes(self._original), "DialogoDetalhe")
+            self.detalhes = _rotulo(self._texto_detalhes(self._original, bool(self._transf)), "DialogoDetalhe")
             self.detalhes.setWordWrap(True)
             form.addSpacing(4)
             form.addWidget(self.detalhes)
         form.addSpacing(2 * tema.ESPACO)
 
         # 1. Saída | Entrada
-        self.tipo = Segmentado([SAIDA, ENTRADA])
+        self.tipo = Segmentado([SAIDA, ENTRADA, TRANSFERENCIA])
         form.addWidget(self.tipo, 0, Qt.AlignmentFlag.AlignLeft)
         form.addSpacing(tema.ESPACO + 4)
 
@@ -161,8 +167,28 @@ class DialogoLancamento(QDialog):
         self.erro_valor = self._rotulo_erro()
         form.addWidget(self.erro_valor)
 
+        # De / Para (só na transferência)
+        self._bloco_transferencia = QWidget()
+        coluna_transf = QVBoxLayout(self._bloco_transferencia)
+        coluna_transf.setContentsMargins(0, 0, 0, 0)
+        coluna_transf.setSpacing(0)
+        linha_transf = QHBoxLayout()
+        linha_transf.setSpacing(2 * tema.ESPACO)
+        self.de, self.para = CampoLista(), CampoLista()
+        for texto, campo in (("De", self.de), ("Para", self.para)):
+            col = QVBoxLayout()
+            col.setSpacing(4)
+            col.addWidget(_rotulo(texto, "CampoRotulo"))
+            col.addWidget(campo)
+            linha_transf.addLayout(col, 1)
+        coluna_transf.addLayout(linha_transf)
+        self.erro_para = self._rotulo_erro()
+        coluna_transf.addWidget(self.erro_para)
+        form.addWidget(self._bloco_transferencia)
+
         # 3. O que foi + categoria
-        form.addWidget(_rotulo("O que foi", "CampoRotulo"))
+        self._rotulo_descricao = _rotulo("O que foi", "CampoRotulo")
+        form.addWidget(self._rotulo_descricao)
         form.addSpacing(4)
         self.descricao = QLineEdit()
         self.descricao.setPlaceholderText("Digite ou escolha (ex.: Almoço)")
@@ -176,18 +202,23 @@ class DialogoLancamento(QDialog):
         self.erro_descricao = self._rotulo_erro()
         form.addWidget(self.erro_descricao)
 
+        self._bloco_categoria = QWidget()
+        coluna_categoria = QVBoxLayout(self._bloco_categoria)
+        coluna_categoria.setContentsMargins(0, 0, 0, 0)
+        coluna_categoria.setSpacing(0)
         cab_categoria = QHBoxLayout()
         cab_categoria.addWidget(_rotulo("Categoria", "CampoRotulo"))
         cab_categoria.addStretch(1)
         self.dica_categoria = _rotulo("sugerida pelo seu histórico", "CampoDica")
         self.dica_categoria.setVisible(False)
         cab_categoria.addWidget(self.dica_categoria)
-        form.addLayout(cab_categoria)
-        form.addSpacing(4)
+        coluna_categoria.addLayout(cab_categoria)
+        coluna_categoria.addSpacing(4)
         self.categoria = CampoLista()
         self.categoria.setPlaceholderText("Escolha uma categoria")
-        form.addWidget(self.categoria)
-        form.addSpacing(tema.ESPACO + 4)
+        coluna_categoria.addWidget(self.categoria)
+        coluna_categoria.addSpacing(tema.ESPACO + 4)
+        form.addWidget(self._bloco_categoria)
 
         # 4. Método
         self._bloco_metodo = QWidget()
@@ -371,6 +402,8 @@ class DialogoLancamento(QDialog):
         self.metodo.escolhido.connect(lambda _m: self._atualizar_metodo())
         self.cartao.currentIndexChanged.connect(lambda _i: self._atualizar_destino())
         self.valor.textChanged.connect(self._valor_mudou)
+        self.de.currentIndexChanged.connect(lambda _i: self._limpar_erro_para())
+        self.para.currentIndexChanged.connect(lambda _i: self._limpar_erro_para())
         self.descricao.textChanged.connect(lambda _t: self._limpar_erro(self.erro_descricao, self.descricao))
         self.descricao.editingFinished.connect(self._sugerir_categoria)
         self.completar.activated.connect(lambda _t: self._sugerir_categoria())
@@ -411,6 +444,16 @@ class DialogoLancamento(QDialog):
         for id_cartao, nome in self._cartoes:
             self.cartao.addItem(nome, id_cartao)
         self.cartao.setCurrentIndex(max(self.cartao.findData(lancamentos.ultimo_cartao_usado(self.conn)), 0))
+        for c in lancamentos.listar_contas(self.conn):
+            if c["tipo"] in lancamentos.TIPOS_TRANSFERENCIA:
+                self.de.addItem(c["nome"], c["id"])
+                self.para.addItem(c["nome"], c["id"])
+        self.de.setCurrentIndex(max(self.de.findText("Inter"), 0))
+        self.para.setCurrentIndex(max(self.para.findText("Carteira"), 0))
+        if self.de.currentData() == self.para.currentData() and self.para.count() > 1:
+            self.para.setCurrentIndex(1 if self.de.currentIndex() == 0 else 0)
+        if self.editando and not self._transf:
+            self.tipo.habilitar(TRANSFERENCIA, False, "Um lançamento que já existe não vira transferência.")
         self.metodo.habilitar(METODOS["cartao"], bool(self._cartoes), "Nenhum cartão ativo. Adicione um em Contas.")
 
         for n in range(1, PARCELAS_MAX + 1):
@@ -421,6 +464,10 @@ class DialogoLancamento(QDialog):
     @property
     def entrada(self) -> bool:
         return self.tipo.atual() == ENTRADA
+
+    @property
+    def transferencia(self) -> bool:
+        return self.tipo.atual() == TRANSFERENCIA
 
     @property
     def _tipo_categoria(self) -> str:
@@ -449,8 +496,8 @@ class DialogoLancamento(QDialog):
 
     # --- Preenchimento (modo editar) -----------------------------------------------------
     @staticmethod
-    def _texto_detalhes(l: dict) -> str:
-        conta = nome_com_final(l["conta"], l["conta_final"])
+    def _texto_detalhes(l: dict, transferencia: bool = False) -> str:
+        conta = "Transferência entre contas" if transferencia else nome_com_final(l["conta"], l["conta_final"])
         if l["metodo"] in METODOS:
             conta += f" · {METODOS[l['metodo']]}"
         if l["grupo_parcelas"]:
@@ -463,6 +510,18 @@ class DialogoLancamento(QDialog):
         return f"{conta}\n{ORIGENS.get(l['origem'], l['origem']).capitalize()}{criado}"
 
     def _preencher(self, l: dict) -> None:
+        if self._transf:
+            t = self._transf
+            self.tipo.definir(TRANSFERENCIA)
+            self.tipo.setEnabled(False)
+            self.valor.setText(formatar_brl(t["valor_centavos"]).removeprefix("R$ ").replace(".", ""))
+            self.descricao.setText(t["descricao"])
+            dia = date.fromisoformat(t["data"])
+            self.data.setDate(QDate(dia.year, dia.month, dia.day))
+            for campo, id_conta in ((self.de, t["origem_id"]), (self.para, t["destino_id"])):
+                if campo.findData(id_conta) >= 0:
+                    campo.setCurrentIndex(campo.findData(id_conta))
+            return
         entrada = l["valor_centavos"] > 0
         self.tipo.definir(ENTRADA if entrada else SAIDA)
         self._recarregar_tipo()
@@ -496,9 +555,27 @@ class DialogoLancamento(QDialog):
         self._recarregar_tipo()
         self.dica_categoria.setVisible(False)
         self._atualizar_metodo()
+        self._atualizar_modo()
+
+    def _atualizar_modo(self) -> None:
+        """Transferência troca categoria, método, parcelas e repetir por De / Para; a descrição vira opcional."""
+        t = self.transferencia
+        self._bloco_transferencia.setVisible(t)
+        self._bloco_categoria.setVisible(not t)
+        self._bloco_metodo.setVisible(not t and not (self._restrito and self._original["metodo"] not in METODOS))
+        self._bloco_repetir.setVisible(not self.editando and not t)
+        self._rotulo_descricao.setText("Descrição (opcional)" if t else "O que foi")
+        self.descricao.setPlaceholderText("Transferência" if t else "Digite ou escolha (ex.: Almoço)")
+        if t:
+            self._limpar_erro(self.erro_descricao, self.descricao)
 
     def _atualizar_metodo(self) -> None:
         """Mostra conta, parcelas ou o texto de destino conforme o método e o tipo."""
+        if self.transferencia:
+            self._pilha_extra.setCurrentIndex(_PAG_VAZIA)
+            self._bloco_cartao.setVisible(False)
+            self.info_destino.setText("")
+            return
         if self._restrito and self._original["metodo"] not in METODOS:
             self._pilha_extra.setCurrentIndex(_PAG_VAZIA)
             self.info_destino.setText("")
@@ -590,6 +667,12 @@ class DialogoLancamento(QDialog):
         campo.setProperty("erro", True)
         _repolir(campo)
 
+    def _limpar_erro_para(self) -> None:
+        if self.erro_para.text():
+            self.erro_para.setText("")
+            self.para.setProperty("erro", False)
+            _repolir(self.para)
+
     def _limpar_erro(self, rotulo: QLabel, campo: QLineEdit) -> None:
         if rotulo.text():
             rotulo.setText("")
@@ -617,13 +700,20 @@ class DialogoLancamento(QDialog):
             self._mostrar_erro(self.erro_valor, self.valor, mensagem)
             primeiro = self.valor
 
-        if not descricao:
+        if not descricao and not self.transferencia:
             self._mostrar_erro(self.erro_descricao, self.descricao, "Diga o que foi.")
             primeiro = primeiro or self.descricao
 
+        if self.transferencia and self.de.currentData() == self.para.currentData():
+            self.erro_para.setText("!  Escolha uma conta diferente da de origem.")
+            self.para.setProperty("erro", True)
+            _repolir(self.para)
+            primeiro = primeiro or self.para
+
         if primeiro:
             primeiro.setFocus()
-            primeiro.selectAll()
+            if isinstance(primeiro, QLineEdit):
+                primeiro.selectAll()
             return None
         return centavos, descricao
 
@@ -652,6 +742,8 @@ class DialogoLancamento(QDialog):
         if validos is None:
             return False
         centavos, descricao = validos
+        if self.transferencia:
+            return self._gravar_transferencia(centavos, descricao)
         categoria_id = self.categoria.currentData()
         if not self.editando and categoria_id is None:  # salvou sem sair do campo: usa o histórico mesmo assim
             categoria_id = lancamentos.sugerir_categoria(self.conn, descricao, self._tipo_categoria)
@@ -686,6 +778,23 @@ class DialogoLancamento(QDialog):
             return False
         self._ultima_mensagem = mensagem
         self.gravado.emit(mensagem)
+        return True
+
+    def _gravar_transferencia(self, centavos: int, descricao: str) -> bool:
+        dados = dict(
+            origem_id=self.de.currentData(), destino_id=self.para.currentData(), valor_centavos=centavos,
+            data=self.data.date().toPython(), descricao=descricao,
+        )
+        try:
+            if self.editando:
+                lancamentos.atualizar_transferencia(self.conn, self._transf["transferencia_id"], **dados)
+            else:
+                lancamentos.transferir(self.conn, **dados)
+        except ValueError as erro:
+            self._mostrar_erro(self.erro_valor, self.valor, str(erro))
+            return False
+        self._ultima_mensagem = f"Transferido: {self.de.currentText()} → {self.para.currentText()} ({formatar_brl(centavos)})"
+        self.gravado.emit(self._ultima_mensagem)
         return True
 
     def _limpar_para_o_proximo(self) -> None:
@@ -730,7 +839,10 @@ class DialogoLancamento(QDialog):
 
     def excluir_este(self) -> None:
         """Exclui só este lançamento (ou só esta parcela)."""
-        lancamentos.excluir(self.conn, [self.id_lancamento])
+        if self._transf:
+            lancamentos.excluir_transferencia(self.conn, self._transf["transferencia_id"])
+        else:
+            lancamentos.excluir(self.conn, [self.id_lancamento])
         self._concluir_exclusao(f"Excluído: {self._descricao_e_valor()}")
 
     def excluir_todas_as_parcelas(self) -> None:

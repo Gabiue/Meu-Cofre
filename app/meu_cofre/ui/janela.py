@@ -369,6 +369,8 @@ class JanelaPrincipal(QMainWindow):
                 parcela,
                 recorrente=not pd.isna(linha.recorrente_id),
                 meta=not pd.isna(linha.meta_id),
+                transferencia="" if pd.isna(linha.transferencia_destino)
+                else f"{linha.conta} → {linha.transferencia_destino}",
             )
             if pd.isna(linha.meta_id):
                 item.clicado.connect(self._abrir_lancamento)

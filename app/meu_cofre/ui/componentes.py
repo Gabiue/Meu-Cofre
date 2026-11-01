@@ -385,6 +385,8 @@ class ItemLancamento(QFrame):
     `parcela` (ex.: "3/6") aparece apagada logo depois da descrição, que é quem encurta.
     `recorrente` põe um ↻ discreto antes da categoria (veio de uma assinatura ou gasto fixo).
     `meta` é guardar/retirar dinheiro de uma meta: marcador neutro (◎) e valor sem sinal, pra não parecer gasto.
+    `transferencia` (ex.: "Inter → Caixa") é uma transferência entre contas próprias: marcador neutro (⇄), valor sem
+    sinal, e o texto no lugar de "categoria · conta".
     """
 
     clicado = Signal(int)
@@ -400,6 +402,7 @@ class ItemLancamento(QFrame):
         parcela: str = "",
         recorrente: bool = False,
         meta: bool = False,
+        transferencia: str = "",
         parent: QWidget | None = None,
     ):
         super().__init__(parent)
@@ -409,9 +412,9 @@ class ItemLancamento(QFrame):
         self.setFixedHeight(60)
 
         entrada = valor_centavos > 0
-        marcador = QLabel("◎" if meta else "▲" if entrada else "▼")
+        marcador = QLabel("◎" if meta else "⇄" if transferencia else "▲" if entrada else "▼")
         marcador.setObjectName("ItemMarcador")
-        marcador.setProperty("tipo", "meta" if meta else "entrada" if entrada else "saida")
+        marcador.setProperty("tipo", "meta" if meta else "transferencia" if transferencia else "entrada" if entrada else "saida")
         marcador.setFixedSize(32, 32)
         marcador.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
@@ -423,7 +426,8 @@ class ItemLancamento(QFrame):
         titulo.setSpacing(6)
         titulo.addWidget(self.descricao, 1)
         titulo.addWidget(self.parcela)
-        self.detalhe = RotuloElidido(f"{'↻ ' if recorrente else ''}{'Meta' if meta else categoria} · {conta}", "ItemDetalhe")
+        texto = transferencia or f"{'↻ ' if recorrente else ''}{'Meta' if meta else categoria} · {conta}"
+        self.detalhe = RotuloElidido(texto, "ItemDetalhe")
         textos = QVBoxLayout()
         textos.setSpacing(2)
         textos.addStretch(1)
@@ -431,7 +435,7 @@ class ItemLancamento(QFrame):
         textos.addWidget(self.detalhe)
         textos.addStretch(1)
 
-        sinal = "" if meta else "+" if entrada else "−"
+        sinal = "" if meta or transferencia else "+" if entrada else "−"
         self.valor = QLabel(f"{sinal}{formatar_brl(abs(valor_centavos))}")
         self.valor.setObjectName("ItemValor")
         self.data = QLabel(data)

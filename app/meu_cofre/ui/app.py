@@ -24,7 +24,7 @@ def _tamanho_screenshot() -> tuple[int, int]:
 
 
 def _abrir_dialogo_de_revisao(janela: JanelaPrincipal, app: QApplication, modo: str):
-    """MEU_COFRE_DIALOGO=novo|cartao|repetir|contas|editar:<id>|excluir:<id>|recorrente:<id>|meta|simulador|pagar|ativo|
+    """MEU_COFRE_DIALOGO=novo|cartao|repetir|transferencia|contas|editar:<id>|excluir:<id>|recorrente:<id>|meta|simulador|pagar|ativo|
     aportar|saldo|importar|comprar|provento|rolar:acoes|rolar:proventos: abre o diálogo já preparado (screenshots). `pagar` não é diálogo: abre a confirmação de pagamento da
     aba Cartões. `meta` abre a nova meta com uma prévia preenchida e `simulador` preenche e rola até o simulador da aba
     Metas. `ativo` abre o novo investimento preenchido; `aportar` e `saldo` abrem o formulário na linha do segundo
@@ -103,7 +103,7 @@ def _abrir_dialogo_de_revisao(janela: JanelaPrincipal, app: QApplication, modo: 
         dialogo = janela.aba_recorrentes.editar(int(id_texto))
         app.processEvents()
         return dialogo
-    dialogo = janela.novo_lancamento() if nome in ("novo", "cartao", "repetir") else janela._abrir_lancamento(int(id_texto))
+    dialogo = janela.novo_lancamento() if nome in ("novo", "cartao", "repetir", "transferencia") else janela._abrir_lancamento(int(id_texto))
     if dialogo is None:
         return None
     if nome == "cartao":
@@ -112,6 +112,10 @@ def _abrir_dialogo_de_revisao(janela: JanelaPrincipal, app: QApplication, modo: 
         dialogo.descricao.setText("Tênis")
         dialogo.parcelas.setCurrentIndex(5)
         dialogo._sugerir_categoria()
+    elif nome == "transferencia":
+        dialogo.tipo.clicar("Transferência")
+        dialogo.valor.setText("250")
+        dialogo.descricao.setText("Saque pra carteira")
     elif nome == "repetir":
         dialogo.valor.setText("39,90")
         dialogo.descricao.setText("Streaming de vídeo")

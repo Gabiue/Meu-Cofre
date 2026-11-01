@@ -318,7 +318,9 @@ def recentes(conn: sqlite3.Connection, hoje: date, n: int = 10, filtro: str = "t
     Guardar/retirar de uma meta e aportar/resgatar de um investimento aparecem uma vez só, pelo lado da conta
     (o lado da conta de investimento fica de fora).
     Colunas: id, descricao, categoria, conta, conta_final (final do cartão ou nulo), metodo, data, valor_centavos, parcela_atual, parcela_total,
-    recorrente_id (nulo se não for de uma recorrente), meta_id (nulo se não for guardar/retirar de uma meta).
+    recorrente_id (nulo se não for de uma recorrente), meta_id (nulo se não for guardar/retirar de uma meta),
+    transferencia_destino (nome da conta que recebeu, só no lado de saída de uma transferência entre contas próprias).
+    Essa transferência aparece uma vez só: o lado de entrada fica de fora.
     """
     if filtro not in ("todos", "entradas", "saidas"):
         raise ValueError(f"Filtro desconhecido: {filtro}")
@@ -331,11 +333,17 @@ def recentes(conn: sqlite3.Connection, hoje: date, n: int = 10, filtro: str = "t
     return pd.read_sql_query(
         f"""
         SELECT l.id, l.descricao, c.nome AS categoria, ct.nome AS conta, ct.final AS conta_final, l.metodo, l.data,
-               l.valor_centavos, l.parcela_atual, l.parcela_total, l.recorrente_id, l.meta_id
+               l.valor_centavos, l.parcela_atual, l.parcela_total, l.recorrente_id, l.meta_id,
+               CASE WHEN l.valor_centavos < 0 THEN p.nome END AS transferencia_destino
         FROM lancamentos l
         JOIN contas ct ON ct.id = l.conta_id
         LEFT JOIN categorias c ON c.id = l.categoria_id
-        WHERE l.data <= ? AND NOT (ct.tipo = 'investimento' AND (l.meta_id IS NOT NULL OR l.transferencia_id IS NOT NULL)) {extra}
+        LEFT JOIN (SELECT l2.transferencia_id, l2.valor_centavos, ct2.nome, ct2.tipo
+                   FROM lancamentos l2 JOIN contas ct2 ON ct2.id = l2.conta_id) p
+               ON p.transferencia_id = l.transferencia_id AND (p.valor_centavos > 0) <> (l.valor_centavos > 0)
+              AND p.tipo IN ('corrente', 'dinheiro') AND ct.tipo IN ('corrente', 'dinheiro')
+        WHERE l.data <= ? AND NOT (ct.tipo = 'investimento' AND (l.meta_id IS NOT NULL OR l.transferencia_id IS NOT NULL))
+              AND NOT (l.valor_centavos > 0 AND p.nome IS NOT NULL) {extra}
         ORDER BY l.data DESC, l.id DESC
         LIMIT ?
         """,
@@ -462,3 +470,113 @@ def aplicar_edicoes(conn: sqlite3.Connection, original: pd.DataFrame, editado: p
     if excluir_ids:
         excluir(conn, excluir_ids)
     return atualizados, len(excluir_ids)
+
+
+# --- Transferência entre contas próprias ---------------------------------------------------------------------
+
+CATEGORIA_TRANSFERENCIA = "Transferência entre contas"
+TIPOS_TRANSFERENCIA = ("corrente", "dinheiro")  # cartão e investimento têm fluxos próprios (pagar fatura, aportar)
+
+
+def _validar_transferencia(conn: sqlite3.Connection, origem_id: int, destino_id: int, valor_centavos: int) -> None:
+    if valor_centavos <= 0:
+        raise ValueError("O valor precisa ser maior que zero.")
+    if origem_id == destino_id:
+        raise ValueError("Escolha duas contas diferentes.")
+    for id_ in (origem_id, destino_id):
+        conta = conn.execute("SELECT tipo, ativa FROM contas WHERE id = ?", (id_,)).fetchone()
+        if conta is None or not conta["ativa"] or conta["tipo"] not in TIPOS_TRANSFERENCIA:
+            raise ValueError("Só dá pra transferir entre contas correntes e a carteira, ativas.")
+
+
+def _categoria_transferencia(conn: sqlite3.Connection) -> int:
+    linha = conn.execute("SELECT id FROM categorias WHERE nome = ?", (CATEGORIA_TRANSFERENCIA,)).fetchone()
+    if linha:
+        return linha["id"]
+    with conn:
+        return conn.execute(
+            "INSERT INTO categorias (nome, tipo) VALUES (?, 'transferencia')", (CATEGORIA_TRANSFERENCIA,)
+        ).lastrowid
+
+
+def transferir(
+    conn: sqlite3.Connection,
+    *,
+    origem_id: int,
+    destino_id: int,
+    valor_centavos: int,
+    data: date,
+    descricao: str = "",
+) -> str:
+    """Move dinheiro entre duas contas próprias (corrente ou carteira): saída na origem e entrada no destino,
+    com o mesmo `transferencia_id` (devolvido). Não é gasto nem receita."""
+    _validar_transferencia(conn, origem_id, destino_id, valor_centavos)
+    descricao = descricao.strip() or "Transferência"
+    categoria_id = _categoria_transferencia(conn)
+    transferencia_id = uuid.uuid4().hex
+    with conn:
+        for conta_id, sinal in ((origem_id, -1), (destino_id, 1)):
+            conn.execute(
+                """
+                INSERT INTO lancamentos
+                    (conta_id, data, valor_centavos, descricao, categoria_id, metodo, origem, transferencia_id)
+                VALUES (?, ?, ?, ?, ?, 'transferencia', 'manual', ?)
+                """,
+                (conta_id, data.isoformat(), sinal * valor_centavos, descricao, categoria_id, transferencia_id),
+            )
+    return transferencia_id
+
+
+def obter_transferencia(conn: sqlite3.Connection, lancamento_id: int) -> dict | None:
+    """Se o lançamento é um dos lados de uma transferência entre contas próprias: `transferencia_id`, `origem_id`,
+    `destino_id`, `valor_centavos` (positivo), `data` (ISO), `descricao`. Senão (fatura, meta, aporte...), None."""
+    linha = conn.execute("SELECT transferencia_id FROM lancamentos WHERE id = ?", (lancamento_id,)).fetchone()
+    if linha is None or linha["transferencia_id"] is None:
+        return None
+    lados = conn.execute(
+        """
+        SELECT l.conta_id, l.valor_centavos, l.data, l.descricao, ct.tipo
+        FROM lancamentos l JOIN contas ct ON ct.id = l.conta_id
+        WHERE l.transferencia_id = ? AND l.meta_id IS NULL
+        """,
+        (linha["transferencia_id"],),
+    ).fetchall()
+    if len(lados) != 2 or any(l["tipo"] not in TIPOS_TRANSFERENCIA for l in lados):
+        return None
+    saida, entrada = sorted(lados, key=lambda l: l["valor_centavos"])
+    if saida["valor_centavos"] != -entrada["valor_centavos"]:
+        return None
+    return dict(
+        transferencia_id=linha["transferencia_id"], origem_id=saida["conta_id"], destino_id=entrada["conta_id"],
+        valor_centavos=entrada["valor_centavos"], data=saida["data"], descricao=saida["descricao"],
+    )
+
+
+def atualizar_transferencia(
+    conn: sqlite3.Connection,
+    transferencia_id: str,
+    *,
+    origem_id: int,
+    destino_id: int,
+    valor_centavos: int,
+    data: date,
+    descricao: str = "",
+) -> None:
+    """Edita a transferência inteira: os dois lados mudam juntos (mesmas regras de `transferir`)."""
+    _validar_transferencia(conn, origem_id, destino_id, valor_centavos)
+    descricao = descricao.strip() or "Transferência"
+    with conn:
+        for conta_id, sinal in ((origem_id, -1), (destino_id, 1)):
+            conn.execute(
+                """
+                UPDATE lancamentos SET conta_id = ?, valor_centavos = ?, data = ?, descricao = ?
+                WHERE transferencia_id = ? AND valor_centavos * ? > 0
+                """,
+                (conta_id, sinal * valor_centavos, data.isoformat(), descricao, transferencia_id, sinal),
+            )
+
+
+def excluir_transferencia(conn: sqlite3.Connection, transferencia_id: str) -> None:
+    """Apaga os dois lados."""
+    with conn:
+        conn.execute("DELETE FROM lancamentos WHERE transferencia_id = ?", (transferencia_id,))

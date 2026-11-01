@@ -1,18 +1,39 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256">
-  <!-- meu-cofre: porta de cofre verde-floresta com o disco em dourado -->
-  <rect x="16" y="16" width="224" height="224" rx="52" fill="#13241b"/>
-  <rect x="16" y="16" width="224" height="224" rx="52" fill="none" stroke="#1f3a2b" stroke-width="6"/>
-  <rect x="52" y="52" width="152" height="152" rx="26" fill="#183022" stroke="#3fb37f" stroke-width="10"/>
-  <circle cx="128" cy="128" r="42" fill="none" stroke="#e0a030" stroke-width="10"/>
-  <circle cx="128" cy="128" r="9" fill="#e0a030"/>
-  <g stroke="#e0a030" stroke-width="8" stroke-linecap="round">
-    <line x1="128" y1="86" x2="128" y2="100"/>
-    <line x1="128" y1="156" x2="128" y2="170"/>
-    <line x1="86" y1="128" x2="100" y2="128"/>
-    <line x1="156" y1="128" x2="170" y2="128"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="60 55 1135 1140" role="img" aria-label="meu-cofre">
+  <!-- meu-cofre: cofre dourado em forma de M sobre verde-floresta (vetorizado a partir de meu-cofre.png) -->
+  <defs>
+    <radialGradient id="fundo" cx="50%" cy="45%" r="70%">
+      <stop offset="0" stop-color="#0d4632"/>
+      <stop offset="1" stop-color="#062a1d"/>
+    </radialGradient>
+    <linearGradient id="ouro" x1="0.2" y1="0" x2="0.85" y2="1">
+      <stop offset="0" stop-color="#f7d68c"/>
+      <stop offset="1" stop-color="#d8a84c"/>
+    </linearGradient>
+  </defs>
+
+  <rect x="60" y="55" width="1135" height="1140" rx="225" fill="url(#fundo)"/>
+
+  <!-- corpo do cofre = letra M, base aberta no meio -->
+  <path fill="url(#ouro)" d="
+    M 492 940 L 335 940 Q 250 940 250 855 L 250 390 Q 250 345 290 322 L 330 300 Q 360 285 390 303
+    L 627 453 L 864 303 Q 894 285 924 300 L 964 322 Q 1003 345 1003 390
+    L 1003 855 Q 1003 940 918 940 L 762 940 L 762 877 L 900 877 L 900 432
+    L 627 600 L 355 432 L 355 877 L 492 877 Z"/>
+
+  <!-- dobradiças (contorno na cor do fundo separa do corpo) -->
+  <g fill="url(#ouro)" stroke="#073020" stroke-width="12">
+    <rect x="224" y="480" width="50" height="120" rx="10"/>
+    <rect x="224" y="694" width="50" height="120" rx="10"/>
   </g>
-  <g fill="#3fb37f">
-    <rect x="200" y="84" width="14" height="26" rx="5"/>
-    <rect x="200" y="146" width="14" height="26" rx="5"/>
+
+  <!-- disco do segredo -->
+  <circle cx="627" cy="697" r="137" fill="#0a3a29"/>
+  <circle cx="627" cy="697" r="109" fill="none" stroke="url(#ouro)" stroke-width="28"/>
+  <circle cx="627" cy="705" r="35" fill="url(#ouro)"/>
+  <g fill="url(#ouro)">
+    <rect x="619" y="623" width="16" height="35" rx="4"/>
+    <rect x="619" y="752" width="16" height="35" rx="4"/>
+    <rect x="543" y="697" width="35" height="16" rx="4"/>
+    <rect x="677" y="697" width="35" height="16" rx="4"/>
   </g>
 </svg>

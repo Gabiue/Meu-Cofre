@@ -1,6 +1,8 @@
 """Janela "Contas e cartões" (docs/design/telas.md).
 
 Contas (corrente e carteira): saldo inicial editável, com o saldo de hoje ao lado.
+Investimentos: as contas "Caixinhas" e "Investimentos" só com o saldo (leitura; o dinheiro se move nas abas Metas e
+Investimentos).
 Cartões: adicionar, renomear, desativar e reativar; o que está em aberto em cada um.
 Tudo é gravado na hora (o saldo, ao sair do campo ou dar Enter) e `alterado(mensagem)` avisa
 a janela principal para recarregar. Erros e confirmações aparecem na própria janela.
@@ -115,6 +117,7 @@ class DialogoContas(QDialog):
         self.setMaximumWidth(LARGURA)
         self._montar()
         self._carregar_contas()
+        self._carregar_investimentos()
         self._carregar_cartoes()
         self._ajustado = False
 
@@ -144,6 +147,11 @@ class DialogoContas(QDialog):
         self._lista_contas = self._cartao_contas.corpo
         self._lista_contas.setSpacing(0)
         coluna.addWidget(self._cartao_contas)
+
+        self._cartao_investimentos = Cartao("Investimentos", "Só leitura: o dinheiro se move nas abas Metas e Investimentos")
+        self._lista_investimentos = self._cartao_investimentos.corpo
+        self._lista_investimentos.setSpacing(0)
+        coluna.addWidget(self._cartao_investimentos)
 
         self.botao_adicionar = _compacto(BotaoSecundario("+ Adicionar cartão"))
         self.botao_adicionar.clicked.connect(self.iniciar_adicao)
@@ -264,6 +272,23 @@ class DialogoContas(QDialog):
             if i:
                 self._lista_contas.addWidget(_separador())
             self._lista_contas.addWidget(self._linha_conta(conta))
+
+    def _carregar_investimentos(self) -> None:
+        """Caixinhas e Investimentos: nome e saldo de hoje, sem campo nem botão."""
+        _esvaziar(self._lista_investimentos)
+        contas = cadastros.contas_por_tipo(self.conn, ("investimento",))
+        self._cartao_investimentos.setVisible(bool(contas))
+        for i, conta in enumerate(contas):
+            if i:
+                self._lista_investimentos.addWidget(_separador())
+            linha = QWidget()
+            caixa = QHBoxLayout(linha)
+            caixa.setContentsMargins(0, tema.ESPACO + 4, 0, tema.ESPACO + 4)
+            caixa.addWidget(_rotulo(conta["nome"], "ContaNome"), 1)
+            saldo = _rotulo(formatar_brl(cadastros.saldo_da_conta(self.conn, conta["id"], self._hoje)), "ContaNome")
+            saldo.setAlignment(Qt.AlignmentFlag.AlignRight)
+            caixa.addWidget(saldo)
+            self._lista_investimentos.addWidget(linha)
 
     def _linha_conta(self, conta: sqlite3.Row) -> QWidget:
         id_ = conta["id"]

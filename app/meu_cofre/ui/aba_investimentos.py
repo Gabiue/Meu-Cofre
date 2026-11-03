@@ -39,7 +39,7 @@ from meu_cofre.ui.componentes import (
     RotuloElidido,
     _espacar_letras,
 )
-from meu_cofre.ui.cartao_acao import CartaoAcao
+from meu_cofre.ui.cartao_acao import CartaoAcao, HistoricoAtivo
 from meu_cofre.ui.dialogo_ativo import DialogoAtivo
 from meu_cofre.ui.dialogo_importar_b3 import DialogoImportarB3
 from meu_cofre.ui.dialogo_meta import reais
@@ -164,6 +164,7 @@ class CartaoAtivo(QFrame):
     encerrar = Signal(int)
     reativar = Signal(int)
     ver_metas = Signal()
+    historico = Signal(int)
     movimento = Signal(int, str, int, int, date)  # id, "aportar" | "resgatar" | "saldo", centavos, conta, data
 
     def __init__(self, p: Posicao, parent: QWidget | None = None):
@@ -226,6 +227,9 @@ class CartaoAtivo(QFrame):
         self.form.cancelado.connect(self.fechar_form)
         self.form.confirmado.connect(self._confirmado)
 
+        self.lista_historico = HistoricoAtivo()
+        self.lista_historico.setVisible(False)
+
         self._montar_acoes(p)
 
         c = 2 * tema.ESPACO
@@ -236,6 +240,7 @@ class CartaoAtivo(QFrame):
         coluna.addLayout(valores)
         coluna.addWidget(self.nota)
         coluna.addWidget(self.form)
+        coluna.addWidget(self.lista_historico)
         coluna.addLayout(self._fila_principal)
         coluna.addLayout(self._fila_extra)
 
@@ -255,6 +260,9 @@ class CartaoAtivo(QFrame):
         self.botao_metas.clicked.connect(self.ver_metas.emit)
         self.botao_editar = _acao("Editar taxa" if a.caixinhas else "Editar")
         self.botao_editar.clicked.connect(lambda: self.editar.emit(self.id_ativo))
+        self.botao_historico = _acao("Histórico")
+        self.botao_historico.setToolTip("Ver, corrigir ou excluir aportes, resgates e saldos")
+        self.botao_historico.clicked.connect(lambda: self.historico.emit(self.id_ativo))
         self.botao_encerrar = _acao("Encerrar", perigo=True)
         self.botao_encerrar.setToolTip("Tira da lista (o histórico fica). Resgate tudo antes")
         self.botao_encerrar.clicked.connect(lambda: self.encerrar.emit(self.id_ativo))
@@ -268,12 +276,14 @@ class CartaoAtivo(QFrame):
         principais = [self.botao_saldo, self.botao_metas] if a.caixinhas else [self.botao_aportar, self.botao_resgatar, self.botao_saldo]
         if encerrado:
             principais = []
-        for w in (self.botao_aportar, self.botao_resgatar, self.botao_saldo, self.botao_metas, self.botao_reativar, self.botao_encerrar):
+        for w in (self.botao_aportar, self.botao_resgatar, self.botao_saldo, self.botao_metas, self.botao_reativar, self.botao_encerrar, self.botao_historico):
             w.setVisible(False)
         for w in principais:
             w.setVisible(True)
             self._fila_principal.addWidget(w)
-        self._discretas = [self.botao_reativar] if encerrado else [self.botao_editar] + ([] if a.caixinhas else [self.botao_encerrar])
+        # caixinhas: o dinheiro se move na aba Metas, então não há o que corrigir aqui
+        historico = [] if a.caixinhas else [self.botao_historico]
+        self._discretas = historico + ([self.botao_reativar] if encerrado else [self.botao_editar] + ([] if a.caixinhas else [self.botao_encerrar]))
         self.botao_editar.setVisible(not encerrado)
         for w in self._discretas:
             w.setVisible(True)
@@ -327,6 +337,12 @@ class CartaoAtivo(QFrame):
         self._tipo_form = None
         self.form.setVisible(False)
 
+    def mostrar_historico(self, itens: list[dict] | None) -> None:
+        """Abre o histórico com `itens` (de `investimentos.historico`); None fecha."""
+        if itens is not None:
+            self.lista_historico.mostrar(itens)
+        self.lista_historico.setVisible(itens is not None)
+
     @property
     def tipo_form(self) -> str | None:
         return self._tipo_form
@@ -349,6 +365,7 @@ class AbaInvestimentos(QScrollArea):
         self.conn = conn
         self._hoje = hoje
         self._mostrar_encerrados = False
+        self._historicos_abertos: set[int] = set()
         self._status: dict | None = None
         self._atualizando = False
         self.dialogo: DialogoAtivo | None = None
@@ -553,7 +570,16 @@ class AbaInvestimentos(QScrollArea):
         cartao.reativar.connect(self.reativar)
         cartao.ver_metas.connect(self.ver_metas.emit)
         cartao.movimento.connect(self._movimento)
+        self._ligar_historico(cartao)
         return cartao
+
+    def _ligar_historico(self, cartao: CartaoAtivo | CartaoAcao) -> None:
+        """Histórico de operações do ativo: abre e fecha no cartão; salvar e excluir gravam e recarregam a aba."""
+        cartao.historico.connect(self.alternar_historico)
+        cartao.lista_historico.salvar.connect(lambda dados, i=cartao.id_ativo: self._salvar_operacao(i, dados))
+        cartao.lista_historico.excluir.connect(lambda fonte, op, i=cartao.id_ativo: self._excluir_operacao(i, fonte, op))
+        if cartao.id_ativo in self._historicos_abertos:
+            cartao.mostrar_historico(investimentos.historico(self.conn, cartao.id_ativo))
 
     def _montar_cartao_acao(self, p: dict) -> CartaoAcao:
         cartao = CartaoAcao(p)
@@ -564,6 +590,7 @@ class AbaInvestimentos(QScrollArea):
         cartao.encerrar.connect(self.encerrar)
         cartao.reativar.connect(self.reativar)
         cartao.operacao.connect(self._operacao_rv)
+        self._ligar_historico(cartao)
         return cartao
 
     def cartoes(self) -> list[CartaoAtivo]:
@@ -625,6 +652,51 @@ class AbaInvestimentos(QScrollArea):
                 cartao.form.mostrar_erro(str(erro))
             return
         self._avisar(mensagem)
+
+    def _cartao_qualquer(self, ativo_id: int) -> CartaoAtivo | CartaoAcao | None:
+        return self.cartao_do_ativo(ativo_id) or self.cartao_da_acao(ativo_id)
+
+    def alternar_historico(self, ativo_id: int) -> None:
+        """"Histórico": mostra ou esconde as operações do ativo na própria linha."""
+        cartao = self._cartao_qualquer(ativo_id)
+        if cartao is None:
+            return
+        if ativo_id in self._historicos_abertos:
+            self._historicos_abertos.discard(ativo_id)
+            cartao.mostrar_historico(None)
+        else:
+            self._historicos_abertos.add(ativo_id)
+            cartao.mostrar_historico(investimentos.historico(self.conn, ativo_id))
+
+    def _salvar_operacao(self, ativo_id: int, d: dict) -> None:
+        """Grava a correção de uma operação. Erro de regra fica dentro do formulário."""
+        try:
+            if d["fonte"] == "mov":
+                investimentos.editar_movimentacao(self.conn, d["id"], valor=d["valor"], data=d["data"])
+            else:
+                renda_variavel.editar_operacao(
+                    self.conn, d["id"], data=d["data"], quantidade=d["quantidade"], preco=d["preco"], taxas=d["taxas"], valor=d["valor"]
+                )
+        except ValueError as erro:
+            self._erro_no_historico(ativo_id, str(erro))
+            return
+        self._avisar("Operação corrigida")
+
+    def _excluir_operacao(self, ativo_id: int, fonte: str, operacao_id: int) -> None:
+        try:
+            if fonte == "mov":
+                investimentos.excluir_movimentacao(self.conn, operacao_id)
+            else:
+                renda_variavel.excluir_operacao(self.conn, operacao_id)
+        except ValueError as erro:
+            self._erro_no_historico(ativo_id, str(erro))
+            return
+        self._avisar("Operação excluída")
+
+    def _erro_no_historico(self, ativo_id: int, texto: str) -> None:
+        cartao = self._cartao_qualquer(ativo_id)
+        if cartao is not None:
+            cartao.lista_historico.mostrar_erro(texto)
 
     def _movimento(self, ativo_id: int, tipo: str, centavos: int, conta_id: int, data: date) -> None:
         cartao = self.cartao_do_ativo(ativo_id)

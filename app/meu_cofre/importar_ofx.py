@@ -29,7 +29,7 @@ from meu_cofre import cadastros, lancamentos
 JANELA_DIAS = 3  # tolerância entre a data do lançamento manual e a do extrato
 BANCOS = {"077": "inter", "104": "caixa"}  # FID do OFX -> `contas.banco` (sem acento, minúsculo)
 SAIDAS = {"DEBIT", "PAYMENT", "FEE", "SRVCHG", "ATM", "CHECK", "DIRECTDEBIT"}  # valor positivo nesses tipos é saída
-# Pix, TED e DOC podem ser entre contas próprias: não dá pra adivinhar a categoria (fica pra transferências, #3)
+# Pix, TED e DOC podem ser entre contas próprias: o histórico não adivinha: só uma regra do usuário categoriza (senão, "A categorizar")
 PADRAO_TRANSFERENCIA = re.compile(r"\b(pix|ted|doc|transf\w*)\b", re.IGNORECASE)
 PADRAO_HORA = re.compile(r"^\s*-?\s*(\d{2}:\d{2}:\d{2})\b\s*-?\s*")  # Caixa: "- 14:03:55 COMPRA ..."
 TAGS_TRANSACAO = {"TRNTYPE", "DTPOSTED", "TRNAMT", "FITID", "NAME", "MEMO", "CHECKNUM"}
@@ -282,8 +282,11 @@ def prever(conn: sqlite3.Connection, extrato: Extrato, conta_id: int, hoje: date
         usados.add(item.lancamento_id)
     for item in previa.novas:
         t = item.transacao
-        if not PADRAO_TRANSFERENCIA.search(t.descricao):
-            item.categoria_id = lancamentos.sugerir_categoria(conn, t.descricao, "receita" if t.valor_centavos > 0 else "despesa")
+        tipo = "receita" if t.valor_centavos > 0 else "despesa"
+        if PADRAO_TRANSFERENCIA.search(t.descricao):  # pode ser entre contas próprias: só uma regra explícita decide
+            item.categoria_id = lancamentos.aplicar_regras(conn, t.descricao, tipo)
+        else:
+            item.categoria_id = lancamentos.sugerir_categoria(conn, t.descricao, tipo)
     return previa
 
 

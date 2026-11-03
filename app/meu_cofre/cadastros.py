@@ -1,10 +1,12 @@
 """Cadastros: contas (editadas em tabela, cartões pontuais) e categorias (criar, renomear, natureza, desativar)."""
 
+import re
 import sqlite3
 from datetime import date
 
 import pandas as pd
 
+from meu_cofre import lancamentos
 from meu_cofre.lancamentos import para_centavos
 
 NATUREZAS = ["essencial", "flexivel", "superfluo"]
@@ -325,3 +327,61 @@ def reativar_categoria(conn: sqlite3.Connection, categoria_id: int) -> None:
     _categoria(conn, categoria_id)
     with conn:
         conn.execute("UPDATE categorias SET ativa = 1 WHERE id = ?", (categoria_id,))
+
+
+# --- Regras de categorização (seção "Regras" da janela Categorias) -----------------------------------
+
+TIPOS_MATCH = {"contem": "contém", "regex": "regex"}
+
+
+def _regra_validada(conn: sqlite3.Connection, padrao: str, categoria_id: int, tipo_match: str, prioridade: int) -> tuple:
+    padrao = padrao.strip()
+    if not padrao:
+        raise ValueError("Diga o trecho da descrição.")
+    if tipo_match not in TIPOS_MATCH:
+        raise ValueError("O tipo é contém ou regex.")
+    if tipo_match == "regex":
+        try:
+            re.compile(padrao)
+        except re.error as e:
+            raise ValueError(f"Regex inválida: {e}.") from e
+    elif not any(ch.isalnum() for ch in padrao):
+        raise ValueError("O trecho precisa ter letras ou números.")
+    categoria = _categoria(conn, categoria_id)
+    if categoria_do_sistema(categoria) or not categoria["ativa"]:
+        raise ValueError("Escolha uma categoria ativa.")
+    return padrao, tipo_match, categoria_id, int(prioridade)
+
+
+def listar_regras(conn: sqlite3.Connection) -> list[sqlite3.Row]:
+    """Regras por prioridade (menor vence) e depois id, com `categoria` (nome) e `categoria_ativa`."""
+    return conn.execute(
+        "SELECT r.*, c.nome AS categoria, c.ativa AS categoria_ativa FROM regras_categorizacao r"
+        " JOIN categorias c ON c.id = r.categoria_id ORDER BY r.prioridade, r.id"
+    ).fetchall()
+
+
+def criar_regra(conn: sqlite3.Connection, padrao: str, categoria_id: int, tipo_match: str = "contem", prioridade: int = 100) -> int:
+    """Cria a regra e devolve o id. Padrão não vazio, regex que compila, categoria ativa. Menor prioridade vence."""
+    dados = _regra_validada(conn, padrao, categoria_id, tipo_match, prioridade)
+    with conn:
+        return conn.execute(
+            "INSERT INTO regras_categorizacao (padrao, tipo_match, categoria_id, prioridade) VALUES (?, ?, ?, ?)", dados
+        ).lastrowid
+
+
+def editar_regra(conn: sqlite3.Connection, regra_id: int, padrao: str, categoria_id: int, tipo_match: str = "contem", prioridade: int = 100) -> None:
+    if conn.execute("SELECT 1 FROM regras_categorizacao WHERE id = ?", (regra_id,)).fetchone() is None:
+        raise ValueError(f"Regra {regra_id} não existe.")
+    dados = _regra_validada(conn, padrao, categoria_id, tipo_match, prioridade)
+    with conn:
+        conn.execute(
+            "UPDATE regras_categorizacao SET padrao = ?, tipo_match = ?, categoria_id = ?, prioridade = ? WHERE id = ?",
+            (*dados, regra_id),
+        )
+
+
+def excluir_regra(conn: sqlite3.Connection, regra_id: int) -> None:
+    """Apaga só a regra; lançamentos já categorizados por ela não mudam."""
+    with conn:
+        conn.execute("DELETE FROM regras_categorizacao WHERE id = ?", (regra_id,))

@@ -32,7 +32,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from meu_cofre import lancamentos, recorrentes
+from meu_cofre import cadastros, lancamentos, recorrentes
 from meu_cofre.lancamentos import METODOS, formatar_brl, nome_com_final, para_centavos
 from meu_cofre.ui import tema
 from meu_cofre.ui.componentes import (
@@ -315,6 +315,26 @@ class DialogoLancamento(QDialog):
         self.aviso_salvo = _rotulo("", "AvisoSalvo")
         self.aviso_salvo.setMinimumHeight(24)
         form.addWidget(self.aviso_salvo)
+        # Oferta discreta (#3): depois de "salvar e lançar outro" com categoria diferente da sugerida
+        self._oferta: tuple[int, str] | None = None  # (categoria_id, nome)
+        self.oferta_regra = QWidget()
+        linha_oferta = QHBoxLayout(self.oferta_regra)
+        linha_oferta.setContentsMargins(0, 0, 0, 0)
+        linha_oferta.setSpacing(tema.ESPACO)
+        linha_oferta.addWidget(_rotulo("Sempre categorizar", "CampoInfo"))
+        self.padrao_regra = QLineEdit()
+        linha_oferta.addWidget(self.padrao_regra, 1)
+        self.texto_oferta = _rotulo("", "CampoInfo")
+        linha_oferta.addWidget(self.texto_oferta)
+        self.botao_criar_regra = QPushButton("Criar regra")
+        self.botao_criar_regra.setObjectName("BotaoLink")
+        self.botao_criar_regra.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.botao_criar_regra.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.botao_criar_regra.setAutoDefault(False)
+        self.botao_criar_regra.clicked.connect(self.criar_regra)
+        linha_oferta.addWidget(self.botao_criar_regra)
+        self.oferta_regra.setVisible(False)
+        form.addWidget(self.oferta_regra)
         form.addStretch(1)
 
         raiz.addWidget(self._montar_barra())
@@ -638,6 +658,7 @@ class DialogoLancamento(QDialog):
     def _valor_mudou(self, _texto: str) -> None:
         self._limpar_erro(self.erro_valor, self.valor)
         self.aviso_salvo.setText("")
+        self.oferta_regra.setVisible(False)
         self._atualizar_parcelas()
 
     def _atualizar_parcelas(self) -> None:
@@ -745,8 +766,12 @@ class DialogoLancamento(QDialog):
         if self.transferencia:
             return self._gravar_transferencia(centavos, descricao)
         categoria_id = self.categoria.currentData()
-        if not self.editando and categoria_id is None:  # salvou sem sair do campo: usa o histórico mesmo assim
-            categoria_id = lancamentos.sugerir_categoria(self.conn, descricao, self._tipo_categoria)
+        sugerida = None if self.editando else lancamentos.sugerir_categoria(self.conn, descricao, self._tipo_categoria)
+        if not self.editando and categoria_id is None:  # salvou sem sair do campo: usa a sugestão mesmo assim
+            categoria_id = sugerida
+        self._oferta = None
+        if not self.editando and categoria_id is not None and categoria_id != sugerida:
+            self._oferta = (categoria_id, self.categoria.currentText() or cadastros._categoria(self.conn, categoria_id)["nome"])
         data = self.data.date().toPython()
 
         try:
@@ -798,6 +823,7 @@ class DialogoLancamento(QDialog):
         return True
 
     def _limpar_para_o_proximo(self) -> None:
+        descricao = self.descricao.text().strip()
         self.valor.clear()  # (limpa também o aviso: ele é escrito depois)
         self.descricao.clear()
         self.categoria.setCurrentIndex(-1)
@@ -807,7 +833,30 @@ class DialogoLancamento(QDialog):
         self._assinatura_manual = False
         self.completar.setModel(QStringListModel(lancamentos.descricoes_usadas(self.conn, self._tipo_categoria), self.completar))
         self.aviso_salvo.setText("✓ " + self._ultima_mensagem)
+        self._oferecer_regra(descricao)
         self.valor.setFocus()
+
+    def _oferecer_regra(self, descricao: str) -> None:
+        """"Sempre categorizar '<trecho>' como <Categoria>?" com o trecho (descrição normalizada) editável."""
+        if self._oferta is None:
+            return
+        self.padrao_regra.setText(lancamentos.padrao_sugerido(descricao))
+        self.texto_oferta.setText(f"como {self._oferta[1]}")
+        self.botao_criar_regra.setText("Criar regra")
+        self.oferta_regra.setVisible(True)
+
+    def criar_regra(self) -> bool:
+        if self._oferta is None:
+            return False
+        try:
+            cadastros.criar_regra(self.conn, self.padrao_regra.text(), self._oferta[0])
+        except ValueError as erro:
+            self.texto_oferta.setText(f"! {erro}")
+            return False
+        self.aviso_salvo.setText(f"✓ Regra criada: '{self.padrao_regra.text().strip()}' → {self._oferta[1]}")
+        self._oferta = None
+        self.oferta_regra.setVisible(False)
+        return True
 
     # --- Excluir ------------------------------------------------------------------------------------
     @property

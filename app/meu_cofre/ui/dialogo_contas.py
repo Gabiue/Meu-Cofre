@@ -31,6 +31,7 @@ from meu_cofre import cadastros
 from meu_cofre.lancamentos import formatar_brl, nome_com_final, para_centavos
 from meu_cofre.ui import tema
 from meu_cofre.ui.componentes import BotaoPrimario, BotaoSecundario, Cartao, CampoLista, Pilula, _espacar_letras, _repolir
+from meu_cofre.ui.dialogo_importar_ofx import DialogoImportarOfx
 
 LARGURA = 720
 LARGURA_SALDO = 150
@@ -108,6 +109,7 @@ class DialogoContas(QDialog):
         self._saldos: dict[int, QLineEdit] = {}
         self._saldos_hoje: dict[int, QLabel] = {}
         self._erros_saldo: dict[int, QLabel] = {}
+        self.dialogo_ofx: DialogoImportarOfx | None = None
 
         self.setObjectName("Dialogo")
         self.setProperty("tela", "contas")
@@ -143,7 +145,12 @@ class DialogoContas(QDialog):
         coluna.setSpacing(2 * tema.ESPACO)
         coluna.addWidget(_rotulo("Contas e cartões", "DialogoTitulo"))
 
-        self._cartao_contas = Cartao("Contas", "Saldo inicial é o que você tinha na conta quando começou a usar o app")
+        self.botao_importar = _compacto(BotaoSecundario("Importar extrato"))
+        self.botao_importar.setToolTip("Trazer o histórico de uma conta a partir do extrato OFX do banco")
+        self.botao_importar.clicked.connect(lambda: self.importar_extrato())
+        self._cartao_contas = Cartao(
+            "Contas", "Saldo inicial é o que você tinha na conta quando começou a usar o app", acao=self.botao_importar
+        )
         self._lista_contas = self._cartao_contas.corpo
         self._lista_contas.setSpacing(0)
         coluna.addWidget(self._cartao_contas)
@@ -571,6 +578,22 @@ class DialogoContas(QDialog):
     def _gravou(self, mensagem: str) -> None:
         self._acao = None
         self._carregar_cartoes()
+        self.alterado.emit(mensagem)
+
+    def importar_extrato(self, caminho: str | None = None) -> DialogoImportarOfx:
+        """"Importar extrato": abre a janela (já com a prévia de `caminho`, se dado); ao gravar, recarrega os saldos."""
+        dialogo = DialogoImportarOfx(self.conn, parent=self, hoje=self._hoje)
+        dialogo.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+        dialogo.gravado.connect(self._importou)
+        self.dialogo_ofx = dialogo
+        dialogo.finished.connect(lambda _codigo: setattr(self, "dialogo_ofx", None))
+        dialogo.open()
+        if caminho:
+            dialogo.carregar(caminho)
+        return dialogo
+
+    def _importou(self, mensagem: str) -> None:
+        self._carregar_contas()  # o saldo inicial pode ter mudado
         self.alterado.emit(mensagem)
 
     def mostrar_desativados(self, mostrar: bool) -> None:

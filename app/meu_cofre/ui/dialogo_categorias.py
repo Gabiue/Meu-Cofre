@@ -1,6 +1,6 @@
 """Janela "Categorias": criar, renomear, mudar a natureza, desativar e reativar (docs/design/telas.md).
 
-Duas seções, Despesas e Receitas. A natureza (essencial, flexível, supérfluo) só existe nas despesas e alimenta a
+Duas seções, Despesas e Receitas, e a seção Regras (contém/regex -> categoria, prioridade; #3). A natureza (essencial, flexível, supérfluo) só existe nas despesas e alimenta a
 reserva de emergência e os relatórios. Tudo é gravado na hora e `alterado(mensagem)` avisa a janela principal.
 Desativar só tira a categoria das escolhas: os lançamentos antigos continuam com ela. Erros ficam na própria janela.
 """
@@ -10,9 +10,10 @@ import sqlite3
 from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtWidgets import QApplication, QDialog, QFrame, QHBoxLayout, QLabel, QLineEdit, QPushButton, QScrollArea, QVBoxLayout, QWidget
 
-from meu_cofre import cadastros
+from meu_cofre import cadastros, lancamentos
 from meu_cofre.ui import tema
 from meu_cofre.ui.componentes import BotaoPrimario, BotaoSecundario, CampoLista, Cartao, Pilula, _repolir
+from meu_cofre.ui.formulario_regra import FormularioRegra
 from meu_cofre.ui.dialogo_contas import LARGURA, _compacto, _esvaziar, _legenda, _rotulo, _separador
 
 SECOES = {"despesa": "Despesas", "receita": "Receitas"}
@@ -46,6 +47,9 @@ class DialogoCategorias(QDialog):
         self.novo_nome: dict[str, QLineEdit] = {}
         self.nova_natureza: CampoLista | None = None  # só nas despesas
         self.erro_novo: dict[str, QLabel] = {}
+        self.formulario_regra: FormularioRegra | None = None  # aberto por "+ Nova regra" ou "Editar"
+        self.oferta_regra: QWidget | None = None  # "Aplicar a N lançamentos..." depois de salvar uma regra
+        self.texto_oferta: QLabel | None = None
 
         self.setObjectName("Dialogo")
         self.setProperty("tela", "contas")  # mesmo fundo da janela de contas
@@ -83,6 +87,7 @@ class DialogoCategorias(QDialog):
         }
         for tipo, titulo in SECOES.items():
             coluna.addWidget(self._montar_secao(tipo, titulo, dicas[tipo]))
+        coluna.addWidget(self._montar_regras())
         coluna.addStretch(1)
 
         barra = QWidget()
@@ -112,6 +117,19 @@ class DialogoCategorias(QDialog):
         cartao.corpo.addWidget(desativadas, 0, Qt.AlignmentFlag.AlignLeft)
         self._formularios[tipo] = self._montar_formulario(tipo)
         cartao.corpo.addWidget(self._formularios[tipo])
+        return cartao
+
+    def _montar_regras(self) -> Cartao:
+        nova = _compacto(BotaoSecundario("+ Nova regra"))
+        nova.clicked.connect(lambda _c=False: self.iniciar_regra())
+        self.botao_nova_regra = nova
+        cartao = Cartao("Regras", "Descrição que casa vira a categoria sozinha; menor prioridade vence", acao=nova)
+        self._lista_regras = QVBoxLayout()
+        self._lista_regras.setSpacing(0)
+        cartao.corpo.addLayout(self._lista_regras)
+        self._area_regra = QVBoxLayout()
+        self._area_regra.setSpacing(tema.ESPACO)
+        cartao.corpo.addLayout(self._area_regra)
         return cartao
 
     def _montar_formulario(self, tipo: str) -> QFrame:
@@ -173,9 +191,40 @@ class DialogoCategorias(QDialog):
             )
             self._formularios[tipo].setVisible(self._adicionando == tipo)
             self._botoes_adicionar[tipo].setVisible(self._adicionando != tipo)
+        self._carregar_regras()
         if self.isVisible():  # a lista mudou de tamanho: ajusta a janela depois que os novos widgets forem estilizados
             QTimer.singleShot(0, self._ajustar_altura)
             QTimer.singleShot(80, self._ajustar_altura)
+
+    def _carregar_regras(self) -> None:
+        _esvaziar(self._lista_regras)
+        regras = cadastros.listar_regras(self.conn)
+        for i, r in enumerate(regras):
+            if i:
+                self._lista_regras.addWidget(_separador())
+            self._lista_regras.addWidget(self._linha_regra(r))
+        if not regras:
+            self._lista_regras.addWidget(_rotulo("Nenhuma regra ainda. Crie uma com + Nova regra.", "CampoInfo"))
+
+    def _linha_regra(self, r: sqlite3.Row) -> QWidget:
+        linha = QWidget()
+        caixa = QHBoxLayout(linha)
+        caixa.setContentsMargins(0, tema.ESPACO, 0, tema.ESPACO)
+        caixa.setSpacing(2 * tema.ESPACO)
+        nome = _rotulo(f"{cadastros.TIPOS_MATCH[r['tipo_match']]} '{r['padrao']}'  →  {r['categoria']}", "ContaNome")
+        nome.setProperty("inativo", not r["categoria_ativa"])
+        caixa.addWidget(nome)
+        caixa.addWidget(Pilula(f"prioridade {r['prioridade']}"))
+        if not r["categoria_ativa"]:
+            caixa.addWidget(Pilula("categoria desativada", "atencao"))
+        caixa.addStretch(1)
+        editar = _compacto(BotaoSecundario("Editar"))
+        editar.clicked.connect(lambda _c=False, i=r["id"]: self.iniciar_regra(i))
+        excluir = _compacto(BotaoSecundario("Excluir"), perigo=True)
+        excluir.clicked.connect(lambda _c=False, i=r["id"]: self.excluir_regra(i))
+        caixa.addWidget(editar)
+        caixa.addWidget(excluir)
+        return linha
 
     def _linha(self, c: sqlite3.Row) -> QWidget:
         id_ = c["id"]
@@ -358,6 +407,72 @@ class DialogoCategorias(QDialog):
         self.erro_novo[tipo].setText("")
         self.novo_nome[tipo].setProperty("erro", False)
         _repolir(self.novo_nome[tipo])
+
+    # --- Regras -----------------------------------------------------------------------------
+    def _fechar_area_regra(self) -> None:
+        _esvaziar(self._area_regra)
+        self.formulario_regra = self.oferta_regra = self.texto_oferta = None
+
+    def iniciar_regra(self, regra_id: int | None = None) -> None:
+        """Abre o formulário de regra (nova, ou a `regra_id` pra editar)."""
+        self._fechar_area_regra()
+        regra = next((r for r in cadastros.listar_regras(self.conn) if r["id"] == regra_id), None)
+        self.formulario_regra = FormularioRegra(self.conn)
+        self.formulario_regra.salvo.connect(self._regra_salva)
+        self.formulario_regra.cancelado.connect(self._fechar_area_regra)
+        self.formulario_regra.abrir(regra)
+        self._area_regra.addWidget(self.formulario_regra)
+        self.botao_nova_regra.setVisible(False)
+        self._depois_de_mudar_regras(rolar=True)
+
+    def _regra_salva(self, regra_id: int) -> None:
+        editando = self.formulario_regra.regra_id is not None
+        self._fechar_area_regra()
+        self.botao_nova_regra.setVisible(True)
+        n = lancamentos.contar_pendentes_da_regra(self.conn, regra_id)
+        if n:
+            self._mostrar_oferta(regra_id, n)
+        self._carregar()
+        self.alterado.emit("Regra atualizada" if editando else "Regra criada")
+
+    def _mostrar_oferta(self, regra_id: int, n: int) -> None:
+        self.oferta_regra = QWidget()
+        caixa = QHBoxLayout(self.oferta_regra)
+        caixa.setContentsMargins(0, 0, 0, 0)
+        caixa.setSpacing(tema.ESPACO + 4)
+        self.texto_oferta = _rotulo(f"Aplicar a {n} lançamentos sem categoria que casam?" if n != 1
+                                    else "Aplicar a 1 lançamento sem categoria que casa?", "ConfirmaTexto")
+        self.texto_oferta.setWordWrap(True)
+        caixa.addWidget(self.texto_oferta, 1)
+        agora_nao = _compacto(BotaoSecundario("Agora não"))
+        agora_nao.clicked.connect(self._fechar_area_regra)
+        self.botao_aplicar = BotaoPrimario("Aplicar")
+        self.botao_aplicar.setProperty("compacto", True)
+        self.botao_aplicar.setAutoDefault(False)
+        self.botao_aplicar.clicked.connect(lambda _c=False: self.aplicar_aos_pendentes(regra_id))
+        caixa.addWidget(agora_nao)
+        caixa.addWidget(self.botao_aplicar)
+        self._area_regra.addWidget(self.oferta_regra)
+
+    def aplicar_aos_pendentes(self, regra_id: int) -> int:
+        n = lancamentos.aplicar_regras_aos_pendentes(self.conn, regra_id)
+        self._fechar_area_regra()
+        self._carregar()
+        self.alterado.emit(f"{n} lançamento{'s' if n != 1 else ''} categorizado{'s' if n != 1 else ''} pela regra")
+        return n
+
+    def excluir_regra(self, regra_id: int) -> None:
+        cadastros.excluir_regra(self.conn, regra_id)
+        self._fechar_area_regra()
+        self._carregar()
+        self.alterado.emit("Regra excluída")
+
+    def _depois_de_mudar_regras(self, rolar: bool = False) -> None:
+        if self.isVisible():
+            QTimer.singleShot(0, self._ajustar_altura)
+            QTimer.singleShot(80, self._ajustar_altura)
+            if rolar:
+                QTimer.singleShot(100, lambda: self.formulario_regra and self._rolagem.ensureWidgetVisible(self.formulario_regra, 0, 3 * tema.ESPACO))
 
     # --- Tamanho ----------------------------------------------------------------------------
     def showEvent(self, evento) -> None:

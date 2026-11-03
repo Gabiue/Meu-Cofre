@@ -163,10 +163,14 @@ def descricoes_usadas(conn: sqlite3.Connection, tipo: str | None = None) -> list
 
 
 def sugerir_categoria(conn: sqlite3.Connection, descricao: str, tipo: str) -> int | None:
-    """Categoria usada da última vez com essa descrição; senão, a primeira regra que casar."""
+    """Primeira regra que casar (é intenção explícita do usuário); senão, a categoria usada da última vez."""
     alvo = normalizar(descricao)
     if not alvo:
         return None
+
+    por_regra = aplicar_regras(conn, descricao, tipo)
+    if por_regra is not None:
+        return por_regra
 
     historico = conn.execute(
         """
@@ -180,11 +184,21 @@ def sugerir_categoria(conn: sqlite3.Connection, descricao: str, tipo: str) -> in
     for linha in historico:
         if normalizar(linha["descricao"]) == alvo:
             return linha["categoria_id"]
+    return None
 
-    return aplicar_regras(conn, descricao, tipo)
+
+def regra_casa(padrao: str, tipo_match: str, descricao: str) -> bool:
+    if tipo_match == "regex":
+        try:
+            return re.search(padrao, descricao, re.IGNORECASE) is not None
+        except re.error:
+            return False
+    alvo = normalizar(padrao)
+    return bool(alvo) and alvo in normalizar(descricao)
 
 
 def aplicar_regras(conn: sqlite3.Connection, descricao: str, tipo: str | None = None) -> int | None:
+    """Categoria da primeira regra (por prioridade, depois id) que casa com a descrição; None se nenhuma."""
     regras = conn.execute(
         """
         SELECT r.padrao, r.tipo_match, r.categoria_id, c.tipo
@@ -193,17 +207,76 @@ def aplicar_regras(conn: sqlite3.Connection, descricao: str, tipo: str | None = 
         ORDER BY r.prioridade, r.id
         """
     )
-    alvo = normalizar(descricao)
     for regra in regras:
         if tipo and regra["tipo"] != tipo:
             continue
-        if regra["tipo_match"] == "regex":
-            casou = re.search(regra["padrao"], descricao, re.IGNORECASE) is not None
-        else:
-            casou = normalizar(regra["padrao"]) in alvo
-        if casou:
+        if regra_casa(regra["padrao"], regra["tipo_match"], descricao):
             return regra["categoria_id"]
     return None
+
+
+def padrao_sugerido(descricao: str) -> str:
+    """Padrão de regra a partir de uma descrição: sem números nem símbolos ("Uber *trip 8812" -> "uber trip"),
+    pra a regra pegar as próximas compras e não só aquela."""
+    return " ".join(p for p in re.sub(r"[^a-z ]", " ", normalizar(descricao)).split() if len(p) > 1)
+
+
+def pendentes(conn: sqlite3.Connection) -> pd.DataFrame:
+    """Lançamentos sem categoria (nula ou "A categorizar"), mais recente primeiro; transferências, metas e investimentos ficam de fora.
+
+    Colunas: id, descricao, data, conta, valor_centavos, tipo ("despesa" ou "receita", pelo sinal).
+    """
+    return pd.read_sql_query(
+        """
+        SELECT l.id, l.descricao, l.data, ct.nome AS conta, l.valor_centavos,
+               CASE WHEN l.valor_centavos > 0 THEN 'receita' ELSE 'despesa' END AS tipo
+        FROM lancamentos l
+        JOIN contas ct ON ct.id = l.conta_id
+        LEFT JOIN categorias c ON c.id = l.categoria_id
+        WHERE (l.categoria_id IS NULL OR c.nome = 'A categorizar')
+          AND l.transferencia_id IS NULL AND l.meta_id IS NULL AND COALESCE(l.metodo, '') <> 'transferencia'
+          AND ct.tipo <> 'investimento'
+        ORDER BY l.data DESC, l.id DESC
+        """,
+        conn,
+        parse_dates=["data"],
+    )
+
+
+def _decisoes_dos_pendentes(conn: sqlite3.Connection, regra_id: int | None) -> list[tuple[int, int]]:
+    """(lançamento, categoria) que as regras dariam aos pendentes; com `regra_id`, só essa regra."""
+    regra = None
+    if regra_id is not None:
+        regra = conn.execute(
+            "SELECT r.padrao, r.tipo_match, r.categoria_id, c.tipo FROM regras_categorizacao r"
+            " JOIN categorias c ON c.id = r.categoria_id WHERE r.id = ?",
+            (regra_id,),
+        ).fetchone()
+        if regra is None:
+            return []
+    decisoes = []
+    for p in pendentes(conn).itertuples():
+        if regra is None:
+            categoria = aplicar_regras(conn, p.descricao, p.tipo)
+        else:
+            casou = regra["tipo"] == p.tipo and regra_casa(regra["padrao"], regra["tipo_match"], p.descricao)
+            categoria = regra["categoria_id"] if casou else None
+        if categoria is not None:
+            decisoes.append((int(p.id), categoria))
+    return decisoes
+
+
+def contar_pendentes_da_regra(conn: sqlite3.Connection, regra_id: int | None = None) -> int:
+    """Quantos pendentes seriam categorizados por `aplicar_regras_aos_pendentes` (sem gravar)."""
+    return len(_decisoes_dos_pendentes(conn, regra_id))
+
+
+def aplicar_regras_aos_pendentes(conn: sqlite3.Connection, regra_id: int | None = None) -> int:
+    """Categoriza os pendentes que as regras (ou só a `regra_id`) casam; quem já tem categoria nunca é tocado. Devolve quantos."""
+    decisoes = _decisoes_dos_pendentes(conn, regra_id)
+    with conn:
+        conn.executemany("UPDATE lancamentos SET categoria_id = ? WHERE id = ?", [(c, i) for i, c in decisoes])
+    return len(decisoes)
 
 
 # --- Registrar, listar, editar ------------------------------------------------

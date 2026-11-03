@@ -104,9 +104,9 @@ def test_sugerir_categoria_regra(conn):
     conn.execute("INSERT INTO regras_categorizacao (padrao, categoria_id) VALUES ('ifood', ?)",
                  (id_cat(conn, "Delivery"),))
     assert lanc.sugerir_categoria(conn, "iFood pedido", "despesa") == id_cat(conn, "Delivery")
-    # histórico vence a regra
+    # a regra (intenção explícita) vence o histórico
     _reg(conn, descricao="iFood pedido", categoria_id=id_cat(conn, "Lazer"))
-    assert lanc.sugerir_categoria(conn, "ifood PEDIDO", "despesa") == id_cat(conn, "Lazer")
+    assert lanc.sugerir_categoria(conn, "ifood PEDIDO", "despesa") == id_cat(conn, "Delivery")
 
 
 def test_descricoes_usadas_por_tipo(conn):

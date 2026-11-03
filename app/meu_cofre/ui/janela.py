@@ -13,7 +13,7 @@ import sqlite3
 from datetime import date
 
 import pandas as pd
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QFrame,
@@ -46,6 +46,7 @@ from meu_cofre.ui.aba_investimentos import AbaInvestimentos
 from meu_cofre.ui.aba_metas import AbaMetas
 from meu_cofre.ui.aba_recorrentes import AbaRecorrentes
 from meu_cofre.ui.atualizador import AtualizadorIndicadores
+from meu_cofre.ui.dialogo_a_categorizar import DialogoACategorizar
 from meu_cofre.ui.dialogo_categorias import DialogoCategorias
 from meu_cofre.ui.dialogo_contas import DialogoContas
 from meu_cofre.ui.dialogo_lancamento import DialogoLancamento
@@ -91,6 +92,19 @@ def _sem_quebra(texto: str) -> str:
     return texto.replace(" ", "\u00a0")
 
 
+class PilulaClicavel(Pilula):
+    """Pílula que abre algo ao clicar (ex.: "3 a categorizar")."""
+
+    clicada = Signal()
+
+    def __init__(self, texto: str, variante: str = "neutra"):
+        super().__init__(texto, variante)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+
+    def mousePressEvent(self, evento) -> None:
+        self.clicada.emit()
+
+
 class JanelaPrincipal(QMainWindow):
     """Tela inicial: painel (gráficos), resumo e recentes, com layout de 2 colunas ou 1 coluna."""
 
@@ -109,6 +123,7 @@ class JanelaPrincipal(QMainWindow):
         self.dialogo: DialogoLancamento | None = None  # diálogo aberto (se houver)
         self.dialogo_contas: DialogoContas | None = None
         self.dialogo_categorias: DialogoCategorias | None = None
+        self.dialogo_a_categorizar: DialogoACategorizar | None = None
         hoje = self._hoje()
         self._mes = (hoje.year, hoje.month)  # mês mostrado no painel
         self._montar()
@@ -302,6 +317,11 @@ class JanelaPrincipal(QMainWindow):
         self.seletor_recentes.escolhido.connect(lambda _opcao: self._carregar_recentes())
         cartao = Cartao("Recentes", "Últimos 10 lançamentos", acao=self.seletor_recentes)
         cartao.setMinimumWidth(360)
+        self.pilula_a_categorizar = PilulaClicavel("", "atencao")
+        self.pilula_a_categorizar.setToolTip("Lançamentos sem categoria: clique pra categorizar")
+        self.pilula_a_categorizar.clicada.connect(self.abrir_a_categorizar)
+        self.pilula_a_categorizar.setVisible(False)
+        cartao.corpo.addWidget(self.pilula_a_categorizar, 0, Qt.AlignmentFlag.AlignLeft)
         self._lista = QVBoxLayout()
         self._lista.setSpacing(2)
         cartao.corpo.addLayout(self._lista)
@@ -379,6 +399,9 @@ class JanelaPrincipal(QMainWindow):
             else:  # guardar/retirar de uma meta se mexe na aba Metas, não no lançamento solto
                 item.clicado.connect(lambda _id: self.mostrar_aba("metas"))
             self._lista.addWidget(item)
+        n_pendentes = len(lancamentos.pendentes(self.conn))
+        self.pilula_a_categorizar.definir(f"{n_pendentes} a categorizar", "atencao")
+        self.pilula_a_categorizar.setVisible(n_pendentes > 0)
         self._vazio_recentes.definir(VAZIO_RECENTES[filtro], "Ctrl+N pra lançar")
         self._vazio_recentes.setVisible(df.empty)
 
@@ -478,6 +501,16 @@ class JanelaPrincipal(QMainWindow):
         dialogo.alterado.connect(self._lancamento_gravado)
         dialogo.finished.connect(lambda _codigo: setattr(self, "dialogo_categorias", None))
         self.dialogo_categorias = dialogo
+        dialogo.open()
+        return dialogo
+
+    def abrir_a_categorizar(self) -> DialogoACategorizar:
+        """Pílula "N a categorizar": abre a fila de lançamentos sem categoria; cada mudança recarrega esta tela."""
+        dialogo = DialogoACategorizar(self.conn, parent=self)
+        dialogo.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+        dialogo.gravado.connect(self._lancamento_gravado)
+        dialogo.finished.connect(lambda _codigo: setattr(self, "dialogo_a_categorizar", None))
+        self.dialogo_a_categorizar = dialogo
         dialogo.open()
         return dialogo
 

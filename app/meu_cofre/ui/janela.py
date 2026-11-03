@@ -4,7 +4,7 @@ Início: painel (gráficos do mês escolhido, ou os próximos meses), resumo e r
 `atualizar()` gera as recorrentes do mês, recarrega tudo e pede (em segundo plano) as taxas do Banco Central; os
 diálogos chamam depois de salvar ou excluir.
 
-O cabeçalho (marca, abas, mês, Contas e Novo lançamento) se reorganiza pela largura: numa linha só; em duas (a marca
+O cabeçalho (marca, abas, mês, Contas, Categorias e Novo lançamento) se reorganiza pela largura: numa linha só; em duas (a marca
 e os botões em cima, as abas e o mês embaixo); ou em três (o mês na terceira). Quem decide é a largura mínima que
 cada arranjo realmente pede, medida uma vez, então nada é espremido nem cortado.
 """
@@ -46,6 +46,7 @@ from meu_cofre.ui.aba_investimentos import AbaInvestimentos
 from meu_cofre.ui.aba_metas import AbaMetas
 from meu_cofre.ui.aba_recorrentes import AbaRecorrentes
 from meu_cofre.ui.atualizador import AtualizadorIndicadores
+from meu_cofre.ui.dialogo_categorias import DialogoCategorias
 from meu_cofre.ui.dialogo_contas import DialogoContas
 from meu_cofre.ui.dialogo_lancamento import DialogoLancamento
 from meu_cofre.ui.graficos import (
@@ -99,7 +100,7 @@ class JanelaPrincipal(QMainWindow):
         self.conn = conn
         self._hoje_fixo = hoje
         self.setWindowTitle("meu-cofre")
-        self.setMinimumSize(560, 400)
+        self.setMinimumSize(640, 400)  # cabeçalho: marca + Contas + Categorias + Novo lançamento
         self.resize(1400, 900)
 
         self._duas_colunas: bool | None = None
@@ -107,6 +108,7 @@ class JanelaPrincipal(QMainWindow):
         self._largura_do_arranjo: dict[tuple[bool, int], int] = {}
         self.dialogo: DialogoLancamento | None = None  # diálogo aberto (se houver)
         self.dialogo_contas: DialogoContas | None = None
+        self.dialogo_categorias: DialogoCategorias | None = None
         hoje = self._hoje()
         self._mes = (hoje.year, hoje.month)  # mês mostrado no painel
         self._montar()
@@ -192,9 +194,10 @@ class JanelaPrincipal(QMainWindow):
         self.botao_contas = BotaoSecundario("Contas")
         self.botao_contas.setToolTip("Contas e cartões")
         self.botao_contas.clicked.connect(self.abrir_contas)
+        self.botao_categorias = BotaoSecundario("Categorias")
+        self.botao_categorias.setToolTip("Criar, renomear e desativar categorias")
+        self.botao_categorias.clicked.connect(self.abrir_categorias)
 
-        self.dica_atalho = QLabel("Ctrl+N")
-        self.dica_atalho.setObjectName("DicaAtalho")
         self.botao_novo = BotaoPrimario("+ Novo lançamento")
         self.botao_novo.setToolTip("Novo lançamento (Ctrl+N)")
         self.botao_novo.clicked.connect(self.novo_lancamento)
@@ -212,7 +215,6 @@ class JanelaPrincipal(QMainWindow):
             for w in widgets:
                 fila.addWidget(w, 0, centro)
 
-        self.dica_atalho.setVisible(arranjo == 1)
         if arranjo == 1:
             pôr(a, self.marca)
             a.addSpacing(tema.ESPACO)
@@ -220,11 +222,11 @@ class JanelaPrincipal(QMainWindow):
             a.addSpacing(tema.ESPACO)
             pôr(a, *self._navegacao_mes)
             a.addStretch(1)
-            pôr(a, self.botao_contas, self.dica_atalho, self.botao_novo)
+            pôr(a, self.botao_contas, self.botao_categorias, self.botao_novo)
             return
         pôr(a, self.marca)
         a.addStretch(1)
-        pôr(a, self.botao_contas, self.botao_novo)
+        pôr(a, self.botao_contas, self.botao_categorias, self.botao_novo)
         pôr(b, self.abas)
         if arranjo == 2:
             b.addSpacing(tema.ESPACO)
@@ -466,6 +468,16 @@ class JanelaPrincipal(QMainWindow):
         dialogo.alterado.connect(self._lancamento_gravado)
         dialogo.finished.connect(lambda _codigo: setattr(self, "dialogo_contas", None))
         self.dialogo_contas = dialogo
+        dialogo.open()
+        return dialogo
+
+    def abrir_categorias(self) -> DialogoCategorias:
+        """Botão "Categorias": abre a janela de categorias; cada mudança recarrega esta tela."""
+        dialogo = DialogoCategorias(self.conn, parent=self)
+        dialogo.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+        dialogo.alterado.connect(self._lancamento_gravado)
+        dialogo.finished.connect(lambda _codigo: setattr(self, "dialogo_categorias", None))
+        self.dialogo_categorias = dialogo
         dialogo.open()
         return dialogo
 

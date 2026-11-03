@@ -1,4 +1,4 @@
-"""Cadastros: salvar categorias e contas editadas em tabela."""
+"""Cadastros: contas (editadas em tabela, cartões pontuais) e categorias (criar, renomear, natureza, desativar)."""
 
 import sqlite3
 from datetime import date
@@ -7,7 +7,6 @@ import pandas as pd
 
 from meu_cofre.lancamentos import para_centavos
 
-TIPOS_CATEGORIA = ["despesa", "receita", "transferencia"]
 NATUREZAS = ["essencial", "flexivel", "superfluo"]
 TIPOS_CONTA = ["corrente", "cartao", "dinheiro", "investimento"]
 
@@ -23,54 +22,6 @@ def _ativa(v) -> int:
 
 def _id_ou_none(v) -> int | None:
     return None if _vazio(v) else int(v)
-
-
-def categorias_df(conn: sqlite3.Connection) -> pd.DataFrame:
-    """Todas as categorias (inclusive inativas). Colunas: id, nome, tipo, natureza, ativa."""
-    df = pd.read_sql_query("SELECT id, nome, tipo, natureza, ativa FROM categorias ORDER BY tipo, nome", conn)
-    df["ativa"] = df["ativa"].astype(bool)
-    return df
-
-
-def salvar_categorias(conn: sqlite3.Connection, df: pd.DataFrame) -> None:
-    """Grava a tabela editada: linhas com id são atualizadas, sem id são criadas.
-
-    Nada é apagado (desative a categoria): lançamentos antigos continuam apontando pra ela.
-    """
-    linhas, nomes = [], set()
-    for r in df.to_dict("records"):
-        if _vazio(r.get("nome")) and _vazio(r.get("tipo")):
-            continue  # linha em branco
-        nome = str(r.get("nome") or "").strip()
-        if not nome:
-            raise ValueError("Toda categoria precisa de nome.")
-        if nome.lower() in nomes:
-            raise ValueError(f"Categoria repetida: {nome}")
-        nomes.add(nome.lower())
-        tipo = r.get("tipo")
-        if tipo not in TIPOS_CATEGORIA:
-            raise ValueError(f"Tipo inválido em '{nome}'. Use: {', '.join(TIPOS_CATEGORIA)}.")
-        natureza = None if _vazio(r.get("natureza")) else r["natureza"]
-        if natureza is not None and natureza not in NATUREZAS:
-            raise ValueError(f"Natureza inválida em '{nome}'.")
-        ativa = _ativa(r.get("ativa"))
-        linhas.append((_id_ou_none(r.get("id")), nome, tipo, natureza, ativa))
-
-    try:
-        with conn:
-            for id_, nome, tipo, natureza, ativa in linhas:
-                if id_ is None:
-                    conn.execute(
-                        "INSERT INTO categorias (nome, tipo, natureza, ativa) VALUES (?, ?, ?, ?)",
-                        (nome, tipo, natureza, ativa),
-                    )
-                else:
-                    conn.execute(
-                        "UPDATE categorias SET nome=?, tipo=?, natureza=?, ativa=? WHERE id=?",
-                        (nome, tipo, natureza, ativa, id_),
-                    )
-    except sqlite3.IntegrityError as e:
-        raise ValueError(f"Não foi possível salvar as categorias: {e}") from e
 
 
 def contas_df(conn: sqlite3.Connection) -> pd.DataFrame:
@@ -290,3 +241,87 @@ def saldo_da_conta(conn: sqlite3.Connection, conta_id: int, ate: date | None = N
 def divida_do_cartao(conn: sqlite3.Connection, conta_id: int) -> int:
     """Quanto está em aberto no cartão (positivo), parcelas futuras incluídas."""
     return max(0, -saldo_da_conta(conn, conta_id))
+
+
+# --- Categorias (janela "Categorias") -----------------------------------------------------------------
+
+CATEGORIA_SISTEMA = "A categorizar"  # o app procura por este nome (lançamentos sem categoria)
+
+
+def categoria_do_sistema(c: sqlite3.Row) -> bool:
+    """Transferências e "A categorizar": o app depende delas pelo nome, então não mudam nem somem."""
+    return c["tipo"] == "transferencia" or c["nome"] == CATEGORIA_SISTEMA
+
+
+def categorias_por_tipo(conn: sqlite3.Connection, tipo: str, incluir_inativas: bool = True) -> list[sqlite3.Row]:
+    """Categorias do `tipo` por nome (ativas e, se pedido, desativadas)."""
+    ativa = "" if incluir_inativas else "AND ativa = 1"
+    return conn.execute(f"SELECT * FROM categorias WHERE tipo = ? {ativa} ORDER BY nome", (tipo,)).fetchall()
+
+
+def _categoria(conn: sqlite3.Connection, categoria_id: int, *, mutavel: bool = False) -> sqlite3.Row:
+    linha = conn.execute("SELECT * FROM categorias WHERE id = ?", (categoria_id,)).fetchone()
+    if linha is None:
+        raise ValueError(f"Categoria {categoria_id} não existe.")
+    if mutavel and categoria_do_sistema(linha):
+        raise ValueError(f"{linha['nome']} é uma categoria do sistema e não pode ser alterada.")
+    return linha
+
+
+def _nome_categoria_livre(conn: sqlite3.Connection, nome: str, ignorar_id: int | None = None) -> str:
+    """Nome sem espaços nas pontas, não vazio e que nenhuma outra categoria usa (sem diferenciar maiúsculas)."""
+    nome = nome.strip()
+    if not nome:
+        raise ValueError("Diga o nome.")
+    if conn.execute("SELECT 1 FROM categorias WHERE lower(nome) = lower(?) AND id IS NOT ?", (nome, ignorar_id)).fetchone():
+        raise ValueError(f"Já existe uma categoria chamada {nome}.")
+    return nome
+
+
+def _natureza_valida(natureza: str | None, tipo: str) -> None:
+    if natureza is None:
+        return
+    if tipo != "despesa":
+        raise ValueError("Só despesa tem natureza.")
+    if natureza not in NATUREZAS:
+        raise ValueError(f"Natureza inválida. Use: {', '.join(NATUREZAS)}.")
+
+
+def criar_categoria(conn: sqlite3.Connection, nome: str, tipo: str, natureza: str | None = None) -> int:
+    """Cria uma categoria ativa de despesa ou receita e devolve o id. Natureza só pra despesa (ou nenhuma)."""
+    if tipo not in ("despesa", "receita"):
+        raise ValueError("O tipo é despesa ou receita.")
+    nome = _nome_categoria_livre(conn, nome)
+    _natureza_valida(natureza, tipo)
+    with conn:
+        return conn.execute(
+            "INSERT INTO categorias (nome, tipo, natureza) VALUES (?, ?, ?)", (nome, tipo, natureza)
+        ).lastrowid
+
+
+def renomear_categoria(conn: sqlite3.Connection, categoria_id: int, nome: str) -> None:
+    _categoria(conn, categoria_id, mutavel=True)
+    nome = _nome_categoria_livre(conn, nome, ignorar_id=categoria_id)
+    with conn:
+        conn.execute("UPDATE categorias SET nome = ? WHERE id = ?", (nome, categoria_id))
+
+
+def definir_natureza(conn: sqlite3.Connection, categoria_id: int, natureza: str | None) -> None:
+    """Essencial, flexível, supérfluo ou nenhuma (None). Alimenta a reserva de emergência e os relatórios."""
+    categoria = _categoria(conn, categoria_id, mutavel=True)
+    _natureza_valida(natureza, categoria["tipo"])
+    with conn:
+        conn.execute("UPDATE categorias SET natureza = ? WHERE id = ?", (natureza, categoria_id))
+
+
+def desativar_categoria(conn: sqlite3.Connection, categoria_id: int) -> None:
+    """Some das escolhas de novos lançamentos; os antigos mantêm a categoria."""
+    _categoria(conn, categoria_id, mutavel=True)
+    with conn:
+        conn.execute("UPDATE categorias SET ativa = 0 WHERE id = ?", (categoria_id,))
+
+
+def reativar_categoria(conn: sqlite3.Connection, categoria_id: int) -> None:
+    _categoria(conn, categoria_id)
+    with conn:
+        conn.execute("UPDATE categorias SET ativa = 1 WHERE id = ?", (categoria_id,))

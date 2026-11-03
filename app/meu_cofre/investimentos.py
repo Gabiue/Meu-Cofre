@@ -542,6 +542,76 @@ def registrar_saldo_real(conn: sqlite3.Connection, ativo_id: int, valor_centavos
         )
 
 
+# --- Histórico, correção e exclusão ----------------------------------------------------------------
+
+
+def historico(conn: sqlite3.Connection, ativo_id: int) -> list[dict]:
+    """Tudo que foi registrado no ativo, do mais recente pro mais antigo. Cada item: `fonte` ("mov" = renda fixa/Tesouro,
+    "rv" = ação/FII), `id`, `tipo`, `data`, `valor`, `quantidade`, `preco` e `taxas` (None/0 onde não se aplica) e
+    `afeta_conta`."""
+    if obter(conn, ativo_id).tipo in TIPOS_RV:
+        itens = [
+            {"fonte": "rv", "id": o.id, "tipo": o.tipo, "data": o.data, "valor": o.valor_centavos, "quantidade": o.quantidade,
+             "preco": o.preco_centavos, "taxas": o.taxas_centavos, "afeta_conta": o.afeta_conta}
+            for o in renda_variavel.operacoes(conn, ativo_id)
+        ]
+    else:
+        itens = [
+            {"fonte": "mov", "id": r["id"], "tipo": r["tipo"], "data": date.fromisoformat(r["data"]), "valor": r["valor_centavos"],
+             "quantidade": None, "preco": None, "taxas": 0, "afeta_conta": r["transferencia_id"] is not None}
+            for r in conn.execute("SELECT * FROM movimentacoes_ativos WHERE ativo_id = ?", (ativo_id,))
+        ]
+    return sorted(itens, key=lambda i: (i["data"], i["id"]), reverse=True)
+
+
+def _movimentacao(conn: sqlite3.Connection, mov_id: int) -> sqlite3.Row:
+    linha = conn.execute("SELECT * FROM movimentacoes_ativos WHERE id = ?", (mov_id,)).fetchone()
+    if linha is None:
+        raise ValueError("Esse registro não existe mais.")
+    return linha
+
+
+def editar_movimentacao(conn: sqlite3.Connection, mov_id: int, *, valor: int, data: date) -> None:
+    """Corrige o valor e a data de um aporte, resgate ou saldo real. Aporte e resgate acertam os dois lados da
+    transferência. Mesmas regras de criar: valor > 0 (saldo real aceita zero) e o resgate não passa do valor na data.
+
+    shortcut: editar ou apagar um aporte não reconfere resgates posteriores (o valor estimado já nunca fica negativo)."""
+    mov = _movimentacao(conn, mov_id)
+    if valor is None or valor < (0 if mov["tipo"] == "saldo_real" else 1):
+        raise ValueError("O saldo não pode ser negativo." if mov["tipo"] == "saldo_real" else "O valor precisa ser maior que zero.")
+    with conn:
+        if mov["tipo"] == "resgate":  # zera o resgate antigo e confere o que sobra na nova data
+            conn.execute("UPDATE movimentacoes_ativos SET valor_centavos = 0 WHERE id = ?", (mov_id,))
+            disponivel = valor_atual(conn, mov["ativo_id"], data)[0]
+            if valor > disponivel:
+                raise ValueError(
+                    f"Só há ≈ {formatar_brl(disponivel)} nesse investimento nessa data."
+                    if disponivel
+                    else "Não há nada aplicado nesse investimento nessa data."
+                )
+        if mov["tipo"] == "saldo_real":  # um só saldo por dia
+            conn.execute(
+                "DELETE FROM movimentacoes_ativos WHERE ativo_id = ? AND tipo = 'saldo_real' AND data = ? AND id <> ?",
+                (mov["ativo_id"], data.isoformat(), mov_id),
+            )
+        conn.execute("UPDATE movimentacoes_ativos SET valor_centavos = ?, data = ? WHERE id = ?", (valor, data.isoformat(), mov_id))
+        if mov["transferencia_id"]:
+            conn.execute(
+                "UPDATE lancamentos SET data = ?, valor_centavos = CASE WHEN valor_centavos > 0 THEN ? ELSE -? END "
+                "WHERE transferencia_id = ?",
+                (data.isoformat(), valor, valor, mov["transferencia_id"]),
+            )
+
+
+def excluir_movimentacao(conn: sqlite3.Connection, mov_id: int) -> None:
+    """Apaga o registro e, em aporte e resgate, os dois lados da transferência."""
+    mov = _movimentacao(conn, mov_id)
+    with conn:
+        conn.execute("DELETE FROM movimentacoes_ativos WHERE id = ?", (mov_id,))
+        if mov["transferencia_id"]:
+            conn.execute("DELETE FROM lancamentos WHERE transferencia_id = ?", (mov["transferencia_id"],))
+
+
 # --- Valor atual -----------------------------------------------------------------------------------
 
 

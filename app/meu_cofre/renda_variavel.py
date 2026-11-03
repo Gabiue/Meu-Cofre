@@ -277,6 +277,75 @@ def registrar_provento(
         ).lastrowid
 
 
+# --- Corrigir e apagar ----------------------------------------------------------------------------------
+
+
+def _operacao_gravada(conn: sqlite3.Connection, operacao_id: int) -> tuple[Operacao, sqlite3.Row]:
+    linha = conn.execute("SELECT * FROM operacoes_rv WHERE id = ?", (operacao_id,)).fetchone()
+    if linha is None:
+        raise ValueError("Essa operação não existe mais.")
+    return _operacao_da_linha(linha), linha
+
+
+def _conferir_posicao(conn: sqlite3.Connection, ativo_id: int, antes: Operacao, depois: Operacao | None) -> None:
+    """Troca `antes` por `depois` (None = apagar) e barra se alguma venda passar a vender mais do que havia."""
+    todas = operacoes(conn, ativo_id)
+    novas = [o for o in todas if o.id != antes.id] + ([depois] if depois else [])
+    if _estado(novas).minimo < min(_estado(todas).minimo, 0.0) - _EPS:
+        raise ValueError("Isso deixaria uma venda vendendo mais cotas do que você tinha. Ajuste ou exclua a venda primeiro.")
+
+
+def editar_operacao(
+    conn: sqlite3.Connection, operacao_id: int, *, data: date, quantidade: float | None = None, preco: int | None = None,
+    taxas: int = 0, valor: int | None = None,
+) -> None:
+    """Corrige uma operação. Compra e venda: `quantidade`, `preco` (centavos por cota) e `taxas`; provento: `valor`.
+    O tipo não muda. Com `afeta_conta`, a transferência (ou a entrada do provento) acompanha. O preço médio e a posição
+    saem das operações, então se acertam sozinhos. Não deixa uma venda sem as cotas que ela vende."""
+    op, linha = _operacao_gravada(conn, operacao_id)
+    ticker = investimentos.obter(conn, op.ativo_id).ticker
+    if op.tipo in TIPOS_PROVENTO:
+        if valor is None or valor <= 0:
+            raise ValueError("O valor precisa ser maior que zero.")
+        novo = Operacao(op.id, op.ativo_id, op.tipo, data, None, None, valor, 0, op.afeta_conta, op.origem)
+    else:
+        quantidade = _quantidade_valida(quantidade)
+        _preco_e_taxas(preco, taxas)
+        valor = round(quantidade * preco)
+        if op.tipo == "venda" and valor - taxas <= 0:
+            raise ValueError("As taxas não podem ser maiores que o valor da venda.")
+        novo = Operacao(op.id, op.ativo_id, op.tipo, data, quantidade, preco, valor, taxas, op.afeta_conta, op.origem)
+        _conferir_posicao(conn, op.ativo_id, op, novo)
+    with conn:
+        conn.execute(
+            "UPDATE operacoes_rv SET data = ?, quantidade = ?, preco_centavos = ?, valor_centavos = ?, taxas_centavos = ? WHERE id = ?",
+            (data.isoformat(), novo.quantidade, novo.preco_centavos, novo.valor_centavos, novo.taxas_centavos, operacao_id),
+        )
+        if op.tipo in TIPOS_PROVENTO and linha["lancamento_id"]:
+            conn.execute("UPDATE lancamentos SET data = ?, valor_centavos = ? WHERE id = ?", (data.isoformat(), valor, linha["lancamento_id"]))
+        elif op.tipo not in TIPOS_PROVENTO and linha["transferencia_id"]:
+            total = valor + taxas if op.tipo == "compra" else valor - taxas
+            nome = "Compra" if op.tipo == "compra" else "Venda"
+            conn.execute(
+                "UPDATE lancamentos SET data = ?, descricao = ?, valor_centavos = CASE WHEN valor_centavos > 0 THEN ? ELSE -? END "
+                "WHERE transferencia_id = ?",
+                (data.isoformat(), f"{nome}: {ticker} ({_qtd(quantidade)})", total, total, linha["transferencia_id"]),
+            )
+
+
+def excluir_operacao(conn: sqlite3.Connection, operacao_id: int) -> None:
+    """Apaga a operação e o que ela lançou nas contas (os dois lados da transferência, ou a entrada do provento)."""
+    op, linha = _operacao_gravada(conn, operacao_id)
+    if op.tipo not in TIPOS_PROVENTO:
+        _conferir_posicao(conn, op.ativo_id, op, None)
+    with conn:
+        conn.execute("DELETE FROM operacoes_rv WHERE id = ?", (operacao_id,))
+        if linha["transferencia_id"]:
+            conn.execute("DELETE FROM lancamentos WHERE transferencia_id = ?", (linha["transferencia_id"],))
+        if linha["lancamento_id"]:
+            conn.execute("DELETE FROM lancamentos WHERE id = ?", (linha["lancamento_id"],))
+
+
 # --- Posição --------------------------------------------------------------------------------------------
 
 

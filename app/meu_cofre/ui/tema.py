@@ -78,7 +78,6 @@ QToolTip {{ background: {CARTAO_ELEVADO}; color: {TEXTO}; border: 1px solid {BOR
 
 /* Cabeçalho da janela */
 #Marca {{ font-size: {PX_MARCA}px; font-weight: 700; }}
-#DicaAtalho {{ font-size: {PX_RODAPE}px; color: {TEXTO_APAGADO}; }}
 
 /* Cartão */
 #Cartao {{ background: {CARTAO}; border: 1px solid {BORDA}; border-radius: {RAIO_CARTAO}px; }}

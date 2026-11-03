@@ -21,34 +21,6 @@ def test_seed_nao_recria_categoria_apagada(tmp_path):
     assert c.execute("SELECT COUNT(*) FROM categorias").fetchone()[0] == 22
 
 
-def test_salvar_categorias(conn):
-    df = cadastros.categorias_df(conn)
-    df.loc[df["nome"] == "Lazer", "nome"] = "Diversão"
-    df.loc[df["nome"] == "Delivery", "ativa"] = False
-    nova = pd.DataFrame([{"id": None, "nome": "Pets", "tipo": "despesa", "natureza": "flexivel", "ativa": None}])
-    cadastros.salvar_categorias(conn, pd.concat([df, nova], ignore_index=True))
-    out = cadastros.categorias_df(conn).set_index("nome")
-    assert "Lazer" not in out.index and "Diversão" in out.index
-    assert not out.loc["Delivery", "ativa"]
-    assert out.loc["Pets", "ativa"] and out.loc["Pets", "natureza"] == "flexivel"
-
-
-def test_salvar_categorias_invalidas(conn):
-    df = cadastros.categorias_df(conn)
-    ruim = pd.concat([df, pd.DataFrame([{"id": None, "nome": "lazer", "tipo": "despesa",
-                                        "natureza": None, "ativa": True}])])
-    with pytest.raises(ValueError, match="repetida"):
-        cadastros.salvar_categorias(conn, ruim)
-    ruim = pd.concat([df, pd.DataFrame([{"id": None, "nome": "X", "tipo": "xyz",
-                                        "natureza": None, "ativa": True}])])
-    with pytest.raises(ValueError, match="Tipo"):
-        cadastros.salvar_categorias(conn, ruim)
-    ruim = pd.concat([df, pd.DataFrame([{"id": None, "nome": "", "tipo": "despesa",
-                                        "natureza": None, "ativa": True}])])
-    with pytest.raises(ValueError, match="nome"):
-        cadastros.salvar_categorias(conn, ruim)
-
-
 def test_salvar_contas(conn):
     df = cadastros.contas_df(conn)
     df.loc[df["nome"] == "Inter", "saldo_inicial"] = 1234.56

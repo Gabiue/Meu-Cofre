@@ -527,7 +527,7 @@ def test_cabecalho_nao_espreme_nem_corta_nada(app, conn, largura, aba):
     j.mostrar_aba(aba)
     QApplication.processEvents()
     QApplication.processEvents()
-    for botao in (j.botao_novo, j.botao_contas):
+    for botao in (j.botao_novo, j.botao_contas, j.botao_categorias):
         x = botao.mapTo(j, QPoint(0, 0)).x()
         assert x >= 0 and x + botao.width() <= j.width(), f"{botao.text()} cortado em {largura}"
         assert botao.width() >= botao.sizeHint().width()
@@ -543,10 +543,10 @@ def test_cabecalho_nao_espreme_nem_corta_nada(app, conn, largura, aba):
 
 def test_cabecalho_usa_uma_linha_quando_cabe_e_mais_quando_nao(app, conn):
     j = _janela(conn, (1400, 700))
-    assert j._arranjo_cabecalho == 1 and j.dica_atalho.isVisible()
+    assert j._arranjo_cabecalho == 1
     j.resize(940, 700)
     QApplication.processEvents()
-    assert j._arranjo_cabecalho == 2 and not j.dica_atalho.isVisible()
+    assert j._arranjo_cabecalho == 2
     assert j.abas.mapTo(j, QPoint(0, 0)).y() > j.botao_novo.mapTo(j, QPoint(0, 0)).y()
     j.resize(640, 700)
     QApplication.processEvents()

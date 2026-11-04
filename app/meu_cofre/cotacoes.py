@@ -3,7 +3,7 @@
 Só o ticker sai do PC (nunca quantidades ou valores). Fontes, em ordem:
 
 1. **B3** (endpoint público de cotação, sem token): o preço atual de qualquer ticker;
-2. **brapi**, só com token grátis em `MEU_COFRE_BRAPI_TOKEN`: preço + 1 ano de fechamentos + dividendos;
+2. **brapi**, só com token grátis (configurado no app ou em `MEU_COFRE_BRAPI_TOKEN`, que tem prioridade): preço + 1 ano de fechamentos + dividendos;
 3. **Yahoo Finance** (chart API): fechamentos + dividendos (hoje costuma responder 429; fica por garantia).
 
 Cada fonte que falha não impede as outras: o preço vem da primeira que responder, o histórico (fechamentos e proventos
@@ -19,10 +19,13 @@ import json
 import os
 import re
 import sqlite3
+import urllib.error
 import urllib.request
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
+
+from meu_cofre.db import gravar_preferencia, ler_preferencia
 
 from meu_cofre.indicadores import rede_desligada  # noqa: F401 (reexportado: MEU_COFRE_SEM_REDE vale pra tudo)
 
@@ -30,6 +33,9 @@ URL_YAHOO = "https://query1.finance.yahoo.com/v8/finance/chart/{ticker}.SA?range
 URL_B3 = "https://cotacao.b3.com.br/mds/api/v1/instrumentQuotation/{ticker}"
 URL_BRAPI = "https://brapi.dev/api/quote/{ticker}?range=1y&interval=1d&dividends=true"
 VAR_BRAPI = "MEU_COFRE_BRAPI_TOKEN"
+PREF_TOKEN = "brapi_token"
+PREF_YAHOO = "yahoo_pausado_ate"
+PAUSA_YAHOO = timedelta(hours=6)  # depois de um 429 o Yahoo fica em paz: insistir só piora
 USER_AGENT = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36"
 TIMEOUT = 10  # segundos; a busca roda em segundo plano
 PADRAO_TICKER = re.compile(r"^[A-Z]{4}\d{1,2}$")
@@ -45,6 +51,7 @@ class Dados:
     proventos: list[tuple[date, float]] = field(default_factory=list)  # (data, reais por cota)
     fonte: str = ""  # de onde veio o preço: "b3", "brapi" ou "yahoo"
     fonte_historico: str = ""  # de onde vieram fechamentos e proventos ("" = ninguém tinha)
+    yahoo_429: bool = False  # o Yahoo respondeu 429 nesta busca (quem grava a pausa é a thread principal)
 
 
 Buscador = Callable[[str], Dados]
@@ -166,18 +173,62 @@ def interpretar_brapi(resposta: dict) -> Dados:
     return Dados(_centavos(preco), data, sorted(fechamentos), sorted(proventos), fonte="brapi")
 
 
-def _buscar_http(ticker: str) -> Dados:
-    """Busca um ticker nas fontes, em ordem (B3, brapi com token, Yahoo). Levanta só se nenhuma deu preço."""
+def token_brapi_do_ambiente() -> str:
+    return os.environ.get(VAR_BRAPI, "").strip()
+
+
+def token_brapi(conn: sqlite3.Connection) -> str:
+    """O token da brapi: a variável de ambiente, se houver, senão o salvo no app ("" = sem token)."""
+    return token_brapi_do_ambiente() or (ler_preferencia(conn, PREF_TOKEN) or "").strip()
+
+
+def yahoo_pausado(conn: sqlite3.Connection, agora: datetime | None = None) -> bool:
+    ate = ler_preferencia(conn, PREF_YAHOO)
+    try:
+        return bool(ate) and (agora or datetime.now()) < datetime.fromisoformat(ate)
+    except ValueError:  # preferência estragada: como se não houvesse pausa
+        return False
+
+
+def houve_429_do_yahoo(dados: dict[str, Dados], erros: dict[str, str]) -> bool:
+    """O Yahoo respondeu 429 em algum ticker (com o preço vindo da B3 ou com tudo falhando)?"""
+    return any(d.yahoo_429 for d in dados.values()) or any("yahoo: HTTPError: HTTP Error 429" in e for e in erros.values())
+
+
+def pausar_yahoo(conn: sqlite3.Connection, agora: datetime | None = None) -> None:
+    gravar_preferencia(conn, PREF_YAHOO, ((agora or datetime.now()) + PAUSA_YAHOO).isoformat(timespec="seconds"))
+
+
+def testar_token(token: str) -> str | None:
+    """Uma chamada real ao brapi com o token. None se funcionou; senão uma mensagem curta."""
+    try:
+        interpretar_brapi(_obter_json(URL_BRAPI.format(ticker="PETR4"), {"Authorization": f"Bearer {token}"}))
+    except urllib.error.HTTPError as erro:
+        return "Token inválido ou sem permissão." if erro.code in (401, 403) else f"A brapi respondeu erro {erro.code}."
+    except (urllib.error.URLError, TimeoutError, OSError):
+        return "Sem internet ou a brapi não respondeu."
+    except ValueError:
+        return "A brapi respondeu algo inesperado."
+    return None
+
+
+def _buscar_http(ticker: str, token: str = "", yahoo_pausado: bool = False) -> Dados:
+    """Busca um ticker nas fontes, em ordem (B3, brapi com token, Yahoo). Levanta só se nenhuma deu preço.
+
+    Roda numa thread: token e pausa do Yahoo chegam prontos (a thread não toca no banco nem no ambiente)."""
     if not ticker_valido(ticker):
         raise ValueError(f"Ticker inválido: {ticker}")
     erros: list[str] = []
     preco: tuple[int, date, str] | None = None
     historico: Dados | None = None  # quem trouxe fechamentos ou proventos
+    yahoo_429 = False
 
     def tentar(nome: str, buscar) -> Dados | None:
         try:
             return buscar()
         except Exception as erro:  # noqa: BLE001 (uma fonte fora do ar não derruba as outras)
+            nonlocal yahoo_429
+            yahoo_429 = yahoo_429 or (nome == "yahoo" and isinstance(erro, urllib.error.HTTPError) and erro.code == 429)
             erros.append(f"{nome}: {type(erro).__name__}: {erro}")
             return None
 
@@ -185,7 +236,6 @@ def _buscar_http(ticker: str) -> Dados:
         centavos, dia = interpretar_b3(_obter_json(URL_B3.format(ticker=ticker)))
         return Dados(centavos, dia, fonte="b3")
 
-    token = os.environ.get(VAR_BRAPI, "").strip()
     fontes = [("b3", b3)]
     if token:
         fontes.append(("brapi", lambda: interpretar_brapi(_obter_json(URL_BRAPI.format(ticker=ticker), {"Authorization": f"Bearer {token}"}))))
@@ -196,7 +246,7 @@ def _buscar_http(ticker: str) -> Dados:
         preco = preco or (d.preco_centavos, d.data, nome)
         if (d.fechamentos or d.proventos) and historico is None:
             historico = d
-    if historico is None:  # ninguém trouxe histórico (sem token, ou brapi fora): o Yahoo, se um dia voltar
+    if historico is None and not yahoo_pausado:  # ninguém trouxe histórico (sem token, ou brapi fora): o Yahoo, se um dia voltar
         d = tentar("yahoo", lambda: interpretar_yahoo(_obter_json(URL_YAHOO.format(ticker=ticker))))
         if d is not None:
             historico = d
@@ -206,7 +256,7 @@ def _buscar_http(ticker: str) -> Dados:
     return Dados(
         preco[0], preco[1],
         historico.fechamentos if historico else [], historico.proventos if historico else [],
-        fonte=preco[2], fonte_historico=historico.fonte or "yahoo" if historico else "",
+        fonte=preco[2], fonte_historico=historico.fonte or "yahoo" if historico else "", yahoo_429=yahoo_429,
     )
 
 
@@ -295,7 +345,7 @@ def montar_status(gravados: int, erros: dict[str, str], dados: dict[str, Dados] 
 
 def sem_fonte_de_historico(conn: sqlite3.Connection) -> bool:
     """Há ação ou FII ativo sem nenhum provento por cota guardado e sem token do brapi pra buscá-lo?"""
-    if os.environ.get(VAR_BRAPI, "").strip():
+    if token_brapi(conn):
         return False
     return any(not proventos_por_cota(conn, t) for t in tickers_ativos(conn))
 

@@ -364,3 +364,22 @@ def test_v7_para_v8_permite_varios_pagamentos_por_fatura_preservando_dados(tmp_p
     assert conn.execute("SELECT COUNT(*) FROM faturas_pagas").fetchone()[0] == 2
     assert not conn.execute("SELECT name FROM sqlite_master WHERE name = 'faturas_pagas_v7'").fetchone()
     assert len(list((tmp_path / "backups").glob("meu-*-v7.db"))) == 1
+
+
+def test_v8_para_v9_cria_preferencias(tmp_path):
+    caminho = tmp_path / "meu.db"
+    conn = db.conectar(caminho)
+    conn.execute("DROP TABLE preferencias")
+    conn.execute("PRAGMA user_version = 8")
+    conn.commit()
+    conn.close()
+
+    conn = db.conectar(caminho)
+    assert migracoes.versao(conn) == migracoes.ULTIMA_VERSAO
+    assert db.ler_preferencia(conn, "x", "padrao") == "padrao"
+    db.gravar_preferencia(conn, "x", "1")
+    db.gravar_preferencia(conn, "x", "2")
+    assert db.ler_preferencia(conn, "x") == "2"
+    db.gravar_preferencia(conn, "x", None)
+    assert db.ler_preferencia(conn, "x") is None
+    assert len(list((tmp_path / "backups").glob("meu-*-v8.db"))) == 1

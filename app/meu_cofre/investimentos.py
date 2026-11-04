@@ -907,7 +907,10 @@ def _projetar(hoje: date, alvo: date, ctx: _Contexto, patrimonio_hoje: int, sobr
 
 def serie_patrimonio_no_ano(conn: sqlite3.Connection, hoje: date) -> pd.DataFrame:
     """O patrimônio ao longo do ano: um ponto por semana desde 1º de janeiro até hoje (o último ponto é hoje) e a
-    projeção, ao fim de cada mês, até 31/12. Colunas: data, centavos, projetado (bool)."""
+    projeção, ao fim de cada mês, até 31/12. Colunas: data, centavos, projetado (bool).
+
+    A dívida do cartão conta só até cada dia (as parcelas futuras pesam na sobra da projeção), então o ponto de hoje
+    pode ser maior que o "Patrimônio hoje" do topo, que desconta todas as parcelas."""
     fim_do_ano = date(hoje.year, 12, 31)
     ctx = _Contexto(conn, hoje, fim=fim_do_ano)
     passadas, d = [], date(hoje.year, 1, 1)
@@ -915,9 +918,10 @@ def serie_patrimonio_no_ano(conn: sqlite3.Connection, hoje: date) -> pd.DataFram
         passadas.append(d)
         d += timedelta(days=7)
     linhas = [(d, relatorios.em_conta(conn, d) + ctx.total(d) - relatorios.devo_ate(conn, d), False) for d in passadas]
-    pat_hoje = _patrimonio(conn, hoje, ctx)["total"]
-    linhas.append((hoje, pat_hoje, False))
+    # Hoje usa a mesma regra do passado e da projeção (dívida lançada até o dia): senão o gráfico dá um degrau
+    # quando as parcelas futuras do cartão entram só no ponto de hoje.
     base = _base_da_projecao(conn, hoje, ctx)
+    linhas.append((hoje, base, False))
     sobra = metas.sobra_media(conn, hoje)
     fins_de_mes = [date(hoje.year, m, calendar.monthrange(hoje.year, m)[1]) for m in range(hoje.month, 12)]
     # fim de mês colado em hoje só repetiria o ponto de hoje: o primeiro projetado fica a uma semana ou mais

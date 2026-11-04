@@ -683,3 +683,16 @@ def test_previsao_nao_desconta_parcela_futura_duas_vezes(conn):
     assert prev["patrimonio_hoje"] == pat["total"]  # bate com o topo da aba
     assert prev["parcelas_futuras"] == 40_000  # nov e dez voltam: já pesam na sobra média
     assert prev["total"] == pat["total"] + 40_000 + prev["sobra_projetada"] + prev["rendimento_projetado"]
+
+
+def test_serie_nao_tem_degrau_em_hoje_com_parcelas_futuras(conn):
+    """Compra parcelada: o ponto de hoje usa a mesma regra do passado e da projeção, sem queda pelas parcelas futuras."""
+    _lancar(conn, True, 1_000_000, date(2026, 1, 15), "Salário")
+    lanc.registrar(conn, entrada=False, valor_centavos=60_000, descricao="Cadeira", categoria_id=id_cat(conn, "Compras pessoais"),
+                   metodo="cartao", conta_id=id_conta(conn, "Inter"), data=date(2026, 10, 10), parcelas=3)
+    df = inv.serie_patrimonio_no_ano(conn, HOJE)
+    real = df[~df["projetado"]]
+    base = inv.patrimonio(conn, HOJE)["total"] + inv.previsao_fim_do_ano(conn, HOJE)["parcelas_futuras"]
+    assert real["centavos"].iloc[-1] == base  # só as parcelas até hoje pesam
+    assert real["centavos"].iloc[-1] > inv.patrimonio(conn, HOJE)["total"]
+    assert real["centavos"].iloc[-1] - real["centavos"].iloc[-2] > -60_000 / 3 - 1  # no máximo a parcela de outubro

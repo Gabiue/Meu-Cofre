@@ -7,10 +7,11 @@ from datetime import date
 from pathlib import Path
 
 import pytest
+import shiboken6
 from conftest import id_conta
 from PySide6.QtWidgets import QApplication, QMessageBox
 
-from meu_cofre import cotacoes, relatorios
+from meu_cofre import cotacoes, db, relatorios
 from meu_cofre import investimentos as inv
 from meu_cofre import renda_variavel as rv
 from meu_cofre.ui import tema
@@ -471,7 +472,7 @@ class _FalsoCotacao:
     def __init__(self, falha=None):
         self.pedidos, self.falha = [], falha
 
-    def __call__(self, ticker):
+    def __call__(self, ticker, **_opcoes):
         self.pedidos.append(ticker)
         if self.falha:
             raise self.falha
@@ -552,3 +553,105 @@ def test_janela_atualiza_a_aba_quando_as_cotacoes_chegam(app, conn, monkeypatch)
     assert j.aba_investimentos.cartao_da_acao(petr).cotacao.text() == "R$ 33,00"
     assert "cotações de 29/10" in j.aba_investimentos.selo.text()
     j._atualizador.aguardar()
+
+
+def _rede_b3_com_yahoo_429(monkeypatch):
+    """B3 responde; o Yahoo dá 429. Devolve a lista das URLs pedidas."""
+    import urllib.error
+
+    pedidos = []
+
+    def obter(url, cabecalhos=None):
+        pedidos.append(url)
+        if "yahoo" in url:
+            raise urllib.error.HTTPError(url, 429, "Too Many Requests", {}, None)
+        return {"BizSts": {"cd": "OK"}, "Msg": {"dtTm": "2026-10-29 18:00:00"},
+                "Trad": [{"scty": {"SctyQtn": {"curPrc": 33.0}, "mkt": {"nm": "Vista"}, "symb": "PETR4"}}]}
+
+    monkeypatch.setattr(cotacoes, "_obter_json", obter)
+    monkeypatch.delenv(cotacoes.VAR_BRAPI, raising=False)
+    return pedidos
+
+
+def test_yahoo_429_pausa_o_yahoo_e_depois_da_pausa_volta(app, conn, monkeypatch):
+    monkeypatch.delenv("MEU_COFRE_SEM_REDE")
+    _acao(conn, "PETR4")
+    pedidos = _rede_b3_com_yahoo_429(monkeypatch)
+    a = AtualizadorIndicadores(conn, lambda: HOJE, buscar=_taxas_falsas)
+    a.disparar()
+    _esperar(lambda: not a.em_andamento)
+    QApplication.processEvents()
+    assert any("yahoo" in u for u in pedidos) and cotacoes.yahoo_pausado(conn)  # o preço veio da B3 e o 429 valeu mesmo assim
+
+    pedidos.clear()
+    a.disparar(forcar=True)
+    _esperar(lambda: not a.em_andamento)
+    assert pedidos and not any("yahoo" in u for u in pedidos)  # pausado: nem tenta
+
+    db.gravar_preferencia(conn, cotacoes.PREF_YAHOO, "2000-01-01T00:00:00")  # a pausa venceu
+    pedidos.clear()
+    a.disparar(forcar=True)
+    _esperar(lambda: not a.em_andamento)
+    assert any("yahoo" in u for u in pedidos)
+    a.aguardar()
+
+
+def test_atualizador_usa_o_token_salvo_no_app(app, conn, monkeypatch):
+    monkeypatch.delenv("MEU_COFRE_SEM_REDE")
+    _acao(conn, "PETR4")
+    db.gravar_preferencia(conn, cotacoes.PREF_TOKEN, "salvo")
+    chamadas = []
+    monkeypatch.setattr(cotacoes, "_buscar_http", lambda ticker, **opcoes: chamadas.append(opcoes) or cotacoes.Dados(3300, date(2026, 10, 29)))
+    monkeypatch.delenv(cotacoes.VAR_BRAPI, raising=False)
+    a = AtualizadorIndicadores(conn, lambda: HOJE, buscar=_taxas_falsas)
+    a.disparar()
+    _esperar(lambda: not a.em_andamento)
+    assert chamadas == [{"token": "salvo", "yahoo_pausado": False}]
+    a.aguardar()
+
+
+def test_dialogo_cotacoes_salva_testa_e_remove_o_token(app, conn, monkeypatch):
+    from meu_cofre.ui.dialogo_cotacoes import DialogoCotacoes
+
+    monkeypatch.delenv(cotacoes.VAR_BRAPI, raising=False)
+    monkeypatch.setattr(cotacoes, "testar_token", lambda token: "Token inválido ou sem permissão." if token == "ruim" else None)
+    d = DialogoCotacoes(conn)
+    avisos = []
+    d.alterado.connect(lambda: avisos.append(1))
+    d.token.setText("ruim")
+    d.testar()
+    assert d.resultado.text() == "testando…"
+    _esperar(lambda: d.botao_testar.isEnabled() and d.resultado.text() != "testando…")
+    assert "inválido" in d.resultado.text()
+    d.token.setText(" bom ")
+    d.salvar()
+    assert cotacoes.token_brapi(conn) == "bom" and avisos == [1]
+    d2 = DialogoCotacoes(conn)
+    assert d2.token.text() == "bom" and d2.botao_remover.isEnabled()
+    d2.alterado.connect(lambda: avisos.append(2))
+    d2.remover()
+    assert cotacoes.token_brapi(conn) == "" and avisos == [1, 2]
+    # no app a janela tem pai e some ao fechar; aqui ela e o pool da thread do teste morreriam só no fim do Python
+    shiboken6.delete(d)
+    shiboken6.delete(d2)
+
+
+def test_dialogo_cotacoes_com_token_do_ambiente_nao_deixa_editar(app, conn, monkeypatch):
+    from meu_cofre.ui.dialogo_cotacoes import DialogoCotacoes
+
+    monkeypatch.setenv(cotacoes.VAR_BRAPI, "amb")
+    d = DialogoCotacoes(conn)
+    assert not d.token.isEnabled() and not d.botao_salvar.isEnabled() and cotacoes.VAR_BRAPI in d.resultado.text()
+
+
+def test_salvar_o_token_forca_nova_busca_e_atualiza_o_selo(app, conn, monkeypatch):
+    _acao(conn, "PETR4")
+    monkeypatch.delenv(cotacoes.VAR_BRAPI, raising=False)
+    j = JanelaPrincipal(conn, hoje=HOJE)
+    assert "token gratuito da brapi" in j.aba_investimentos.selo.text()
+    chamadas = []
+    monkeypatch.setattr(j._atualizador, "disparar", lambda forcar=False: chamadas.append(forcar))
+    d = j.aba_investimentos.abrir_cotacoes()
+    d.token.setText("t")
+    d.salvar()
+    assert chamadas == [True] and "token gratuito da brapi" not in j.aba_investimentos.selo.text()

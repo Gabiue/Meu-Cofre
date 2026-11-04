@@ -207,3 +207,8 @@ CREATE TABLE IF NOT EXISTS regras_categorizacao (
     categoria_id INTEGER NOT NULL REFERENCES categorias (id),
     prioridade   INTEGER NOT NULL DEFAULT 100
 );
+
+CREATE TABLE IF NOT EXISTS preferencias (
+    chave TEXT PRIMARY KEY,
+    valor TEXT NOT NULL
+);

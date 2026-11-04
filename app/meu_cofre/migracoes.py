@@ -176,6 +176,10 @@ SELECT id, cartao_id, referencia, valor_centavos, data, conta_origem_id, transfe
         "DROP TABLE faturas_pagas_v7",
         "CREATE INDEX IF NOT EXISTS ix_faturas_pagas_fatura ON faturas_pagas (cartao_id, referencia)",
     ],
+    # v9: preferências do app (token da brapi, pausa do Yahoo...), uma linha por chave.
+    9: [
+        "CREATE TABLE IF NOT EXISTS preferencias (chave TEXT PRIMARY KEY, valor TEXT NOT NULL)",
+    ],
 }
 ULTIMA_VERSAO = max(MIGRACOES)
 

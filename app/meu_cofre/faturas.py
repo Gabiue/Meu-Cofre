@@ -29,7 +29,7 @@ from meu_cofre.lancamentos import data_no_mes, nome_com_final
 from meu_cofre.relatorios import top_com_outros
 
 DIA_VENCIMENTO_PADRAO = 10
-SITUACOES = ("aberta", "fechada", "paga", "futura")
+SITUACOES = ("aberta", "fechada", "parcial", "paga", "futura")
 CATEGORIA_PAGAMENTO = "Pagamento de fatura"
 
 _COLUNAS = ["id", "data", "descricao", "valor_centavos", "categoria", "parcela_atual", "parcela_total"]
@@ -99,10 +99,11 @@ class Fatura:
     fim_exclusivo: date
     vencimento: date
     total_centavos: int
-    situacao: str  # aberta | fechada | paga | futura
-    pago_centavos: int = 0
-    data_pagamento: date | None = None
-    conta_origem_id: int | None = None
+    situacao: str  # aberta | fechada | parcial (pagou parte) | paga | futura
+    pago_centavos: int = 0  # soma de todos os pagamentos da fatura
+    data_pagamento: date | None = None  # do último pagamento
+    conta_origem_id: int | None = None  # do último pagamento
+    pagamentos: list[dict] = field(default_factory=list)  # id, valor_centavos, data (date), conta_origem_id; do mais antigo ao mais novo
     lancamentos: pd.DataFrame = field(default_factory=lambda: pd.DataFrame(columns=_COLUNAS))
 
     @property
@@ -114,6 +115,16 @@ class Fatura:
     def paga(self) -> bool:
         return self.situacao == "paga"
 
+    @property
+    def restante_centavos(self) -> int:
+        """Quanto falta pagar (0 se já pagou tudo ou mais)."""
+        return max(self.total_centavos - self.pago_centavos, 0)
+
+    @property
+    def a_mais_centavos(self) -> int:
+        """Quanto foi pago acima do total (0 se não passou)."""
+        return max(self.pago_centavos - self.total_centavos, 0)
+
 
 def _cartao(conn: sqlite3.Connection, cartao_id: int) -> sqlite3.Row:
     linha = conn.execute("SELECT * FROM contas WHERE id = ?", (cartao_id,)).fetchone()
@@ -122,17 +133,24 @@ def _cartao(conn: sqlite3.Connection, cartao_id: int) -> sqlite3.Row:
     return linha
 
 
-def _pagamentos(conn: sqlite3.Connection, cartao_id: int) -> dict[str, sqlite3.Row]:
-    """Faturas pagas do cartão por referência. Pagamento cujos lançamentos foram apagados à mão não conta."""
+def _pagamentos(conn: sqlite3.Connection, cartao_id: int) -> dict[str, list[sqlite3.Row]]:
+    """Pagamentos do cartão por referência, do mais antigo ao mais novo (a fatura pode ter vários).
+
+    Pagamento cujos lançamentos foram apagados à mão não conta.
+    """
     linhas = conn.execute(
         """
         SELECT * FROM faturas_pagas fp
         WHERE fp.cartao_id = ?
           AND EXISTS (SELECT 1 FROM lancamentos l WHERE l.transferencia_id = fp.transferencia_id)
+        ORDER BY fp.data, fp.id
         """,
         (cartao_id,),
     )
-    return {r["referencia"]: r for r in linhas}
+    por_ref: dict[str, list[sqlite3.Row]] = {}
+    for r in linhas:
+        por_ref.setdefault(r["referencia"], []).append(r)
+    return por_ref
 
 
 def faturas_do_cartao(conn: sqlite3.Connection, cartao_id: int, hoje: date) -> list[Fatura]:
@@ -163,9 +181,13 @@ def faturas_do_cartao(conn: sqlite3.Connection, cartao_id: int, hoje: date) -> l
     for referencia in sorted(referencias):
         inicio, fim = periodo(referencia, fechamento, venc)
         itens = compras[compras["referencia"] == referencia][_COLUNAS].reset_index(drop=True)
-        pagamento = pagas.get(referencia)
-        if pagamento:
+        pagamentos = pagas.get(referencia, [])
+        total = -int(itens["valor_centavos"].sum())
+        pago = sum(p["valor_centavos"] for p in pagamentos)
+        if pagamentos and pago >= total:
             situacao = "paga"
+        elif pagamentos:
+            situacao = "parcial"
         elif hoje >= fim:
             situacao = "fechada"
         elif hoje >= inicio:
@@ -179,11 +201,16 @@ def faturas_do_cartao(conn: sqlite3.Connection, cartao_id: int, hoje: date) -> l
                 inicio=inicio,
                 fim_exclusivo=fim,
                 vencimento=vencimento(referencia, venc),
-                total_centavos=-int(itens["valor_centavos"].sum()),
+                total_centavos=total,
                 situacao=situacao,
-                pago_centavos=pagamento["valor_centavos"] if pagamento else 0,
-                data_pagamento=date.fromisoformat(pagamento["data"]) if pagamento else None,
-                conta_origem_id=pagamento["conta_origem_id"] if pagamento else None,
+                pago_centavos=pago,
+                data_pagamento=date.fromisoformat(pagamentos[-1]["data"]) if pagamentos else None,
+                conta_origem_id=pagamentos[-1]["conta_origem_id"] if pagamentos else None,
+                pagamentos=[
+                    {"id": p["id"], "valor_centavos": p["valor_centavos"], "data": date.fromisoformat(p["data"]),
+                     "conta_origem_id": p["conta_origem_id"]}
+                    for p in pagamentos
+                ],
                 lancamentos=itens,
             )
         )
@@ -236,11 +263,12 @@ def pagar_fatura(
     conta_origem_id: int,
     data: date,
 ) -> int:
-    """Marca a fatura como paga e devolve o id do registro em `faturas_pagas`.
+    """Registra um pagamento da fatura e devolve o id do registro em `faturas_pagas`.
 
     Cria uma transferência: saída na conta (categoria "Pagamento de fatura", método transferência) e entrada
     no cartão, as duas com o mesmo `transferencia_id`. Em conta e Devo caem juntos; gasto não duplica.
-    `valor_centavos` (positivo) pode ser diferente do total da fatura, se você pagou outro valor.
+    `valor_centavos` (positivo) pode ser diferente do total: abaixo, a fatura fica "parcial" (falta o restante,
+    que se paga depois); acima, fica paga com "pago a mais". Uma fatura pode ter vários pagamentos.
     """
     cartao = _cartao(conn, cartao_id)
     _ano_mes(referencia)
@@ -249,14 +277,14 @@ def pagar_fatura(
     origem = conn.execute("SELECT * FROM contas WHERE id = ?", (conta_origem_id,)).fetchone()
     if origem is None or origem["tipo"] != "corrente" or not origem["ativa"]:
         raise ValueError("Escolha uma conta corrente ativa pra pagar a fatura.")
-    if referencia in _pagamentos(conn, cartao_id):
+    atual = next((f for f in faturas_do_cartao(conn, cartao_id, data) if f.referencia == referencia), None)
+    if atual is not None and atual.paga:
         raise ValueError("Esta fatura já está paga.")
 
     categoria_id = _categoria_pagamento(conn)
     descricao = f"Pagamento da fatura {nome_com_final(cartao['nome'], cartao['final'])} ({referencia[5:]}/{referencia[:4]})"
     transferencia_id = uuid.uuid4().hex
     with conn:
-        conn.execute("DELETE FROM faturas_pagas WHERE cartao_id = ? AND referencia = ?", (cartao_id, referencia))  # sobra órfã
         for conta_id, valor in ((conta_origem_id, -valor_centavos), (cartao_id, valor_centavos)):
             conn.execute(
                 """
@@ -275,11 +303,13 @@ def pagar_fatura(
         ).lastrowid
 
 
-def desfazer_pagamento(conn: sqlite3.Connection, cartao_id: int, referencia: str) -> None:
-    """Apaga os dois lados da transferência e o registro: a fatura volta a "fechada" (ou "aberta")."""
-    linha = conn.execute(
-        "SELECT * FROM faturas_pagas WHERE cartao_id = ? AND referencia = ?", (cartao_id, referencia)
-    ).fetchone()
+def desfazer_pagamento(conn: sqlite3.Connection, cartao_id: int, referencia: str, pagamento_id: int | None = None) -> None:
+    """Desfaz UM pagamento (o `pagamento_id`, ou o mais recente): apaga os dois lados da transferência e o registro.
+
+    Se era o único, a fatura volta a "fechada" (ou "aberta"); se havia outros, vira (ou segue) "parcial".
+    """
+    pagamentos = _pagamentos(conn, cartao_id).get(referencia, [])
+    linha = next((p for p in reversed(pagamentos) if pagamento_id in (None, p["id"])), None)
     if linha is None:
         raise ValueError("Esta fatura não está paga.")
     with conn:

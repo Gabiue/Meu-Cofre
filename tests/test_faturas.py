@@ -236,11 +236,59 @@ def test_fatura_paga_deixa_de_ser_fechada(conn):
     _compra(conn, cartao, 30000, date(2026, 9, 15))
     assert _por_ref(faturas.faturas_do_cartao(conn, cartao, HOJE))["2026-10"].situacao == "fechada"
 
-    faturas.pagar_fatura(conn, cartao, "2026-10", 28000, inter, date(2026, 10, 10))
+    faturas.pagar_fatura(conn, cartao, "2026-10", 30000, inter, date(2026, 10, 10))
     f = _por_ref(faturas.faturas_do_cartao(conn, cartao, HOJE))["2026-10"]
-    assert (f.situacao, f.paga, f.total_centavos, f.pago_centavos) == ("paga", True, 30000, 28000)
+    assert (f.situacao, f.paga, f.total_centavos, f.pago_centavos) == ("paga", True, 30000, 30000)
     assert (f.data_pagamento, f.conta_origem_id) == (date(2026, 10, 10), inter)
     assert len(f.lancamentos) == 1  # o pagamento (transferência) não é compra
+
+
+def test_pagamento_parcial_mostra_o_restante_e_aceita_outro_pagamento(conn):
+    inter = id_conta(conn, "Inter")
+    cartao = _visa(conn)
+    _compra(conn, cartao, 30000, date(2026, 9, 15))
+    faturas.pagar_fatura(conn, cartao, "2026-10", 28000, inter, date(2026, 10, 10))
+    f = _por_ref(faturas.faturas_do_cartao(conn, cartao, HOJE))["2026-10"]
+    assert (f.situacao, f.paga, f.pago_centavos, f.restante_centavos, f.a_mais_centavos) == ("parcial", False, 28000, 2000, 0)
+
+    faturas.pagar_fatura(conn, cartao, "2026-10", 2000, inter, date(2026, 10, 12))
+    f = _por_ref(faturas.faturas_do_cartao(conn, cartao, HOJE))["2026-10"]
+    assert (f.situacao, f.pago_centavos, f.restante_centavos, f.data_pagamento) == ("paga", 30000, 0, date(2026, 10, 12))
+    assert [p["valor_centavos"] for p in f.pagamentos] == [28000, 2000]
+    with pytest.raises(ValueError, match="já está paga"):
+        faturas.pagar_fatura(conn, cartao, "2026-10", 100, inter, HOJE)
+
+
+def test_pagar_a_mais_fecha_a_fatura_e_registra_a_diferenca(conn):
+    inter = id_conta(conn, "Inter")
+    cartao = _visa(conn)
+    _compra(conn, cartao, 30000, date(2026, 9, 15))
+    faturas.pagar_fatura(conn, cartao, "2026-10", 31000, inter, date(2026, 10, 10))
+    f = _por_ref(faturas.faturas_do_cartao(conn, cartao, HOJE))["2026-10"]
+    assert (f.situacao, f.a_mais_centavos, f.restante_centavos) == ("paga", 1000, 0)
+
+
+def test_desfazer_desfaz_um_pagamento_por_vez(conn):
+    inter = id_conta(conn, "Inter")
+    cartao = _visa(conn)
+    _compra(conn, cartao, 30000, date(2026, 9, 15))
+    primeiro = faturas.pagar_fatura(conn, cartao, "2026-10", 10000, inter, date(2026, 10, 10))
+    segundo = faturas.pagar_fatura(conn, cartao, "2026-10", 10000, inter, date(2026, 10, 12))
+    terceiro = faturas.pagar_fatura(conn, cartao, "2026-10", 5000, inter, date(2026, 10, 13))
+
+    faturas.desfazer_pagamento(conn, cartao, "2026-10")  # o mais recente
+    ids = [p["id"] for p in _por_ref(faturas.faturas_do_cartao(conn, cartao, HOJE))["2026-10"].pagamentos]
+    assert ids == [primeiro, segundo] and terceiro not in ids
+
+    faturas.desfazer_pagamento(conn, cartao, "2026-10", pagamento_id=primeiro)  # um escolhido
+    f = _por_ref(faturas.faturas_do_cartao(conn, cartao, HOJE))["2026-10"]
+    assert (f.situacao, f.pago_centavos, f.restante_centavos) == ("parcial", 10000, 20000)
+    assert conn.execute("SELECT COUNT(*) FROM lancamentos WHERE transferencia_id IS NOT NULL").fetchone()[0] == 2
+
+    faturas.desfazer_pagamento(conn, cartao, "2026-10")
+    assert _por_ref(faturas.faturas_do_cartao(conn, cartao, HOJE))["2026-10"].situacao == "fechada"
+    with pytest.raises(ValueError, match="não está paga"):
+        faturas.desfazer_pagamento(conn, cartao, "2026-10", pagamento_id=segundo)
 
 
 def test_pagar_nao_conta_o_pagamento_na_fatura_aberta(conn):

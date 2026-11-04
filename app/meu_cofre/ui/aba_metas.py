@@ -491,7 +491,7 @@ class Simulador(Cartao):
         s = metas.simular_compra(self.conn, self._hoje(), valor, self.parcelas.currentData(), acrescimo)
         self._mostrar_a_vista(s["a_vista"])
         self._mostrar_parcelado(s["parcelado"], s["parcelas"], valor)
-        self.nota.setText("Sobra estimada com poucos dados (só o mês atual): os prazos podem mudar." if s["estimativa"] else "")
+        self.nota.setText("Ainda sem um mês completo de lançamentos: a sobra aparece depois dele e os prazos podem mudar." if s["estimativa"] else "")
         self.nota.setVisible(s["estimativa"])
 
     def _mostrar_a_vista(self, a: dict) -> None:
@@ -662,12 +662,8 @@ class AbaMetas(QScrollArea):
 
     def _carregar_numeros(self, r: metas.ResumoMetas, n_ativas: int) -> None:
         self._guardado.definir(formatar_brl(r.guardado), "nas caixinhas, fora do Em conta")
-        if r.meses_usados == 0:
-            apoio = "sem lançamentos pra calcular"
-        elif r.estimativa:
-            apoio = "estimativa com poucos dados"
-        else:
-            apoio = f"média dos últimos {plural_meses(r.meses_usados)}"
+        # sem mês completo a sobra é 0 e `estimativa` vale True (as duas coisas andam juntas)
+        apoio = "aparece depois do primeiro mês completo" if r.meses_usados == 0 else f"média dos últimos {plural_meses(r.meses_usados)}"
         self._sobra_media.definir(formatar_brl(r.sobra), apoio)
         self._comprometido.definir(
             formatar_brl(r.comprometido), "por mês · nenhuma meta ativa" if not n_ativas else f"por mês · {n_ativas} {'meta ativa' if n_ativas == 1 else 'metas ativas'}"

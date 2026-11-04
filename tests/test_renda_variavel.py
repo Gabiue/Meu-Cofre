@@ -315,7 +315,7 @@ def test_patrimonio_inclui_renda_variavel_pela_ultima_cotacao(conn):
     _cotar(conn, "PETR4", 3300)
     pat = inv.patrimonio(conn, HOJE)
     assert pat["renda_variavel"] == 330_000 and pat["investimentos"] == 330_000 and pat["total"] == 330_000
-    assert inv.resumo(conn, HOJE).investido == 330_000
+    assert inv.resumo(conn, HOJE).patrimonio["total"] == 330_000
 
 
 def test_patrimonio_sem_cotacao_usa_o_custo(conn):
@@ -324,16 +324,16 @@ def test_patrimonio_sem_cotacao_usa_o_custo(conn):
     assert inv.patrimonio(conn, HOJE)["renda_variavel"] == 300_500
 
 
-def test_comprar_com_conta_nao_muda_o_patrimonio_quando_o_preco_nao_mexe(conn):
+def test_comprar_com_conta_leva_o_dinheiro_pro_patrimonio_quando_o_preco_nao_mexe(conn):
     from test_investimentos import _lancar
 
     _lancar(conn, True, 1_000_000, date(2026, 10, 2), "Salário")
-    antes = inv.patrimonio(conn, HOJE)["total"]
+    assert inv.patrimonio(conn, HOJE)["total"] == 0  # dinheiro na conta corrente não é patrimônio guardado
     a = _ativo(conn)
     rv.comprar(conn, a, date(2026, 10, 5), 100, 3000, conta_id=_inter(conn))
     _cotar(conn, "PETR4", 3000)
     pat = inv.patrimonio(conn, HOJE)
-    assert pat["em_conta"] == 700_000 and pat["renda_variavel"] == 300_000 and pat["total"] == antes
+    assert pat["renda_variavel"] == 300_000 and pat["total"] == 300_000
 
 
 def test_previsao_nao_supoe_alta_e_soma_so_os_proventos_ate_31_12(conn):
@@ -343,13 +343,13 @@ def test_previsao_nao_supoe_alta_e_soma_so_os_proventos_ate_31_12(conn):
     prev = inv.previsao_fim_do_ano(conn, HOJE)
     assert prev["rendimento_projetado"] == 0  # o preço não sobe na projeção
     assert prev["proventos_projetados"] == 4000  # só o de novembro cai antes de 31/12
-    assert prev["total"] == prev["patrimonio_hoje"] + prev["sobra_projetada"] + 4000
+    assert prev["total"] == prev["patrimonio_hoje"] + 4000
     assert inv.resumo(conn, HOJE).previsao["proventos_projetados"] == 4000
 
 
 def test_previsao_sem_renda_variavel_nao_muda(conn):
     prev = inv.previsao_fim_do_ano(conn, HOJE)
-    assert prev["proventos_projetados"] == 0 and prev["total"] == prev["patrimonio_hoje"] + prev["sobra_projetada"]
+    assert prev["proventos_projetados"] == 0 and prev["total"] == prev["patrimonio_hoje"]
 
 
 def test_serie_do_ano_acompanha_as_cotacoes_e_fecha_em_hoje(conn):
@@ -370,7 +370,7 @@ def test_percentual_do_cdi_continua_so_da_renda_fixa(conn):
     rv.comprar(conn, a, date(2026, 3, 2), 100, 3000)
     _cotar(conn, "PETR4", 6000)  # dobrou
     r = inv.resumo(conn, HOJE)
-    assert r.rendimento_ano.centavos == 0 and r.pct_cdi is None and r.investido == 600_000
+    assert r.rendimento_ano.centavos == 0 and r.pct_cdi is None and r.patrimonio["total"] == 600_000
 
 
 # --- Sem histórico público: o do próprio usuário, e o gráfico sem histórico de preços ----------------------------------------

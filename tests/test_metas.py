@@ -85,11 +85,11 @@ def test_sobra_media_com_mes_ruim_pode_ser_negativa(conn):
     assert metas.sobra_media(conn, HOJE) == (-200_000, 2, False)
 
 
-def test_sobra_media_sem_mes_completo_usa_o_mes_atual_ate_hoje_como_estimativa(conn):
+def test_sobra_media_sem_mes_completo_nao_usa_o_mes_atual(conn):
     _lancar(conn, True, 300_000, date(2026, 10, 5), "Salário")
     _lancar(conn, False, 100_000, date(2026, 10, 10), "Moradia")
     _lancar(conn, False, 999_999, date(2026, 10, 25), "Lazer")  # depois de hoje: não conta
-    assert metas.sobra_media(conn, HOJE) == (200_000, 1, True)
+    assert metas.sobra_media(conn, HOJE) == (0, 0, True)
 
 
 def test_sobra_media_banco_sem_historico(conn):

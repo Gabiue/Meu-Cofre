@@ -103,7 +103,7 @@ def test_aba_vazia_mostra_estado_vazio_e_zeros(app, conn):
     assert not aba._vazio.isHidden()
     assert aba.cartoes() == []
     assert aba._guardado.valor.text() == "R$ 0,00"
-    assert aba._sobra_media.apoio.text() == "sem lançamentos pra calcular"
+    assert aba._sobra_media.apoio.text() == "aparece depois do primeiro mês completo"
     assert aba._cartao_reserva.isHidden()  # sem gastos essenciais, não há o que sugerir
     assert aba.botao_encerradas.isHidden()
 
@@ -122,10 +122,10 @@ def test_numeros_do_topo(app, conn):
     assert aba._livre.valor.text() == "R$ 800,00"
 
 
-def test_sobra_estimada_avisa_poucos_dados(app, conn):
+def test_sem_mes_completo_a_sobra_aparece_depois_do_primeiro(app, conn):
     _lancar(conn, True, 300_000, date(2026, 10, 5), "Salário")
     aba = _aba(conn)
-    assert aba._sobra_media.apoio.text() == "estimativa com poucos dados"
+    assert aba._sobra_media.apoio.text() == "aparece depois do primeiro mês completo"
 
 
 def test_lista_em_ordem_de_prioridade_com_barra_percentual_e_plano(app, conn):

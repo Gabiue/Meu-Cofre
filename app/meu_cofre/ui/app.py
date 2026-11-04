@@ -25,7 +25,7 @@ def _tamanho_screenshot() -> tuple[int, int]:
 
 def _abrir_dialogo_de_revisao(janela: JanelaPrincipal, app: QApplication, modo: str):
     """MEU_COFRE_DIALOGO=novo|cartao|repetir|transferencia|contas|editar:<id>|excluir:<id>|recorrente:<id>|meta|simulador|pagar|ativo|
-    aportar|saldo|cotacoes|importar|comprar|provento|rolar:acoes|rolar:proventos: abre o diálogo já preparado (screenshots). `pagar` não é diálogo: abre a confirmação de pagamento da
+    aportar|saldo|cotacoes|meta-aporte|importar|comprar|provento|rolar:acoes|rolar:proventos: abre o diálogo já preparado (screenshots). `pagar` não é diálogo: abre a confirmação de pagamento da
     aba Cartões. `meta` abre a nova meta com uma prévia preenchida e `simulador` preenche e rola até o simulador da aba
     Metas. `ativo` abre o novo investimento preenchido; `aportar` e `saldo` abrem o formulário na linha do segundo
     investimento da aba Investimentos. `importar` abre "Importar da B3" com a prévia da planilha em MEU_COFRE_PLANILHA;
@@ -69,6 +69,11 @@ def _abrir_dialogo_de_revisao(janela: JanelaPrincipal, app: QApplication, modo: 
         dialogo = janela.aba_investimentos.abrir_cotacoes()
         dialogo.token.setText("brapi_token_de_exemplo")
         dialogo.botao_remover.setEnabled(True)
+        for _ in range(3):
+            app.processEvents()
+        return dialogo
+    if nome == "meta-aporte":
+        dialogo = janela.aba_investimentos.abrir_meta_aporte()
         for _ in range(3):
             app.processEvents()
         return dialogo

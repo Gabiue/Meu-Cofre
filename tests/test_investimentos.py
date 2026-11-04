@@ -10,7 +10,7 @@ from conftest import id_cat, id_conta
 from meu_cofre import indicadores
 from meu_cofre import investimentos as inv
 from meu_cofre import lancamentos as lanc
-from meu_cofre import metas, relatorios
+from meu_cofre import metas, relatorios, renda_variavel
 
 HOJE = date(2026, 10, 30)  # sexta-feira
 CDI_DIA = 0.04  # % ao dia (≈ 10,6% a.a.)
@@ -567,7 +567,11 @@ def test_comparar_cdi_sem_serie_ou_sem_dinheiro(conn):
 # --- Patrimônio e previsão ----------------------------------------------------------------------------------
 
 
-def test_patrimonio_soma_conta_investimentos_caixinhas_menos_cartao(conn):
+def _acao(conn, ticker="PETR4"):
+    return inv.criar(conn, HOJE, nome=ticker, tipo="acao", ticker=ticker)
+
+
+def test_patrimonio_e_so_investimentos_mais_caixinhas(conn):
     _serie_diaria(conn, "cdi", date(2026, 1, 1), HOJE)
     _lancar(conn, True, 1_000_000, date(2026, 10, 2), "Salário")
     _lancar(conn, False, 30_000, date(2026, 10, 3), "Mercado", conta="Cartão de crédito", metodo="cartao")
@@ -575,58 +579,166 @@ def test_patrimonio_soma_conta_investimentos_caixinhas_menos_cartao(conn):
     _aportar(conn, i, 200_000, date(2026, 10, 5))
     _guardar(conn, 100_000, date(2026, 10, 6))
     p = inv.patrimonio(conn, HOJE)
-    assert p["em_conta"] == 1_000_000 - 200_000 - 100_000 and p["divida"] == 30_000
+    assert set(p) == {"investimentos", "caixinhas", "renda_variavel", "total"}
     assert p["investimentos"] == inv.valor_atual(conn, i, HOJE)[0] > 200_000
     assert p["caixinhas"] == inv.listar(conn, HOJE)[0].valor_atual > 100_000
-    assert p["total"] == p["em_conta"] + p["investimentos"] + p["caixinhas"] - 30_000
+    assert p["total"] == p["investimentos"] + p["caixinhas"]
 
 
-def test_aportar_nao_muda_o_patrimonio(conn):
-    _lancar(conn, True, 1_000_000, date(2026, 10, 2), "Salário")
-    antes = inv.patrimonio(conn, HOJE)["total"]
-    _aportar(conn, _novo(conn), 400_000, date(2026, 10, 5))
-    assert inv.patrimonio(conn, HOJE)["total"] == antes == 1_000_000
+def test_patrimonio_nao_muda_com_conta_corrente_nem_cartao(conn):
+    i = _novo(conn)
+    _aportar(conn, i, 400_000, date(2026, 10, 5))
+    antes = inv.patrimonio(conn, HOJE)
+    _lancar(conn, True, 1_000_000, date(2026, 10, 6), "Salário")
+    _lancar(conn, False, 250_000, date(2026, 10, 7), "Moradia")
+    _lancar(conn, False, 30_000, date(2026, 10, 8), "Mercado", conta="Cartão de crédito", metodo="cartao")
+    assert inv.patrimonio(conn, HOJE) == antes
+    assert antes["total"] == 400_000
+
+
+def test_aportar_e_resgatar_mexem_no_patrimonio(conn):
+    i = _novo(conn)
+    _aportar(conn, i, 400_000, date(2026, 10, 5))
+    assert inv.patrimonio(conn, HOJE)["total"] == 400_000
+    inv.resgatar(conn, i, 100_000, id_conta(conn, "Inter"), date(2026, 10, 6))
+    assert inv.patrimonio(conn, HOJE)["total"] == 300_000
 
 
 def test_patrimonio_de_banco_vazio(conn):
-    assert inv.patrimonio(conn, HOJE) == {"em_conta": 0, "investimentos": 0, "caixinhas": 0, "divida": 0, "renda_variavel": 0, "total": 0}
+    assert inv.patrimonio(conn, HOJE) == {"investimentos": 0, "caixinhas": 0, "renda_variavel": 0, "total": 0}
 
 
-def test_meses_ate_o_fim_do_ano_contam_fracao_pelo_dia():
-    assert inv._meses_entre(date(2026, 10, 30), date(2026, 12, 31)) == pytest.approx(1 / 31 + 2)
-    assert inv._meses_entre(date(2026, 10, 1), date(2026, 12, 31)) == pytest.approx(30 / 31 + 2)
-    assert inv._meses_entre(date(2026, 12, 15), date(2026, 12, 31)) == pytest.approx(16 / 31)
-    assert inv._meses_entre(date(2026, 12, 31), date(2026, 12, 31)) == 0
+# --- Meta de aporte -------------------------------------------------------------------------------------------
 
 
-def test_previsao_decompoe_patrimonio_sobra_e_rendimento(conn):
-    _historico(conn)
+def test_meta_de_aporte_grava_le_e_apaga(conn):
+    assert inv.meta_aporte(conn) is None
+    inv.definir_meta_aporte(conn, 100_000)
+    assert inv.meta_aporte(conn) == 100_000
+    inv.definir_meta_aporte(conn, 0)
+    assert inv.meta_aporte(conn) is None
+    inv.definir_meta_aporte(conn, 5_000)
+    inv.definir_meta_aporte(conn, None)
+    assert inv.meta_aporte(conn) is None
+    with pytest.raises(ValueError, match="negativa"):
+        inv.definir_meta_aporte(conn, -1)
+
+
+def test_aportes_do_mes_soma_aportes_menos_resgates_por_ativo(conn):
+    a, b = _novo(conn, "CDB A"), _novo(conn, "CDB B")
+    _aportar(conn, a, 300_000, date(2026, 10, 2))
+    _aportar(conn, a, 100_000, date(2026, 10, 20))
+    inv.resgatar(conn, a, 50_000, id_conta(conn, "Inter"), date(2026, 10, 25))
+    _aportar(conn, b, 80_000, date(2026, 10, 3))
+    inv.registrar_saldo_real(conn, b, 999_999, date(2026, 10, 15))  # saldo real não é aporte
+    _aportar(conn, b, 777_000, date(2026, 9, 30))  # outro mês
+    _aportar(conn, b, 555_000, date(2026, 11, 1))
+    assert inv.aportes_do_mes(conn, 2026, 10) == [("CDB A", 350_000), ("CDB B", 80_000)]
+
+
+def test_aportes_do_mes_conta_caixinhas_acoes_e_some_quem_zerou(conn):
+    a = _novo(conn, "CDB A")
+    _aportar(conn, a, 100_000, date(2026, 10, 2))
+    inv.resgatar(conn, a, 100_000, id_conta(conn, "Inter"), date(2026, 10, 3))  # zerou: some da lista
+    _guardar(conn, 60_000, date(2026, 10, 4))
+    petr = _acao(conn)
+    renda_variavel.comprar(conn, petr, date(2026, 10, 6), 10, 3000, 150, id_conta(conn, "Inter"))  # 300,00 + 1,50 de taxa
+    renda_variavel.comprar(conn, petr, date(2026, 10, 7), 5, 3000, 0, None)  # só a posição: não mexeu na conta
+    assert inv.aportes_do_mes(conn, 2026, 10) == [(inv.NOME_CAIXINHAS, 60_000), ("PETR4", 30_150)]
+    renda_variavel.vender(conn, petr, date(2026, 10, 8), 4, 3500, 100, id_conta(conn, "Inter"))
+    assert dict(inv.aportes_do_mes(conn, 2026, 10))["PETR4"] == 30_150 - (14_000 - 100)
+
+
+def _progresso(conn, meta, aportado):
+    inv.definir_meta_aporte(conn, meta)
+    if aportado:
+        _aportar(conn, _novo(conn, f"CDB {aportado}"), aportado, date(2026, 10, 5))
+    return inv.progresso_do_mes(conn, HOJE)
+
+
+@pytest.mark.parametrize(
+    "aportado, situacao, falta",
+    [(94_900, "faltando", 5_100), (95_000, "batida", 0), (100_000, "batida", 0), (105_000, "batida", 0), (105_100, "passou", 0)],
+)
+def test_progresso_do_mes_bordas_da_margem_de_50_reais(conn, aportado, situacao, falta):
+    p = _progresso(conn, 100_000, aportado)
+    assert (p.meta, p.aportado, p.situacao, p.falta) == (100_000, aportado, situacao, falta)
+
+
+def test_progresso_sem_meta_e_sem_aporte(conn):
+    p = inv.progresso_do_mes(conn, HOJE)
+    assert (p.meta, p.aportado, p.por_ativo, p.situacao, p.falta) == (None, 0, [], "sem_meta", 0)
+    inv.definir_meta_aporte(conn, 100_000)
+    p = inv.progresso_do_mes(conn, HOJE)
+    assert (p.situacao, p.falta) == ("faltando", 100_000)
+
+
+def test_progresso_soma_varios_ativos_e_o_resgate_desconta(conn):
+    inv.definir_meta_aporte(conn, 100_000)
+    a, b = _novo(conn, "CDB A"), _novo(conn, "CDB B")
+    _aportar(conn, a, 60_000, date(2026, 10, 2))
+    _aportar(conn, b, 60_000, date(2026, 10, 3))
+    assert inv.progresso_do_mes(conn, HOJE).situacao == "passou"  # 1200 de 1000
+    inv.resgatar(conn, b, 20_000, id_conta(conn, "Inter"), date(2026, 10, 4))
+    p = inv.progresso_do_mes(conn, HOJE)
+    assert (p.aportado, p.situacao) == (100_000, "batida") and p.por_ativo == [("CDB A", 60_000), ("CDB B", 40_000)]
+
+
+# --- Previsão -------------------------------------------------------------------------------------------------
+
+
+def test_previsao_com_meta_soma_o_que_falta_do_mes_e_a_meta_dos_proximos(conn):
+    _serie_diaria(conn, "cdi", date(2026, 1, 1), HOJE)
+    inv.definir_meta_aporte(conn, 100_000)
+    _aportar(conn, _novo(conn), 40_000, date(2026, 10, 5))
+    v = inv.previsao_fim_do_ano(conn, HOJE)
+    pat = inv.patrimonio(conn, HOJE)["total"]
+    assert v["alvo"] == date(2026, 12, 31) and v["patrimonio_hoje"] == pat and v["meta"] == 100_000
+    assert v["aportes_planejados"] == 60_000 + 2 * 100_000  # falta de outubro + novembro + dezembro
+    assert v["rendimento_projetado"] > 0 and v["rendimento_dos_aportes"] > 0
+    # o aporte de dezembro rende menos que o de hoje: o rendimento dos aportes fica entre 0 e o da taxa cheia sobre tudo
+    assert v["rendimento_dos_aportes"] < v["aportes_planejados"] * v["rendimento_projetado"] / pat
+    assert v["total"] == pat + v["aportes_planejados"] + v["rendimento_projetado"] + v["rendimento_dos_aportes"] + v["proventos_projetados"]
+
+
+def test_previsao_com_meta_batida_so_soma_os_meses_seguintes(conn):
+    inv.definir_meta_aporte(conn, 100_000)
+    _aportar(conn, _novo(conn), 100_000, date(2026, 10, 5))
+    v = inv.previsao_fim_do_ano(conn, HOJE)
+    assert v["aportes_planejados"] == 200_000 and v["total"] == 100_000 + 200_000  # sem taxa, sem rendimento
+
+
+def test_previsao_sem_meta_e_so_o_rendimento(conn):
     _serie_diaria(conn, "cdi", date(2026, 1, 1), HOJE)
     i = _novo(conn)
     _aportar(conn, i, 1_000_000, date(2026, 10, 1))
     v = inv.previsao_fim_do_ano(conn, HOJE)
-    pat = inv.patrimonio(conn, HOJE)["total"]
-    assert v["alvo"] == date(2026, 12, 31) and v["patrimonio_hoje"] == pat
-    assert v["sobra_mensal"] == 200_000 and not v["sobra_estimativa"]
-    assert v["meses_restantes"] == pytest.approx(1 / 31 + 2)
-    assert v["sobra_projetada"] == round(200_000 * (1 / 31 + 2))
-    # rendimento: o valor de hoje seguiu rendendo até 31/12 à última taxa do CDI
+    assert v["meta"] is None and v["aportes_planejados"] == 0 and v["rendimento_dos_aportes"] == 0
     atual = inv.valor_atual(conn, i, HOJE)[0]
     dias = len(_uteis(HOJE, date(2026, 12, 31)))
     assert v["rendimento_projetado"] == round(atual * (1 + CDI_DIA / 100) ** dias) - atual
-    assert v["total"] == pat + v["sobra_projetada"] + v["rendimento_projetado"]
+    assert v["total"] == v["patrimonio_hoje"] + v["rendimento_projetado"]
 
 
-def test_previsao_sem_investimentos_nem_taxa(conn):
+def test_previsao_nao_muda_com_dinheiro_na_conta_corrente(conn):
     _historico(conn)
-    v = inv.previsao_fim_do_ano(conn, HOJE)
-    assert v["rendimento_projetado"] == 0 and v["total"] == v["patrimonio_hoje"] + v["sobra_projetada"]
+    _serie_diaria(conn, "cdi", date(2026, 1, 1), HOJE)
+    inv.definir_meta_aporte(conn, 100_000)
+    _aportar(conn, _novo(conn), 400_000, date(2026, 10, 1))
+    antes = inv.previsao_fim_do_ano(conn, HOJE), inv.serie_patrimonio_no_ano(conn, HOJE)
+    _lancar(conn, True, 900_000, date(2026, 10, 12), "Salário")
+    _lancar(conn, False, 300_000, date(2026, 10, 13), "Moradia")
+    _lancar(conn, False, 30_000, date(2026, 10, 14), "Mercado", conta="Cartão de crédito", metodo="cartao")
+    depois = inv.previsao_fim_do_ano(conn, HOJE), inv.serie_patrimonio_no_ano(conn, HOJE)
+    assert depois[0] == antes[0]
+    pd.testing.assert_frame_equal(depois[1], antes[1])
 
 
-def test_previsao_em_31_de_dezembro_e_o_proprio_patrimonio(conn):
-    _lancar(conn, True, 100_000, date(2026, 12, 1), "Salário")
+def test_previsao_em_31_de_dezembro_com_meta_so_falta_do_mes(conn):
+    inv.definir_meta_aporte(conn, 100_000)
+    _aportar(conn, _novo(conn), 30_000, date(2026, 12, 2))
     v = inv.previsao_fim_do_ano(conn, date(2026, 12, 31))
-    assert v["total"] == v["patrimonio_hoje"] == 100_000 and v["meses_restantes"] == 0
+    assert v["aportes_planejados"] == 70_000 and v["patrimonio_hoje"] == 30_000
 
 
 def test_previsao_inclui_as_caixinhas(conn):
@@ -637,9 +749,8 @@ def test_previsao_inclui_as_caixinhas(conn):
 
 
 def test_serie_do_patrimonio_no_ano(conn):
-    _historico(conn)
     _serie_diaria(conn, "cdi", date(2026, 1, 1), HOJE)
-    _lancar(conn, True, 1_000_000, date(2026, 1, 15), "Salário")
+    inv.definir_meta_aporte(conn, 100_000)
     _aportar(conn, _novo(conn), 500_000, date(2026, 6, 10))
     df = inv.serie_patrimonio_no_ano(conn, HOJE)
     assert list(df.columns) == ["data", "centavos", "projetado"] and df["centavos"].dtype == "int64"
@@ -648,12 +759,12 @@ def test_serie_do_patrimonio_no_ano(conn):
     assert (real["data"].diff().dropna().dt.days[:-1] == 7).all()
     assert real["centavos"].iloc[-1] == inv.patrimonio(conn, HOJE)["total"]
     assert list(proj["data"].dt.date) == [date(2026, 11, 30), date(2026, 12, 31)]  # 31/10 fica de fora: colado em hoje
+    assert proj["centavos"].iloc[0] >= real["centavos"].iloc[-1]
     assert proj["centavos"].iloc[-1] == inv.previsao_fim_do_ano(conn, HOJE)["total"]
     assert df["data"].is_monotonic_increasing
-    # o aporte é transferência: não derruba o patrimônio no dia dele
-    antes = real[real["data"] == pd.Timestamp("2026-06-04")]["centavos"].iloc[0]
-    depois = real[real["data"] == pd.Timestamp("2026-06-11")]["centavos"].iloc[0]
-    assert depois >= antes
+    # antes do primeiro aporte não havia nada guardado; o aporte entra no dia dele
+    assert real[real["data"] == pd.Timestamp("2026-06-04")]["centavos"].iloc[0] == 0
+    assert real[real["data"] == pd.Timestamp("2026-06-11")]["centavos"].iloc[0] >= 500_000
 
 
 def test_serie_em_31_de_dezembro_nao_tem_projecao(conn):
@@ -664,35 +775,11 @@ def test_serie_em_31_de_dezembro_nao_tem_projecao(conn):
 def test_resumo_junta_os_numeros_do_topo(conn):
     _historico(conn)
     _serie_diaria(conn, "cdi", date(2026, 1, 1), HOJE)
+    inv.definir_meta_aporte(conn, 100_000)
     _aportar(conn, _novo(conn), 1_000_000, date(2026, 2, 2))
+    _aportar(conn, _novo(conn, "CDB B"), 30_000, date(2026, 10, 2))
     r = inv.resumo(conn, HOJE)
     assert r.patrimonio == inv.patrimonio(conn, HOJE) and r.previsao == inv.previsao_fim_do_ano(conn, HOJE)
-    assert r.investido == r.patrimonio["investimentos"] + r.patrimonio["caixinhas"]
+    assert r.progresso == inv.progresso_do_mes(conn, HOJE) and r.progresso.aportado == 30_000
     assert r.rendimento_ano == inv.rendimento_portfolio(conn, date(2026, 1, 1), HOJE)
     assert r.pct_cdi == pytest.approx(100.0, abs=0.05)
-
-
-def test_previsao_nao_desconta_parcela_futura_duas_vezes(conn):
-    """A parcela futura já pesa na sobra do mês dela; a base da previsão só desconta a dívida do cartão até hoje."""
-    lanc.registrar(conn, entrada=False, valor_centavos=60_000, descricao="Cadeira", categoria_id=id_cat(conn, "Compras pessoais"),
-                   metodo="cartao", conta_id=id_conta(conn, "Inter"), data=date(2026, 10, 10), parcelas=3)
-    prev = inv.previsao_fim_do_ano(conn, HOJE)
-    pat = inv.patrimonio(conn, HOJE)
-    # "Patrimônio hoje" desconta a compra inteira (3 parcelas); a base da projeção só a parcela de outubro
-    assert pat["divida"] == 60_000
-    assert prev["patrimonio_hoje"] == pat["total"]  # bate com o topo da aba
-    assert prev["parcelas_futuras"] == 40_000  # nov e dez voltam: já pesam na sobra média
-    assert prev["total"] == pat["total"] + 40_000 + prev["sobra_projetada"] + prev["rendimento_projetado"]
-
-
-def test_serie_nao_tem_degrau_em_hoje_com_parcelas_futuras(conn):
-    """Compra parcelada: o ponto de hoje usa a mesma regra do passado e da projeção, sem queda pelas parcelas futuras."""
-    _lancar(conn, True, 1_000_000, date(2026, 1, 15), "Salário")
-    lanc.registrar(conn, entrada=False, valor_centavos=60_000, descricao="Cadeira", categoria_id=id_cat(conn, "Compras pessoais"),
-                   metodo="cartao", conta_id=id_conta(conn, "Inter"), data=date(2026, 10, 10), parcelas=3)
-    df = inv.serie_patrimonio_no_ano(conn, HOJE)
-    real = df[~df["projetado"]]
-    base = inv.patrimonio(conn, HOJE)["total"] + inv.previsao_fim_do_ano(conn, HOJE)["parcelas_futuras"]
-    assert real["centavos"].iloc[-1] == base  # só as parcelas até hoje pesam
-    assert real["centavos"].iloc[-1] > inv.patrimonio(conn, HOJE)["total"]
-    assert real["centavos"].iloc[-1] - real["centavos"].iloc[-2] > -60_000 / 3 - 1  # no máximo a parcela de outubro

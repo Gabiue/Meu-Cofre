@@ -465,3 +465,20 @@ def test_gerenciar_abre_a_aba_na_janela(app, conn):
     d.botao_gerenciar.click()
     assert j.aba_atual == "recorrentes" and j.dialogo is None
     j.close()
+
+
+def test_reativar_encerrada_pela_lista(app, conn, varias):
+    rec.encerrar(conn, 1, HOJE)
+    aba = _aba(conn)
+    avisos = []
+    aba.alterado.connect(avisos.append)
+    aba.mostrar_encerradas(True)
+    QApplication.processEvents()  # mostra as linhas recém-criadas
+    video = next(l for l in aba.linhas() if l.nome.texto() == "Vídeo")
+    assert video.botao_reativar.isVisibleTo(aba)
+    video.botao_reativar.click()
+    QApplication.processEvents()  # apaga as linhas antigas (deleteLater)
+    assert rec.obter(conn, 1)["ativa"] == 1
+    assert avisos == ["Reativado: Vídeo. Volta a cobrar a partir deste mês."]
+    ativo = next(l for l in aba.linhas() if l.nome.texto() == "Vídeo")
+    assert not ativo.botao_reativar.isVisibleTo(aba) and ativo._acoes.isVisibleTo(aba)

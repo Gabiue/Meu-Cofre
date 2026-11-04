@@ -276,16 +276,33 @@ def retomar(conn: sqlite3.Connection, recorrente_id: int, hoje: date) -> None:
     rec = _obter(conn, recorrente_id)
     if not rec["ativa"] or not rec["pausada"]:
         return
-    inicio = date.fromisoformat(rec["inicio"])
     with conn:
-        if (inicio.year, inicio.month) < (hoje.year, hoje.month):
-            mes_passado = date(hoje.year, hoje.month, 1).toordinal() - 1
-            for ano, mes in _meses(inicio, date.fromordinal(mes_passado)):
-                conn.execute(
-                    "INSERT OR IGNORE INTO recorrentes_meses (recorrente_id, mes, lancamento_id) VALUES (?, ?, NULL)",
-                    (recorrente_id, f"{ano}-{mes:02d}"),
-                )
+        _pular_meses_passados(conn, rec, hoje)
         conn.execute("UPDATE recorrentes SET pausada = 0 WHERE id = ?", (recorrente_id,))
+
+
+def reativar(conn: sqlite3.Connection, recorrente_id: int, hoje: date) -> None:
+    """Desfaz o encerramento: volta a gerar a partir do mês de `hoje`, sem cobranças retroativas."""
+    rec = _obter(conn, recorrente_id)
+    if rec["ativa"]:
+        return
+    with conn:
+        _pular_meses_passados(conn, rec, hoje)
+        conn.execute("UPDATE recorrentes SET ativa = 1, pausada = 0, fim = NULL WHERE id = ?", (recorrente_id,))
+
+
+def _pular_meses_passados(conn: sqlite3.Connection, rec: sqlite3.Row, hoje: date) -> None:
+    """Marca os meses anteriores a `hoje` que ficaram sem lançamento (pausa ou encerramento) como já tratados
+    (`lancamento_id` NULL), pra não virarem cobranças retroativas."""
+    inicio = date.fromisoformat(rec["inicio"])
+    if (inicio.year, inicio.month) >= (hoje.year, hoje.month):
+        return
+    mes_passado = date(hoje.year, hoje.month, 1).toordinal() - 1
+    for ano, mes in _meses(inicio, date.fromordinal(mes_passado)):
+        conn.execute(
+            "INSERT OR IGNORE INTO recorrentes_meses (recorrente_id, mes, lancamento_id) VALUES (?, ?, NULL)",
+            (rec["id"], f"{ano}-{mes:02d}"),
+        )
 
 
 def encerrar(conn: sqlite3.Connection, recorrente_id: int, hoje: date) -> None:

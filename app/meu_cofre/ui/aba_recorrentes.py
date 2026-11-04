@@ -95,6 +95,7 @@ class LinhaRecorrente(QFrame):
     editar = Signal(int)
     alternar_pausa = Signal(int)
     encerrar = Signal(int)
+    reativar = Signal(int)
 
     def __init__(self, r, parent: QWidget | None = None):
         super().__init__(parent)
@@ -149,6 +150,10 @@ class LinhaRecorrente(QFrame):
         self._corpo.setSpacing(2 * tema.ESPACO)
         self._corpo.addWidget(principal, 1)
         self._corpo.addWidget(self._acoes, 0, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        self.botao_reativar = _acao("Reativar")
+        self.botao_reativar.clicked.connect(lambda: self.reativar.emit(self.id_recorrente))
+        self.botao_reativar.setVisible(not r.ativa)
+        self._corpo.addWidget(self.botao_reativar, 0, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
 
     @staticmethod
     def _texto_historico(r) -> str:
@@ -378,6 +383,7 @@ class AbaRecorrentes(QScrollArea):
             linha.editar.connect(self.editar)
             linha.alternar_pausa.connect(self.alternar_pausa)
             linha.encerrar.connect(self.encerrar)
+            linha.reativar.connect(self.reativar)
             coluna.addWidget(linha)
         return quadro
 
@@ -419,6 +425,11 @@ class AbaRecorrentes(QScrollArea):
         nome = self._nome(recorrente_id)
         recorrentes.encerrar(self.conn, recorrente_id, self._hoje())
         self._avisar(f"Encerrado: {nome}. O histórico fica.")
+
+    def reativar(self, recorrente_id: int) -> None:
+        nome = self._nome(recorrente_id)
+        recorrentes.reativar(self.conn, recorrente_id, self._hoje())
+        self._avisar(f"Reativado: {nome}. Volta a cobrar a partir deste mês.")
 
     def _avisar(self, mensagem: str) -> None:
         self.recarregar()

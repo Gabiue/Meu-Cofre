@@ -10,6 +10,7 @@ import sqlite3
 import time
 from collections.abc import Callable
 from datetime import date
+from functools import partial
 
 from PySide6.QtCore import QObject, QRunnable, QThreadPool, Signal
 
@@ -31,7 +32,7 @@ class _Busca(QRunnable):
 
     def run(self) -> None:
         pontos, erros = indicadores.buscar_plano(self._plano, self._buscar or indicadores._buscar_http)
-        dados, erros_cotacoes = cotacoes.buscar_lote(self._tickers, self._buscar_cotacao or cotacoes._buscar_http)
+        dados, erros_cotacoes = cotacoes.buscar_lote(self._tickers, self._buscar_cotacao)
         self._sinais.pronto.emit(pontos, erros, dados, erros_cotacoes)
 
 
@@ -75,13 +76,19 @@ class AtualizadorIndicadores(QObject):
             self.status = indicadores.montar_status(self.conn, 0, {})
             return False
         self.em_andamento = True
-        self._pool.start(_Busca(plano, tickers, self._buscar, self._buscar_cotacao, self._sinais))
+        # token e pausa do Yahoo são lidos aqui, na thread principal: a thread de rede não toca no banco
+        buscar_cotacao = self._buscar_cotacao or partial(
+            cotacoes._buscar_http, token=cotacoes.token_brapi(self.conn), yahoo_pausado=cotacoes.yahoo_pausado(self.conn)
+        )
+        self._pool.start(_Busca(plano, tickers, self._buscar, buscar_cotacao, self._sinais))
         return True
 
     def _terminou(self, pontos: dict, erros: dict, dados: dict, erros_cotacoes: dict) -> None:
         """Na thread principal: grava o que chegou e avisa."""
         self.em_andamento = False
         self.status = indicadores.montar_status(self.conn, indicadores.gravar(self.conn, pontos), erros)
+        if cotacoes.houve_429_do_yahoo(dados, erros_cotacoes):
+            cotacoes.pausar_yahoo(self.conn)
         self.status["cotacoes"] = cotacoes.montar_status(cotacoes.gravar(self.conn, dados), erros_cotacoes, dados)
         self.concluido.emit(self.status)
 

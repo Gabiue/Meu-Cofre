@@ -172,6 +172,7 @@ class JanelaPrincipal(QMainWindow):
         self.aba_investimentos = AbaInvestimentos(self.conn, self._hoje)
         self.aba_investimentos.alterado.connect(self._lancamento_gravado)
         self.aba_investimentos.ver_metas.connect(lambda: self.mostrar_aba("metas"))
+        self.aba_investimentos.cotacoes_alteradas.connect(self._cotacoes_alteradas)
         self._paginas = QStackedWidget()
         self._paginas.addWidget(rolagem)
         self._paginas.addWidget(self.aba_recorrentes)
@@ -343,6 +344,12 @@ class JanelaPrincipal(QMainWindow):
         self.aba_recorrentes.recarregar()
         self.aba_cartoes.recarregar()
         self.aba_metas.recarregar()
+        self.aba_investimentos.recarregar()
+
+    def _cotacoes_alteradas(self) -> None:
+        """O token da brapi mudou: busca de novo já e refaz o selo."""
+        self._atualizador.disparar(forcar=True)
+        self.aba_investimentos.definir_status(self._atualizador.status, atualizando=self._atualizador.em_andamento)
         self.aba_investimentos.recarregar()
 
     def _taxas_atualizadas(self, status: dict) -> None:

@@ -1,11 +1,12 @@
 """Cotações e proventos por cota (F9): interpretação das respostas, fallback, gravação e status sem rede.
 Nunca usa a internet: `_obter_json` é trocado por respostas falsas e o buscador é injetado."""
 
-from datetime import date, datetime, timezone
+import urllib.error
+from datetime import date, datetime, timedelta, timezone
 
 import pytest
 
-from meu_cofre import cotacoes
+from meu_cofre import cotacoes, db
 from meu_cofre import investimentos as inv
 
 HOJE = date(2026, 10, 30)
@@ -131,13 +132,9 @@ class Rede:
         raise OSError("sem rota")
 
 
-def _rede(monkeypatch, respostas, token=None):
+def _rede(monkeypatch, respostas):
     rede = Rede(respostas)
     monkeypatch.setattr(cotacoes, "_obter_json", rede)
-    if token:
-        monkeypatch.setenv(cotacoes.VAR_BRAPI, token)
-    else:
-        monkeypatch.delenv(cotacoes.VAR_BRAPI, raising=False)
     return rede
 
 
@@ -150,8 +147,8 @@ def test_http_b3_e_a_fonte_do_preco_e_o_yahoo_429_nao_atrapalha(monkeypatch):
 
 
 def test_http_com_token_o_brapi_traz_historico_e_o_preco_continua_da_b3(monkeypatch):
-    rede = _rede(monkeypatch, {"b3.com.br": B3_MXRF11, "brapi.dev": BRAPI}, token="segredo")
-    d = cotacoes._buscar_http("MXRF11")
+    rede = _rede(monkeypatch, {"b3.com.br": B3_MXRF11, "brapi.dev": BRAPI})
+    d = cotacoes._buscar_http("MXRF11", token="segredo")
     assert (d.preco_centavos, d.fonte, d.fonte_historico) == (890, "b3", "brapi")
     assert len(d.fechamentos) == 2 and len(d.proventos) == 2
     url, cab = rede.pedidos[1]
@@ -160,8 +157,8 @@ def test_http_com_token_o_brapi_traz_historico_e_o_preco_continua_da_b3(monkeypa
 
 
 def test_http_b3_fora_do_ar_o_brapi_da_o_preco(monkeypatch):
-    _rede(monkeypatch, {"b3.com.br": OSError("fora"), "brapi.dev": BRAPI}, token="t")
-    d = cotacoes._buscar_http("MXRF11")
+    _rede(monkeypatch, {"b3.com.br": OSError("fora"), "brapi.dev": BRAPI})
+    d = cotacoes._buscar_http("MXRF11", token="t")
     assert (d.preco_centavos, d.fonte, d.fonte_historico) == (895, "brapi", "brapi")
 
 
@@ -291,3 +288,64 @@ def test_um_ticker_invalido_nao_e_falta_de_internet():
     assert ok["sem_rede"] is False and ok["ok"] is False
     tudo_falhou = cotacoes.montar_status(0, {"PETR4": "timeout"}, {})
     assert tudo_falhou["sem_rede"] is True
+
+
+def _http_error(codigo):
+    return urllib.error.HTTPError("https://x", codigo, "erro", {}, None)
+
+
+def test_token_do_ambiente_vence_o_salvo_no_app(conn, monkeypatch):
+    monkeypatch.delenv(cotacoes.VAR_BRAPI, raising=False)
+    assert cotacoes.token_brapi(conn) == ""
+    db.gravar_preferencia(conn, cotacoes.PREF_TOKEN, " salvo ")
+    assert cotacoes.token_brapi(conn) == "salvo"
+    monkeypatch.setenv(cotacoes.VAR_BRAPI, "ambiente")
+    assert cotacoes.token_brapi(conn) == "ambiente"
+
+
+def test_sem_fonte_de_historico_considera_o_token_salvo(conn, monkeypatch):
+    monkeypatch.delenv(cotacoes.VAR_BRAPI, raising=False)
+    _criar(conn, "PETR4")
+    assert cotacoes.sem_fonte_de_historico(conn)
+    db.gravar_preferencia(conn, cotacoes.PREF_TOKEN, "t")
+    assert not cotacoes.sem_fonte_de_historico(conn)
+
+
+def test_testar_token(monkeypatch):
+    chamadas = []
+    monkeypatch.setattr(cotacoes, "_obter_json", lambda url, cab=None: chamadas.append((url, cab)) or BRAPI)
+    assert cotacoes.testar_token("abc") is None
+    assert "PETR4" in chamadas[0][0] and chamadas[0][1] == {"Authorization": "Bearer abc"}
+
+    def falha(erro):
+        def _f(*_a, **_k):
+            raise erro
+        return _f
+
+    monkeypatch.setattr(cotacoes, "_obter_json", falha(_http_error(401)))
+    assert "inválido" in cotacoes.testar_token("x")
+    monkeypatch.setattr(cotacoes, "_obter_json", falha(_http_error(500)))
+    assert "500" in cotacoes.testar_token("x")
+    monkeypatch.setattr(cotacoes, "_obter_json", falha(urllib.error.URLError("sem rota")))
+    assert "internet" in cotacoes.testar_token("x")
+
+
+def test_yahoo_429_e_marcado_e_pausado_pula_o_yahoo(monkeypatch):
+    rede = _rede(monkeypatch, {"b3.com.br": B3_MXRF11, "yahoo": _http_error(429)})
+    assert cotacoes._buscar_http("MXRF11").yahoo_429  # o preço veio da B3 e só o Yahoo falhou
+    rede.pedidos.clear()
+    d = cotacoes._buscar_http("MXRF11", yahoo_pausado=True)
+    assert not d.yahoo_429 and not any("yahoo" in u for u, _c in rede.pedidos)
+
+
+def test_429_do_yahoo_quando_tudo_falha_aparece_no_erro():
+    assert cotacoes.houve_429_do_yahoo({}, {"X": "RuntimeError: b3: OSError: fora; yahoo: HTTPError: HTTP Error 429: Too Many Requests"})
+    assert not cotacoes.houve_429_do_yahoo({}, {"X": "RuntimeError: b3: OSError: fora; yahoo: OSError: sem rota"})
+
+
+def test_pausa_do_yahoo_dura_seis_horas(conn):
+    agora = datetime(2026, 10, 30, 10, 0)
+    assert not cotacoes.yahoo_pausado(conn, agora)
+    cotacoes.pausar_yahoo(conn, agora)
+    assert cotacoes.yahoo_pausado(conn, agora + timedelta(hours=5, minutes=59))
+    assert not cotacoes.yahoo_pausado(conn, agora + timedelta(hours=6))

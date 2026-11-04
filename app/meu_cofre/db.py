@@ -19,3 +19,17 @@ def conectar(caminho: Path | str | None = None) -> sqlite3.Connection:
     migracoes.preparar(conn)
     seed.aplicar(conn)
     return conn
+
+
+def ler_preferencia(conn: sqlite3.Connection, chave: str, padrao: str | None = None) -> str | None:
+    linha = conn.execute("SELECT valor FROM preferencias WHERE chave = ?", (chave,)).fetchone()
+    return linha["valor"] if linha else padrao
+
+
+def gravar_preferencia(conn: sqlite3.Connection, chave: str, valor: str | None) -> None:
+    """Grava a preferência; `valor=None` apaga."""
+    if valor is None:
+        conn.execute("DELETE FROM preferencias WHERE chave = ?", (chave,))
+    else:
+        conn.execute("INSERT INTO preferencias (chave, valor) VALUES (?, ?) ON CONFLICT (chave) DO UPDATE SET valor = excluded.valor", (chave, valor))
+    conn.commit()

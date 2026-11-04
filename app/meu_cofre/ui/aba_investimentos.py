@@ -41,6 +41,7 @@ from meu_cofre.ui.componentes import (
 )
 from meu_cofre.ui.cartao_acao import CartaoAcao, HistoricoAtivo
 from meu_cofre.ui.dialogo_ativo import DialogoAtivo
+from meu_cofre.ui.dialogo_cotacoes import DialogoCotacoes
 from meu_cofre.ui.dialogo_importar_b3 import DialogoImportarB3
 from meu_cofre.ui.dialogo_meta import reais
 from meu_cofre.ui.graficos import EstadoVazio, PainelPatrimonio, PainelProventos
@@ -359,6 +360,7 @@ class AbaInvestimentos(QScrollArea):
 
     alterado = Signal(str)
     ver_metas = Signal()
+    cotacoes_alteradas = Signal()  # o token da brapi mudou: a janela força uma nova busca das cotações
 
     def __init__(self, conn: sqlite3.Connection, hoje: Callable[[], date] = date.today, parent: QWidget | None = None):
         super().__init__(parent)
@@ -370,6 +372,7 @@ class AbaInvestimentos(QScrollArea):
         self._atualizando = False
         self.dialogo: DialogoAtivo | None = None
         self.dialogo_b3: DialogoImportarB3 | None = None
+        self.dialogo_cotacoes: DialogoCotacoes | None = None
 
         self.setWidgetResizable(True)
         self.setFrameShape(QFrame.Shape.NoFrame)
@@ -416,6 +419,13 @@ class AbaInvestimentos(QScrollArea):
         self.selo = _rotulo("", "SeloTaxas")
         self.selo.setWordWrap(True)
         cartao.corpo.addWidget(self.selo)
+        self.botao_cotacoes = QPushButton("Cotações…")
+        self.botao_cotacoes.setObjectName("BotaoLink")
+        self.botao_cotacoes.setToolTip("Token gratuito da brapi: histórico de preços e proventos de ações e FIIs")
+        self.botao_cotacoes.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.botao_cotacoes.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.botao_cotacoes.clicked.connect(lambda: self.abrir_cotacoes())
+        cartao.corpo.addWidget(self.botao_cotacoes, 0, Qt.AlignmentFlag.AlignLeft)
         return cartao
 
     def _montar_grafico(self) -> Cartao:
@@ -764,6 +774,16 @@ class AbaInvestimentos(QScrollArea):
         dialogo.open()
         if caminho:
             dialogo.carregar(caminho)
+        return dialogo
+
+    def abrir_cotacoes(self) -> DialogoCotacoes:
+        """"Cotações…": o token da brapi."""
+        dialogo = DialogoCotacoes(self.conn, parent=self)
+        dialogo.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+        dialogo.alterado.connect(self.cotacoes_alteradas)
+        dialogo.finished.connect(lambda _codigo: setattr(self, "dialogo_cotacoes", None))
+        self.dialogo_cotacoes = dialogo
+        dialogo.open()
         return dialogo
 
     def novo_investimento(self) -> DialogoAtivo | None:

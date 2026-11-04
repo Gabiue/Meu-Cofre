@@ -1,6 +1,6 @@
 """Aba "Investimentos" (docs/design/telas.md, F8 e F9): renda fixa, Tesouro Direto, ações e FIIs, patrimônio e previsão.
 
-Topo: Patrimônio hoje, Investido (valor atual), Rendimento no ano (com "x% do CDI", só renda fixa e Tesouro) e a
+Topo: Patrimônio hoje (investimentos + caixinhas), Aporte do mês (contra a meta), Rendimento no ano (com "x% do CDI", só renda fixa e Tesouro) e a
 Previsão 31/12 (dourado), com o selo das taxas do Banco Central e das cotações. Depois o gráfico do patrimônio no ano,
 e a lista agrupada por tipo (as caixinhas das metas na renda fixa) com as ações Aportar, Resgatar, Atualizar saldo e
 Editar; em ações e FIIs, Comprar, Vender, Provento e Editar. Os formulários abrem na própria linha. No fim, o cartão
@@ -44,6 +44,7 @@ from meu_cofre.ui.dialogo_ativo import DialogoAtivo
 from meu_cofre.ui.dialogo_cotacoes import DialogoCotacoes
 from meu_cofre.ui.dialogo_importar_b3 import DialogoImportarB3
 from meu_cofre.ui.dialogo_meta import reais
+from meu_cofre.ui.dialogo_meta_aporte import DialogoMetaAporte
 from meu_cofre.ui.graficos import EstadoVazio, PainelPatrimonio, PainelProventos
 
 LARGURA_MINIMA_NUMERO = 230  # cabe "R$ 123.456,78" em 30 px
@@ -68,34 +69,54 @@ def _curto(dia: date) -> str:
 
 
 def texto_da_previsao(prev: dict) -> str:
-    """"R$ 8.200 hoje + R$ 4.100 de sobra + R$ 310 de rendimento" (reais cheios; negativos com −; o valor não quebra)."""
+    """"R$ 724 hoje + R$ 1.267 de aportes planejados + R$ 15 de rendimento" (reais cheios; o valor não quebra)."""
 
     def valor(centavos: int) -> str:
         return formatar_brl_inteiro(abs(centavos)).replace(" ", "\u00a0")
 
-    def sinal(centavos: int) -> str:
-        return "−" if centavos < 0 else "+"
-
-    parcelas = prev.get("parcelas_futuras", 0)
-    trecho_parcelas = f" + {valor(parcelas)} de parcelas futuras (já na sobra)" if parcelas > 0 else ""
-    proventos = prev.get("proventos_projetados", 0)
-    trecho_proventos = f" + {valor(proventos)} de proventos" if proventos > 0 else ""
-    return (
-        f"{valor(prev['patrimonio_hoje'])} hoje{trecho_parcelas} {sinal(prev['sobra_projetada'])} "
-        f"{valor(prev['sobra_projetada'])} de sobra "
-        f"{sinal(prev['rendimento_projetado'])} {valor(prev['rendimento_projetado'])} de rendimento{trecho_proventos}"
-    )
+    rendimento = prev["rendimento_projetado"] + prev["rendimento_dos_aportes"]
+    texto = f"{valor(prev['patrimonio_hoje'])} hoje"
+    if prev["meta"] is not None:
+        texto += f" + {valor(prev['aportes_planejados'])} de aportes planejados"
+    texto += f" {'−' if rendimento < 0 else '+'} {valor(rendimento)} de rendimento"
+    if prev["proventos_projetados"] > 0:
+        texto += f" + {valor(prev['proventos_projetados'])} de proventos"
+    return texto if prev["meta"] is not None else texto + " · sem meta de aporte"
 
 
 def explicacao_da_previsao(prev: dict) -> str:
-    meses = f"{prev['meses_restantes']:.1f}".replace(".", ",")
-    texto = (
-        f"Patrimônio de hoje + sobra média ({reais(prev['sobra_mensal'])}/mês × {meses} meses) + rendimento dos "
-        "investimentos e caixinhas até 31/12, com as taxas de hoje e sem novos aportes."
-    )
-    if prev.get("proventos_projetados"):
+    if prev["meta"] is None:
+        texto = (
+            "Patrimônio guardado hoje (investimentos + caixinhas) + o rendimento até 31/12, com as taxas de hoje. "
+            "Defina uma meta de aporte pra prever os aportes."
+        )
+    else:
+        texto = (
+            f"Patrimônio guardado hoje (investimentos + caixinhas) + o que falta da meta de {reais(prev['meta'])} neste mês "
+            "+ a meta em cada mês seguinte + o rendimento até 31/12, com as taxas de hoje (os aportes futuros rendem como "
+            "a carteira atual). Conta corrente e cartão não entram."
+        )
+    if prev["proventos_projetados"]:
         texto += " Ações e FIIs ficam com a cotação de hoje; só os proventos estimados pelo histórico são somados."
-    return texto + (" A sobra está estimada com poucos dados." if prev["sobra_estimativa"] else "")
+    return texto
+
+
+def texto_do_aporte(p: investimentos.ProgressoAporte) -> str:
+    """"de R$ 1.000 · faltam R$ 267,45" (ou "meta batida ✓", "passou R$ 120", "sem meta · definir")."""
+    if p.meta is None:
+        return "sem meta · definir"
+    situacao = {
+        "faltando": f"faltam {reais(p.falta)}", "batida": "meta batida ✓", "passou": f"passou {reais(p.aportado - p.meta)}",
+    }[p.situacao]
+    return f"de {reais(p.meta)} · {situacao}"
+
+
+def texto_por_ativo(por_ativo: list[tuple[str, int]], limite: int = 3) -> str:
+    """"Porquinho R$ 200 · FIRF R$ 250 · +2" (os `limite` primeiros; o resto vira "+N")."""
+    partes = [f"{nome} {reais(v)}" for nome, v in por_ativo[:limite]]
+    if len(por_ativo) > limite:
+        partes.append(f"+{len(por_ativo) - limite}")
+    return " · ".join(partes)
 
 
 def texto_do_selo(conn: sqlite3.Connection, status: dict | None, atualizando: bool) -> str:
@@ -407,13 +428,16 @@ class AbaInvestimentos(QScrollArea):
         linha.addWidget(self.botao_novo)
         cartao = Cartao("Investimentos", "Patrimônio, rendimento e a previsão até o fim do ano", acao=botoes)
         self._patrimonio = NumeroDestaque("Patrimônio hoje", "", "")
-        self._investido = NumeroDestaque("Investido", "", "")
+        self._aporte = NumeroDestaque("Aporte do mês", "", "")
+        self._aporte_ativos = _rotulo("", "NumeroApoio")
+        self._aporte_ativos.setWordWrap(True)
+        self._aporte.adicionar(self._aporte_ativos)
         self._rendimento = NumeroDestaque("Rendimento no ano", "", "")
         self._pilula_cdi = Pilula("", "neutra")
         self._rendimento.adicionar(self._pilula_cdi)
         self._previsao = NumeroDestaque("Previsão 31/12", "", "", destaque=True)
         grade = GradeResponsiva(largura_minima_item=LARGURA_MINIMA_NUMERO, espaco=3 * tema.ESPACO)
-        for numero in (self._patrimonio, self._investido, self._rendimento, self._previsao):
+        for numero in (self._patrimonio, self._aporte, self._rendimento, self._previsao):
             grade.adicionar(numero)
         cartao.corpo.addWidget(grade)
         self.selo = _rotulo("", "SeloTaxas")
@@ -425,7 +449,18 @@ class AbaInvestimentos(QScrollArea):
         self.botao_cotacoes.setCursor(Qt.CursorShape.PointingHandCursor)
         self.botao_cotacoes.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.botao_cotacoes.clicked.connect(lambda: self.abrir_cotacoes())
-        cartao.corpo.addWidget(self.botao_cotacoes, 0, Qt.AlignmentFlag.AlignLeft)
+        self.botao_meta_aporte = QPushButton("Meta de aporte…")
+        self.botao_meta_aporte.setObjectName("BotaoLink")
+        self.botao_meta_aporte.setToolTip("Quanto você quer aportar por mês: ela guia o progresso do mês e a previsão de 31/12")
+        self.botao_meta_aporte.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.botao_meta_aporte.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.botao_meta_aporte.clicked.connect(lambda: self.abrir_meta_aporte())
+        links = QHBoxLayout()
+        links.setSpacing(2 * tema.ESPACO)
+        links.addWidget(self.botao_cotacoes)
+        links.addWidget(self.botao_meta_aporte)
+        links.addStretch(1)
+        cartao.corpo.addLayout(links)
         return cartao
 
     def _montar_grafico(self) -> Cartao:
@@ -503,13 +538,10 @@ class AbaInvestimentos(QScrollArea):
 
     def _carregar_numeros(self, r: investimentos.ResumoInvestimentos) -> None:
         pat = r.patrimonio
-        self._patrimonio.definir(formatar_brl(pat["total"]), "em conta + investido − cartão")
-        partes = []
-        if pat["caixinhas"]:
-            partes.append(f"inclui {reais(pat['caixinhas'])} das caixinhas")
-        if pat["renda_variavel"]:
-            partes.append(f"{reais(pat['renda_variavel'])} em ações e FIIs")
-        self._investido.definir(formatar_brl(r.investido), ", ".join(partes) if partes else "valor atual, bruto")
+        self._patrimonio.definir(formatar_brl(pat["total"]), "investimentos + caixinhas")
+        self._aporte.definir(formatar_brl(r.progresso.aportado), texto_do_aporte(r.progresso))
+        self._aporte_ativos.setText(texto_por_ativo(r.progresso.por_ativo))
+        self._aporte_ativos.setVisible(bool(r.progresso.por_ativo))
         rend = r.rendimento_ano
         self._rendimento.definir(
             _brl_com_sinal(rend.centavos), _pct(rend.percentual, sinal=True) + " no ano" if rend.percentual is not None else "ainda sem aplicações"
@@ -783,6 +815,14 @@ class AbaInvestimentos(QScrollArea):
         dialogo.alterado.connect(self.cotacoes_alteradas)
         dialogo.finished.connect(lambda _codigo: setattr(self, "dialogo_cotacoes", None))
         self.dialogo_cotacoes = dialogo
+        dialogo.open()
+        return dialogo
+
+    def abrir_meta_aporte(self) -> DialogoMetaAporte:
+        """"Meta de aporte…": a meta mensal; ao salvar, os números e o gráfico se refazem."""
+        dialogo = DialogoMetaAporte(self.conn, parent=self)
+        dialogo.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+        dialogo.alterado.connect(self.recarregar)
         dialogo.open()
         return dialogo
 

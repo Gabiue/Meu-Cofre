@@ -79,8 +79,8 @@ def test_quantidade_formata_e_le():
 
 
 def test_previsao_com_proventos_e_selo_com_cotacoes(conn):
-    prev = {"patrimonio_hoje": 800_000, "sobra_projetada": 400_000, "rendimento_projetado": 3000, "proventos_projetados": 11_000, "sobra_mensal": 200_000,
-            "meses_restantes": 2.0, "sobra_estimativa": False}
+    prev = {"patrimonio_hoje": 800_000, "aportes_planejados": 400_000, "rendimento_projetado": 3000, "rendimento_dos_aportes": 0,
+            "proventos_projetados": 11_000, "meta": 200_000}
     assert texto_da_previsao(prev).replace("\u00a0", " ").endswith("+ R$ 30 de rendimento + R$ 110 de proventos")
     assert "proventos" not in texto_da_previsao({**prev, "proventos_projetados": 0})
     assert "cotações" not in texto_do_selo(conn, None, False)  # sem ações nem FIIs, o selo não fala de cotação
@@ -159,8 +159,7 @@ def test_topo_inclui_renda_variavel(app, conn):
     aba = _aba(conn)
     pat = inv.patrimonio(conn, HOJE)
     assert pat["renda_variavel"] == 297_000 + 160_000  # PETR4 cotada, HGLG11 pelo custo
-    assert aba._patrimonio.valor.text() == "R$ 4.570,00" and aba._investido.valor.text() == "R$ 4.570,00"
-    assert "em ações e FIIs" in aba._investido.apoio.text()
+    assert aba._patrimonio.valor.text() == "R$ 4.570,00"
     assert "proventos" in aba._previsao.apoio.text()
 
 

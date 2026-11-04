@@ -954,7 +954,7 @@ class PainelPatrimonio(QWidget):
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
         self._linha = _LinhaPatrimonio()
-        self._vazio = EstadoVazio("linha", "Sem dados no ano ainda", "Lance receitas e gastos pra ver o patrimônio crescer")
+        self._vazio = EstadoVazio("linha", "Sem dados no ano ainda", "Faça um aporte ou guarde numa caixinha pra ver o patrimônio crescer")
         conteudo = QWidget()
         coluna = QVBoxLayout(conteudo)
         coluna.setContentsMargins(0, 0, 0, 0)

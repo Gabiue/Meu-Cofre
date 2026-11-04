@@ -18,7 +18,9 @@ from meu_cofre.ui.aba_investimentos import (
     AbaInvestimentos,
     explicacao_da_previsao,
     texto_da_previsao,
+    texto_do_aporte,
     texto_do_selo,
+    texto_por_ativo,
 )
 from meu_cofre.ui.atualizador import AtualizadorIndicadores
 from meu_cofre.ui.dialogo_ativo import DialogoAtivo, ler_taxa, texto_taxa
@@ -92,18 +94,40 @@ def _nomes(aba):
 # --- Textos puros ------------------------------------------------------------------------------------
 
 
-def test_texto_da_previsao_decompoe_com_sinais():
-    prev = {"patrimonio_hoje": 820_000, "sobra_projetada": 410_000, "rendimento_projetado": 31_000}
-    assert texto_da_previsao(prev) == "R$ 8.200 hoje + R$ 4.100 de sobra + R$ 310 de rendimento"
-    prev["sobra_projetada"] = -50_000
-    assert "− R$ 500 de sobra" in texto_da_previsao(prev)
+def test_texto_da_previsao_decompoe_hoje_aportes_e_rendimento():
+    prev = {"patrimonio_hoje": 72_400, "aportes_planejados": 126_700, "rendimento_projetado": 1_000, "rendimento_dos_aportes": 500,
+            "proventos_projetados": 0, "meta": 100_000}
+    assert texto_da_previsao(prev).replace("\u00a0", " ") == "R$ 724 hoje + R$ 1.267 de aportes planejados + R$ 15 de rendimento"
+    assert "sem meta" not in texto_da_previsao(prev)
 
 
-def test_explicacao_da_previsao_cita_a_sobra_e_o_pouco_de_dados():
-    prev = {"sobra_mensal": 200_000, "meses_restantes": 2.03, "sobra_estimativa": True}
-    assert "R$ 2.000/mês × 2,0 meses" in explicacao_da_previsao(prev)
-    assert "poucos dados" in explicacao_da_previsao(prev)
-    assert "poucos dados" not in explicacao_da_previsao({**prev, "sobra_estimativa": False})
+def test_texto_da_previsao_sem_meta_nao_fala_de_aportes():
+    prev = {"patrimonio_hoje": 72_400, "aportes_planejados": 0, "rendimento_projetado": 1_500, "rendimento_dos_aportes": 0,
+            "proventos_projetados": 0, "meta": None}
+    texto = texto_da_previsao(prev).replace("\u00a0", " ")
+    assert texto == "R$ 724 hoje + R$ 15 de rendimento · sem meta de aporte"
+    assert "Defina uma meta de aporte pra prever os aportes" in explicacao_da_previsao(prev)
+
+
+def test_explicacao_da_previsao_cita_a_meta():
+    prev = {"meta": 100_000, "proventos_projetados": 0}
+    texto = explicacao_da_previsao(prev)
+    assert "meta de R$ 1.000" in texto and "Conta corrente e cartão não entram" in texto
+
+
+def test_texto_do_aporte_nos_quatro_casos():
+    def prog(meta, aportado, situacao, falta=0):
+        return inv.ProgressoAporte(meta, aportado, [], situacao, falta)
+
+    assert texto_do_aporte(prog(100_000, 73_255, "faltando", 26_745)) == "de R$ 1.000 · faltam R$ 267,45"
+    assert texto_do_aporte(prog(100_000, 98_000, "batida")) == "de R$ 1.000 · meta batida ✓"
+    assert texto_do_aporte(prog(100_000, 112_000, "passou")) == "de R$ 1.000 · passou R$ 120"
+    assert texto_do_aporte(prog(None, 0, "sem_meta")) == "sem meta · definir"
+
+
+def test_texto_por_ativo_trunca():
+    assert texto_por_ativo([("A", 20_000), ("B", 25_000)]) == "A R$ 200 · B R$ 250"
+    assert texto_por_ativo([("A", 4), ("B", 3), ("C", 2), ("D", 1), ("E", 1)], limite=2) == "A R$ 0,04 · B R$ 0,03 · +3"
 
 
 def test_selo_das_taxas(conn):
@@ -127,10 +151,46 @@ def test_ler_e_escrever_taxa():
 def test_aba_vazia_mostra_estado_vazio_e_zeros(app, conn):
     aba = _aba(conn)
     assert not aba._vazio.isHidden() and aba.cartoes() == [] and aba.botao_encerrados.isHidden()
-    assert aba._patrimonio.valor.text() == "R$ 0,00" and aba._investido.valor.text() == "R$ 0,00"
+    assert aba._patrimonio.valor.text() == "R$ 0,00" and aba._aporte.valor.text() == "R$ 0,00"
+    assert aba._aporte.apoio.text() == "sem meta · definir" and aba._aporte_ativos.isHidden()
     assert aba._pilula_cdi.isHidden()
     assert aba._previsao.valor.text() == "R$ 0,00"
     assert aba.selo.text().startswith("ainda sem taxas do Banco Central")
+
+
+def test_topo_mostra_o_progresso_do_aporte_do_mes(app, conn):
+    ativo = inv.criar(conn, HOJE, nome="CDB Inter", tipo="renda_fixa", indexador="cdi", taxa=100.0)
+    inv.definir_meta_aporte(conn, 100_000)
+    inv.aportar(conn, ativo, 73_255, id_conta(conn, "Inter"), date(2026, 10, 5))
+    aba = _aba(conn)
+    assert aba._aporte.valor.text() == "R$ 732,55"
+    assert aba._aporte.apoio.text() == "de R$ 1.000 · faltam R$ 267,45"
+    assert aba._aporte_ativos.text() == "CDB Inter R$ 732,55" and not aba._aporte_ativos.isHidden()
+    inv.aportar(conn, ativo, 26_745, id_conta(conn, "Inter"), date(2026, 10, 6))
+    aba.recarregar()
+    assert aba._aporte.apoio.text() == "de R$ 1.000 · meta batida ✓"
+    inv.aportar(conn, ativo, 20_000, id_conta(conn, "Inter"), date(2026, 10, 7))
+    aba.recarregar()
+    assert aba._aporte.apoio.text() == "de R$ 1.000 · passou R$ 200"
+
+
+def test_dialogo_da_meta_de_aporte_salva_e_remove(app, conn):
+    aba = _aba(conn)
+    d = aba.abrir_meta_aporte()
+    assert d.valor.text() == "" and not d.botao_remover.isEnabled()
+    d.valor.setText("abc")
+    d.botao_salvar.click()
+    assert inv.meta_aporte(conn) is None and d.erro.text() and d.isVisible()
+    d.valor.setText("1.250,50")
+    d.botao_salvar.click()
+    QApplication.processEvents()
+    assert inv.meta_aporte(conn) == 125_050  # o diálogo fechou (WA_DeleteOnClose)
+    assert aba._aporte.apoio.text() == "de R$ 1.250,50 · faltam R$ 1.250,50"  # a aba recarregou sozinha
+    d = aba.abrir_meta_aporte()
+    assert d.valor.text() == "1250,50" and d.botao_remover.isEnabled()
+    d.botao_remover.click()
+    QApplication.processEvents()
+    assert inv.meta_aporte(conn) is None and aba._aporte.apoio.text() == "sem meta · definir"
 
 
 def test_numeros_do_topo(app, conn):
@@ -138,8 +198,8 @@ def test_numeros_do_topo(app, conn):
     aba = _aba(conn)
     pat = inv.patrimonio(conn, HOJE)
     assert aba._patrimonio.valor.text() == lanc.formatar_brl(pat["total"])
-    assert aba._investido.valor.text() == lanc.formatar_brl(pat["investimentos"] + pat["caixinhas"])
-    assert "das caixinhas" in aba._investido.apoio.text()
+    assert pat["total"] == pat["investimentos"] + pat["caixinhas"] and aba._patrimonio.apoio.text() == "investimentos + caixinhas"
+    assert aba._aporte.valor.text() == lanc.formatar_brl(inv.progresso_do_mes(conn, HOJE).aportado)
     r = inv.resumo(conn, HOJE)
     assert aba._rendimento.valor.text().startswith("+R$ ") and aba._rendimento.apoio.text().endswith("no ano")
     assert not aba._pilula_cdi.isHidden() and aba._pilula_cdi.text().endswith(f"{r.pct_cdi:.0f}% do CDI")
@@ -217,7 +277,7 @@ def test_aportar_pelo_formulario(app, conn):
     QApplication.processEvents()
     assert avisos == ["Aportado R$ 1.000,00 em CDB Inter"]
     assert aba.cartao_do_ativo(cdb).aplicado.text() == "R$ 6.000,00"
-    assert inv.patrimonio(conn, HOJE)["total"] == antes  # transferência não muda o patrimônio
+    assert inv.patrimonio(conn, HOJE)["total"] == antes + 100_000  # o aporte entra no patrimônio guardado
 
 
 def test_formulario_de_aporte_mostra_erros_inline(app, conn):

@@ -24,6 +24,12 @@ Dados de demonstração (falsos), num banco separado:
     uv run python scripts/dados_demo.py
     MEU_COFRE_DB=data/demo.db uv run meu-cofre
 
+## Atalho no menu do sistema (Linux)
+
+    sh scripts/instalar-atalho.sh
+
+Cria o atalho (`.desktop`) e o ícone. O atalho roda uma cópia estável da `main` em `~/.local/share/meu-cofre/estavel`, então trocar de branch na pasta do projeto não muda o app aberto pelo menu; ele usa o banco em `data/meu-cofre.db` do projeto. Rode o mesmo comando depois de cada merge pra atualizar.
+
 ## Testes
 
     uv run pytest -q

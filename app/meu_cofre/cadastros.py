@@ -184,6 +184,11 @@ def editar_cartao(
         )
 
 
+def cartao_tem_compras(conn: sqlite3.Connection, conta_id: int) -> bool:
+    """O cartão já tem algum lançamento? Então mudar fechamento/vencimento muda a fatura de compras antigas."""
+    return conn.execute("SELECT 1 FROM lancamentos WHERE conta_id = ? LIMIT 1", (conta_id,)).fetchone() is not None
+
+
 def definir_final(conn: sqlite3.Connection, conta_id: int, final: str | None) -> None:
     """Os 4 últimos dígitos do cartão (vazio apaga)."""
     _cartao(conn, conta_id)

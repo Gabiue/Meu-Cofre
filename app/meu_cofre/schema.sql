@@ -50,8 +50,9 @@ CREATE TABLE IF NOT EXISTS recorrentes_meses (
     PRIMARY KEY (recorrente_id, mes)
 );
 
--- Faturas de cartão já pagas. `referencia` = mês do vencimento ('AAAA-MM'); `transferencia_id` liga à
--- transferência conta -> cartão que pagou (apagar os dois lados desfaz o pagamento).
+-- Pagamentos de fatura de cartão (uma fatura pode ter vários: pagamento parcial). `referencia` = mês do
+-- vencimento ('AAAA-MM'); `transferencia_id` liga à transferência conta -> cartão que pagou (apagar os dois
+-- lados desfaz o pagamento).
 CREATE TABLE IF NOT EXISTS faturas_pagas (
     id               INTEGER PRIMARY KEY,
     cartao_id        INTEGER NOT NULL REFERENCES contas (id),
@@ -59,9 +60,9 @@ CREATE TABLE IF NOT EXISTS faturas_pagas (
     valor_centavos   INTEGER NOT NULL,
     data             TEXT    NOT NULL,
     conta_origem_id  INTEGER NOT NULL REFERENCES contas (id),
-    transferencia_id TEXT    NOT NULL,
-    UNIQUE (cartao_id, referencia)
+    transferencia_id TEXT    NOT NULL
 );
+CREATE INDEX IF NOT EXISTS ix_faturas_pagas_fatura ON faturas_pagas (cartao_id, referencia);
 
 CREATE TABLE IF NOT EXISTS importacoes (
     id                INTEGER PRIMARY KEY,

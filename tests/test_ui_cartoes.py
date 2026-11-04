@@ -157,17 +157,76 @@ def test_marcar_como_paga_pelo_formulario(app, conn):
     assert aba.form.data.date().toPython() == HOJE  # data de hoje
     assert [aba.form.conta.itemText(i) for i in range(aba.form.conta.count())] == ["Inter", "Caixa"]  # só correntes
 
-    aba.form.valor.setText("1.000,00")  # pagou diferente
+    aba.form.valor.setText("1.234,56")
     assert aba.form.confirmar()
     QApplication.processEvents()
-    assert avisos == ["Fatura de outubro paga: R$ 1.000,00"]
+    assert avisos == ["Fatura de outubro paga: R$ 1.234,56"]
     assert not aba.form.isVisibleTo(aba)
     f = faturas.faturas_do_cartao(conn, cartao, HOJE)[0]
-    assert (f.situacao, f.total_centavos, f.pago_centavos, f.data_pagamento) == ("paga", 123456, 100000, HOJE)
+    assert (f.situacao, f.total_centavos, f.pago_centavos, f.data_pagamento) == ("paga", 123456, 123456, HOJE)
     assert aba._fechada.valor.text() == "R$ 1.234,56" and aba.pilula_fechada.text() == "✓ paga"
     assert not aba.botao_pagar.isVisibleTo(aba)
     assert aba.link_pagas.isVisibleTo(aba)
     assert aba.card("2026-10") is None  # pagas ficam recolhidas atrás do link
+
+
+def test_pagamento_parcial_mostra_o_restante_e_deixa_pagar_de_novo(app, conn):
+    cartao = _visa(conn)
+    _compra(conn, cartao, 123456, date(2026, 9, 15), "Setembro")
+    aba = _aba(conn)
+    aba.botao_pagar.click()
+    aba.form.valor.setText("1.000,00")  # pagou menos
+    assert aba.form.confirmar()
+    QApplication.processEvents()
+    f = faturas.faturas_do_cartao(conn, cartao, HOJE)[0]
+    assert (f.situacao, f.restante_centavos) == ("parcial", 23456)
+    assert aba._fechada.valor.text() == "R$ 234,56"  # o que falta
+    assert "Pago R$ 1.000,00 · falta R$ 234,56" in aba._fechada.apoio.text()
+    assert aba.pilula_fechada.text() == "! parcial"
+    assert aba.botao_pagar.isVisibleTo(aba)  # continua podendo pagar
+    assert aba.card("2026-10").situacao.text() == "! parcial" and aba.card("2026-10").botao_pagar is not None
+
+    aba.botao_pagar.click()
+    QApplication.processEvents()
+    assert aba.form.valor.text() == "234,56"  # pré-preenchido com o restante
+    assert aba.form.confirmar()
+    QApplication.processEvents()
+    f = faturas.faturas_do_cartao(conn, cartao, HOJE)[0]
+    assert (f.situacao, len(f.pagamentos)) == ("paga", 2)
+
+
+def test_desfazer_logo_apos_pagar(app, conn):
+    cartao = _visa(conn)
+    _compra(conn, cartao, 30000, date(2026, 9, 15))
+    aba = _aba(conn)
+    assert not aba.aviso_pago.isVisibleTo(aba)
+    aba.botao_pagar.click()
+    assert aba.form.confirmar()
+    QApplication.processEvents()
+    assert aba.aviso_pago.isVisibleTo(aba) and aba.botao_desfazer_agora.isVisibleTo(aba)
+    assert aba.texto_aviso_pago.text() == "Fatura de outubro paga ✓"
+    aba.recarregar()  # recarga externa (a janela faz isso) não tira o aviso
+    assert aba.aviso_pago.isVisibleTo(aba)
+
+    aba.botao_desfazer_agora.click()
+    QApplication.processEvents()
+    assert not aba.aviso_pago.isVisibleTo(aba)
+    assert conn.execute("SELECT COUNT(*) FROM faturas_pagas").fetchone()[0] == 0
+    assert aba.botao_pagar.isVisibleTo(aba)
+
+
+def test_aviso_de_pagamento_parcial_e_some_na_proxima_acao(app, conn):
+    cartao = _visa(conn)
+    _compra(conn, cartao, 30000, date(2026, 9, 15))
+    aba = _aba(conn)
+    aba.botao_pagar.click()
+    aba.form.valor.setText("100,00")
+    assert aba.form.confirmar()
+    QApplication.processEvents()
+    assert aba.texto_aviso_pago.text() == "Pagamento de R$ 100,00 registrado · falta R$ 200,00"
+    aba.mostrar_pagas(True)  # qualquer outra ação
+    QApplication.processEvents()
+    assert not aba.aviso_pago.isVisibleTo(aba)
 
 
 def test_formulario_de_pagamento_valida_e_cancela(app, conn):
@@ -437,6 +496,45 @@ def test_editar_banco_dias_e_final_do_cartao(app, conn):
     d.editar_fechamento.setCurrentIndex(0)
     assert d.salvar_edicao()
     assert conn.execute("SELECT final, dia_fechamento FROM contas WHERE id = ?", (cartao,)).fetchone()[:] == (None, None)
+
+
+def test_mudar_fechamento_de_cartao_com_compras_pede_confirmacao(app, conn):
+    cartao = _visa(conn)
+    _compra(conn, cartao, 30000, date(2026, 9, 15))
+    d = _contas(conn)
+    d.pedir_editar(cartao)
+    QApplication.processEvents()
+    d.editar_fechamento.setCurrentIndex(d.editar_fechamento.findData(25))
+    assert not d.salvar_edicao()  # não grava: mostra o aviso
+    QApplication.processEvents()
+    assert d.aviso_editar.isVisibleTo(d) and not d.barra_editar.isVisibleTo(d)
+    assert any("em qual fatura as compras antigas caem" in t for t in _textos(d.aviso_editar))
+    assert conn.execute("SELECT dia_fechamento FROM contas WHERE id = ?", (cartao,)).fetchone()[0] == 1
+    d.botao_aviso_cancelar.click()
+    assert conn.execute("SELECT dia_fechamento FROM contas WHERE id = ?", (cartao,)).fetchone()[0] == 1
+
+    d.pedir_editar(cartao)
+    QApplication.processEvents()
+    assert not d.aviso_editar.isVisibleTo(d)
+    d.editar_vencimento.setCurrentIndex(d.editar_vencimento.findData(15))
+    assert not d.salvar_edicao()
+    d.botao_aviso_salvar.click()
+    assert conn.execute("SELECT dia_vencimento FROM contas WHERE id = ?", (cartao,)).fetchone()[0] == 15
+
+
+def test_mudar_so_o_banco_ou_cartao_sem_compras_salva_direto(app, conn):
+    cartao = _visa(conn)
+    _compra(conn, cartao, 30000, date(2026, 9, 15))
+    d = _contas(conn)
+    d.pedir_editar(cartao)
+    d.editar_banco.setText("Outro")  # dias iguais: sem aviso, mesmo com compras
+    assert d.salvar_edicao()
+    outro = cadastros.criar_cartao(conn, "Sem uso", dia_fechamento=5, dia_vencimento=12)  # sem compras
+    d._carregar_cartoes()
+    d.pedir_editar(outro)
+    d.editar_fechamento.setCurrentIndex(d.editar_fechamento.findData(20))
+    assert d.salvar_edicao()
+    assert conn.execute("SELECT dia_fechamento FROM contas WHERE id = ?", (outro,)).fetchone()[0] == 20
 
 
 def test_editar_cartao_cancelar_nao_grava(app, conn):

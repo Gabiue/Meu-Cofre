@@ -3,8 +3,9 @@
 Topo: seletor de cartão (se houver mais de um), a fatura fechada a pagar e a fatura aberta.
 Lista: as faturas do cartão em cartões expansíveis (aberta, fechada, próximas e, recolhidas, as pagas), cada
 uma com as suas compras e a parcela destacada ("2/6").
-"Marcar como paga" abre a confirmação aqui mesmo (valor, conta de origem, data); a fatura paga ganha
-"Desfazer pagamento", também com confirmação na linha. `alterado(mensagem)` avisa a janela principal.
+"Marcar como paga" abre a confirmação aqui mesmo (valor, conta de origem, data); pagar menos que o total deixa
+a fatura "parcial" (mostra o restante e deixa pagar de novo). Logo após pagar, o destaque oferece "Desfazer";
+a fatura paga também tem "Desfazer pagamento" (o último), com confirmação na linha. `alterado(mensagem)` avisa a janela principal.
 """
 
 import sqlite3
@@ -82,6 +83,8 @@ def situacao_da_fatura(f: Fatura, hoje: date) -> tuple[str, str]:
     """(texto, variante da pílula) da situação."""
     if f.situacao == "paga":
         return "paga", "feito"
+    if f.situacao == "parcial":
+        return "parcial", "atencao"
     if f.situacao == "aberta":
         return "em aberto", "neutra"
     if f.situacao == "futura":
@@ -102,7 +105,11 @@ def detalhe_da_fatura(f: Fatura) -> str:
     """Linha de apoio: quando fecha/fechou e vence, ou quando foi paga."""
     if f.situacao == "paga":
         pago = f"pagou {formatar_brl(f.pago_centavos)}" if f.pago_centavos != f.total_centavos else "paga"
+        if f.a_mais_centavos:
+            pago += f" (pago {formatar_brl(f.a_mais_centavos)} a mais)"
         return f"{pago} em {_dia_mes(f.data_pagamento)} · vencia {_dia_mes(f.vencimento)}"
+    if f.situacao == "parcial":
+        return f"Pago {formatar_brl(f.pago_centavos)} · falta {formatar_brl(f.restante_centavos)} · vence {_dia_mes(f.vencimento)}"
     verbo = "fechou" if f.situacao == "fechada" else "fecha"
     return f"{verbo} {_dia_mes(f.fechamento)} · vence {_dia_mes(f.vencimento)}"
 
@@ -348,7 +355,8 @@ class FaturaCard(QFrame):
 
     def _montar_acoes(self, f: Fatura, confirmando: bool) -> QWidget | None:
         self.botao_pagar = self.botao_desfazer = self.botao_nao = self.botao_sim = self._pilha_acoes = None
-        if f.situacao == "fechada" and f.total_centavos > 0:
+        partes = []
+        if f.situacao in ("fechada", "parcial") and f.total_centavos > 0:
             self.botao_pagar = BotaoSecundario("Marcar como paga")
             self.botao_pagar.setProperty("compacto", True)
             self.botao_pagar.clicked.connect(lambda: self.pagar.emit(f.referencia))
@@ -357,16 +365,28 @@ class FaturaCard(QFrame):
             linha.setContentsMargins(tema.ESPACO, tema.ESPACO, tema.ESPACO, 0)
             linha.addStretch(1)
             linha.addWidget(self.botao_pagar)
-            return barra
-        if f.situacao != "paga":
+            partes.append(barra)
+        if f.pagamentos:
+            partes.append(self._montar_desfazer(f, confirmando))
+        if not partes:
             return None
+        if len(partes) == 1:
+            return partes[0]
+        junto = QWidget()
+        coluna = QVBoxLayout(junto)
+        coluna.setContentsMargins(0, 0, 0, 0)
+        coluna.setSpacing(0)
+        for parte in partes:
+            coluna.addWidget(parte)
+        return junto
 
+    def _montar_desfazer(self, f: Fatura, confirmando: bool) -> QWidget:
         pilha = QStackedWidget()
         normal = QWidget()
         linha = QHBoxLayout(normal)
         linha.setContentsMargins(tema.ESPACO, tema.ESPACO, tema.ESPACO, 0)
         linha.addStretch(1)
-        self.botao_desfazer = QPushButton("Desfazer pagamento")
+        self.botao_desfazer = QPushButton("Desfazer pagamento" if len(f.pagamentos) < 2 else "Desfazer último pagamento")
         self.botao_desfazer.setObjectName("BotaoAcao")
         self.botao_desfazer.setProperty("perigo", True)
         self.botao_desfazer.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -379,7 +399,10 @@ class FaturaCard(QFrame):
         linha = QHBoxLayout(confirma)
         linha.setContentsMargins(tema.ESPACO, tema.ESPACO, tema.ESPACO, 0)
         linha.setSpacing(tema.ESPACO)
-        texto = _rotulo("Desfazer o pagamento? O dinheiro volta pra conta e a fatura volta a ficar em aberto.", "ConfirmaTexto")
+        ultimo = f.pagamentos[-1]
+        quando = f"o último pagamento ({formatar_brl(ultimo['valor_centavos'])} em {_dia_mes(ultimo['data'])})" if len(f.pagamentos) > 1 else "o pagamento"
+        depois = "." if len(f.pagamentos) > 1 else " e a fatura volta a ficar em aberto."
+        texto = _rotulo(f"Desfazer {quando}? O dinheiro volta pra conta{depois}", "ConfirmaTexto")
         texto.setWordWrap(True)
         linha.addWidget(texto, 1)
         self.botao_nao = BotaoSecundario("Não")
@@ -425,6 +448,7 @@ class AbaCartoes(QScrollArea):
         self._estado: dict[tuple[int, str], bool] = {}  # (cartão, referência) -> aberta pelo usuário?
         self._mostrar_pagas = False
         self._pagando: str | None = None
+        self._pago_agora: tuple[int, str, int] | None = None  # (cartão, referência, id do pagamento) recém-feito
         self._desfazendo: str | None = None
         self._seletor: Segmentado | None = None
         self._seletor_nomes: list[str] = []
@@ -476,6 +500,21 @@ class AbaCartoes(QScrollArea):
         grade.adicionar(self._fechada)
         grade.adicionar(self._aberta)
         self._cartao_destaque.corpo.addWidget(grade)
+        self.aviso_pago = QFrame()  # "Fatura de X paga ✓" + Desfazer, logo após pagar
+        self.aviso_pago.setObjectName("FormPagamento")
+        linha_aviso = QHBoxLayout(self.aviso_pago)
+        p = 2 * tema.ESPACO
+        linha_aviso.setContentsMargins(p, tema.ESPACO, p, tema.ESPACO)
+        self.texto_aviso_pago = _rotulo("", "ConfirmaTexto")
+        self.texto_aviso_pago.setWordWrap(True)
+        self.botao_desfazer_agora = BotaoSecundario("Desfazer")
+        self.botao_desfazer_agora.setProperty("compacto", True)
+        self.botao_desfazer_agora.setAutoDefault(False)
+        self.botao_desfazer_agora.clicked.connect(self._desfazer_agora)
+        linha_aviso.addWidget(self.texto_aviso_pago, 1)
+        linha_aviso.addWidget(self.botao_desfazer_agora)
+        self.aviso_pago.setVisible(False)
+        self._cartao_destaque.corpo.addWidget(self.aviso_pago)
         self.form = FormPagamento()
         self.form.cancelado.connect(self.cancelar_pagamento)
         self.form.confirmado.connect(self._pagar)
@@ -525,7 +564,7 @@ class AbaCartoes(QScrollArea):
         if cartao_id == self._cartao_id:
             return
         self._cartao_id = cartao_id
-        self._pagando = self._desfazendo = None
+        self._pagando = self._desfazendo = self._pago_agora = None
         self._mostrar_pagas = False
         self.recarregar()
 
@@ -579,7 +618,7 @@ class AbaCartoes(QScrollArea):
         self._carregar_lista(lista, hoje)
 
     def _carregar_destaque(self, lista: list[Fatura], hoje: date, nome_cartao: str) -> None:
-        a_pagar = sorted((f for f in lista if f.situacao == "fechada" and f.total_centavos > 0), key=lambda f: f.vencimento)
+        a_pagar = sorted((f for f in lista if f.situacao in ("fechada", "parcial") and f.total_centavos > 0), key=lambda f: f.vencimento)
         pagas = [f for f in lista if f.situacao == "paga"]
         escolhida = next((f for f in a_pagar if f.referencia == self._pagando), None)
         if self._pagando and escolhida is None:
@@ -593,7 +632,7 @@ class AbaCartoes(QScrollArea):
             apoio = detalhe_da_fatura(fechada)
             if len(a_pagar) > 1:
                 apoio += f"\n+ {len(a_pagar) - 1} fatura{'s' if len(a_pagar) > 2 else ''} fechada{'s' if len(a_pagar) > 2 else ''} a pagar"
-            self._fechada.definir(formatar_brl(fechada.total_centavos), apoio)
+            self._fechada.definir(formatar_brl(fechada.restante_centavos), apoio)  # parcial: o que falta
             self.pilula_fechada.definir(texto, variante)
         elif pagas:
             ultima = max(pagas, key=lambda f: f.vencimento)
@@ -614,10 +653,11 @@ class AbaCartoes(QScrollArea):
             self._aberta.definir(formatar_brl(aberta.total_centavos), detalhe_da_fatura(aberta))
             self.pilula_aberta.definir(f"fecha em {_dias(dias)}" if dias > 0 else "fecha hoje", "neutra")
 
+        self._carregar_aviso_pago(lista, hoje)
         if fechada and self._pagando == fechada.referencia:
             correntes = [(c["id"], c["nome"]) for c in lancamentos.listar_contas(self.conn) if c["tipo"] == "corrente"]
             self.form.preparar(
-                f"Marcar como paga · {titulo_da_fatura(fechada, hoje)} · {nome_cartao}", fechada.total_centavos, hoje, correntes
+                f"Marcar como paga · {titulo_da_fatura(fechada, hoje)} · {nome_cartao}", fechada.restante_centavos, hoje, correntes
             )
             self.form.setVisible(True)
         else:
@@ -628,7 +668,7 @@ class AbaCartoes(QScrollArea):
         por_vencimento = sorted(lista, key=lambda f: f.vencimento)
         opcoes = {
             "Aberta": next((f for f in por_vencimento if f.situacao == "aberta"), None),
-            "Fechada": next((f for f in por_vencimento if f.situacao == "fechada"), None),
+            "Fechada": next((f for f in por_vencimento if f.situacao in ("fechada", "parcial")), None),
         }
         opcoes = {nome: f for nome, f in opcoes.items() if f is not None}
         if not opcoes:
@@ -667,6 +707,26 @@ class AbaCartoes(QScrollArea):
         elif self._seg_fatura is not None:
             self._seg_fatura.definir(self._visao)
 
+    def _carregar_aviso_pago(self, lista: list[Fatura], hoje: date) -> None:
+        """Mostra o "Desfazer" do pagamento recém-feito, enquanto ele ainda existir (some na próxima ação)."""
+        f = pagamento = None
+        if self._pago_agora and self._pago_agora[0] == self._cartao_id:
+            f = next((x for x in lista if x.referencia == self._pago_agora[1]), None)
+            pagamento = next((p for p in f.pagamentos if p["id"] == self._pago_agora[2]), None) if f else None
+        if pagamento is None:
+            self._pago_agora = None
+        elif f.paga:
+            self.texto_aviso_pago.setText(f"{titulo_da_fatura(f, hoje)} paga ✓")
+        else:
+            self.texto_aviso_pago.setText(
+                f"Pagamento de {formatar_brl(pagamento['valor_centavos'])} registrado · falta {formatar_brl(f.restante_centavos)}"
+            )
+        self.aviso_pago.setVisible(pagamento is not None)
+
+    def _desfazer_agora(self) -> None:
+        if self._pago_agora:
+            self.desfazer_pagamento(self._pago_agora[1], self._pago_agora[2])
+
     def _escolheu_fatura(self, nome: str) -> None:
         self._visao = nome
         self.recarregar()
@@ -678,7 +738,7 @@ class AbaCartoes(QScrollArea):
                 widget.setParent(None)
                 widget.deleteLater()
         abertas = [f for f in lista if f.situacao == "aberta"]
-        fechadas = sorted((f for f in lista if f.situacao == "fechada"), key=lambda f: f.vencimento)
+        fechadas = sorted((f for f in lista if f.situacao in ("fechada", "parcial")), key=lambda f: f.vencimento)
         futuras = [f for f in lista if f.situacao == "futura"]
         pagas = sorted((f for f in lista if f.situacao == "paga"), key=lambda f: f.vencimento, reverse=True)
         for f in abertas + fechadas + futuras + (pagas if self._mostrar_pagas else []):
@@ -698,16 +758,19 @@ class AbaCartoes(QScrollArea):
     # --- Ações ------------------------------------------------------------------------------
     def _alternar(self, referencia: str) -> None:
         card = self.card(referencia)
+        self._pago_agora = None
         self._estado[(self._cartao_id, referencia)] = not (card.expandida if card else False)
         self.recarregar()
 
     def mostrar_pagas(self, mostrar: bool) -> None:
         self._mostrar_pagas = mostrar
+        self._pago_agora = None
         self.recarregar()
 
     def pedir_pagamento(self, referencia: str) -> None:
         """Abre a confirmação de pagamento (lá em cima) pra fatura `referencia`."""
         self._pagando = referencia
+        self._pago_agora = None
         self.recarregar()
         self.verticalScrollBar().setValue(0)
 
@@ -725,22 +788,25 @@ class AbaCartoes(QScrollArea):
             return
         referencia, cartao_id = self._pagando, self._cartao_id
         try:
-            faturas.pagar_fatura(self.conn, cartao_id, referencia, valor_centavos, conta_id, dia)
+            pagamento_id = faturas.pagar_fatura(self.conn, cartao_id, referencia, valor_centavos, conta_id, dia)
         except ValueError as erro:
             self.form.mostrar_erro(str(erro))
             return
         self._pagando = None
+        self._pago_agora = (cartao_id, referencia, pagamento_id)
         self._avisar(f"Fatura de {mes_da_referencia(referencia, self._hoje())} paga: {formatar_brl(valor_centavos)}")
 
-    def desfazer_pagamento(self, referencia: str) -> None:
+    def desfazer_pagamento(self, referencia: str, pagamento_id: int | None = None) -> None:
+        """Desfaz um pagamento da fatura: o `pagamento_id` ou, sem ele, o mais recente."""
+        self._pago_agora = None
         try:
-            faturas.desfazer_pagamento(self.conn, self._cartao_id, referencia)
+            faturas.desfazer_pagamento(self.conn, self._cartao_id, referencia, pagamento_id)
         except ValueError:
             self._desfazendo = None
             self.recarregar()
             return
         self._desfazendo = None
-        self._avisar("Pagamento desfeito: a fatura voltou a ficar em aberto")
+        self._avisar("Pagamento desfeito")
 
     def _avisar(self, mensagem: str) -> None:
         self.recarregar()

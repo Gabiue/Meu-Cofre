@@ -549,7 +549,9 @@ class DialogoContas(QDialog):
         self.erro_editar.setWordWrap(True)
         self.erro_editar.setFixedHeight(22)
         grade.addWidget(self.erro_editar, 5, 0, 1, 2)
-        botoes = QHBoxLayout()
+        self.barra_editar = QWidget()
+        botoes = QHBoxLayout(self.barra_editar)
+        botoes.setContentsMargins(0, 0, 0, 0)
         botoes.setSpacing(tema.ESPACO)
         botoes.addStretch(1)
         cancelar = _compacto(BotaoSecundario("Cancelar"))
@@ -560,7 +562,27 @@ class DialogoContas(QDialog):
         salvar.clicked.connect(self.salvar_edicao)
         botoes.addWidget(cancelar)
         botoes.addWidget(salvar)
-        grade.addLayout(botoes, 6, 0, 1, 2)
+        grade.addWidget(self.barra_editar, 6, 0, 1, 2)
+        # Aviso de que mudar fechamento/vencimento remapeia as compras: troca a barra de botões acima.
+        self.aviso_editar = QWidget()
+        aviso = QHBoxLayout(self.aviso_editar)
+        aviso.setContentsMargins(0, 0, 0, 0)
+        aviso.setSpacing(tema.ESPACO)
+        texto = _rotulo(
+            "Mudar o fechamento muda em qual fatura as compras antigas caem. Faturas já pagas não mudam.", "ConfirmaTexto"
+        )
+        texto.setWordWrap(True)
+        aviso.addWidget(texto, 1)
+        self.botao_aviso_cancelar = _compacto(BotaoSecundario("Cancelar"))
+        self.botao_aviso_cancelar.clicked.connect(self.cancelar_acao)
+        self.botao_aviso_salvar = BotaoPrimario("Salvar mesmo assim")
+        self.botao_aviso_salvar.setProperty("compacto", True)
+        self.botao_aviso_salvar.setAutoDefault(False)
+        self.botao_aviso_salvar.clicked.connect(lambda: self.salvar_edicao(confirmado=True))
+        aviso.addWidget(self.botao_aviso_cancelar)
+        aviso.addWidget(self.botao_aviso_salvar)
+        self.aviso_editar.setVisible(False)
+        grade.addWidget(self.aviso_editar, 7, 0, 1, 2)
         self.editar_banco.returnPressed.connect(self.salvar_edicao)
         self.editar_final.returnPressed.connect(self.salvar_edicao)
         self.editar_final.textChanged.connect(lambda _t: self.erro_editar.setText(""))
@@ -648,11 +670,19 @@ class DialogoContas(QDialog):
         self._acao = ("editar", conta_id)
         self._carregar_cartoes()
 
-    def salvar_edicao(self) -> bool:
+    def salvar_edicao(self, confirmado: bool = False) -> bool:
         if not self._acao or self._acao[0] != "editar":
             return False
         id_ = self._acao[1]
-        nome = cadastros._conta(self.conn, id_)["nome"]
+        atual = cadastros._conta(self.conn, id_)
+        nome = atual["nome"]
+        mudou_dias = (self.editar_fechamento.currentData(), self.editar_vencimento.currentData()) != (
+            atual["dia_fechamento"], atual["dia_vencimento"],
+        )
+        if mudou_dias and not confirmado and cadastros.cartao_tem_compras(self.conn, id_):
+            self.barra_editar.setVisible(False)
+            self.aviso_editar.setVisible(True)
+            return False
         try:
             cadastros.editar_cartao(
                 self.conn,

@@ -158,6 +158,24 @@ SELECT 'Investimentos', 'investimento' WHERE NOT EXISTS (SELECT 1 FROM contas WH
     PRIMARY KEY (ticker, data)
 )""",
     ],
+    # v8: vários pagamentos por fatura (pagamento parcial). Tira o UNIQUE (cartao_id, referencia) de faturas_pagas:
+    #  o SQLite não remove constraint, então recria a tabela e copia as linhas.
+    8: [
+        "ALTER TABLE faturas_pagas RENAME TO faturas_pagas_v7",
+        """CREATE TABLE faturas_pagas (
+    id               INTEGER PRIMARY KEY,
+    cartao_id        INTEGER NOT NULL REFERENCES contas (id),
+    referencia       TEXT    NOT NULL,
+    valor_centavos   INTEGER NOT NULL,
+    data             TEXT    NOT NULL,
+    conta_origem_id  INTEGER NOT NULL REFERENCES contas (id),
+    transferencia_id TEXT    NOT NULL
+)""",
+        """INSERT INTO faturas_pagas (id, cartao_id, referencia, valor_centavos, data, conta_origem_id, transferencia_id)
+SELECT id, cartao_id, referencia, valor_centavos, data, conta_origem_id, transferencia_id FROM faturas_pagas_v7""",
+        "DROP TABLE faturas_pagas_v7",
+        "CREATE INDEX IF NOT EXISTS ix_faturas_pagas_fatura ON faturas_pagas (cartao_id, referencia)",
+    ],
 }
 ULTIMA_VERSAO = max(MIGRACOES)
 

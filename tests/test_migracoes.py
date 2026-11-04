@@ -252,7 +252,7 @@ def test_v6_para_v7_cria_renda_variavel_sem_perder_dados(tmp_path):
     conn.close()
 
     conn = db.conectar(caminho)
-    assert migracoes.versao(conn) == 7
+    assert migracoes.versao(conn) == migracoes.ULTIMA_VERSAO
     assert conn.execute("SELECT descricao FROM lancamentos").fetchone()[0] == "Pão"
     ativo = conn.execute("SELECT nome, taxa, ticker FROM ativos").fetchone()
     assert (ativo["nome"], ativo["taxa"], ativo["ticker"]) == ("CDB Inter", 110, None)
@@ -340,3 +340,27 @@ def test_banco_em_memoria_nao_faz_backup():
     migracoes.preparar(conn)
     assert migracoes.versao(conn) == migracoes.ULTIMA_VERSAO
     assert migracoes.fazer_backup(conn, 0) is None
+
+
+def test_v7_para_v8_permite_varios_pagamentos_por_fatura_preservando_dados(tmp_path):
+    caminho = tmp_path / "meu.db"
+    conn = db.conectar(caminho)
+    conn.execute("DROP TABLE faturas_pagas")
+    conn.execute(  # a tabela como era na v7, com UNIQUE (cartao_id, referencia)
+        """CREATE TABLE faturas_pagas (
+            id INTEGER PRIMARY KEY, cartao_id INTEGER NOT NULL REFERENCES contas (id), referencia TEXT NOT NULL,
+            valor_centavos INTEGER NOT NULL, data TEXT NOT NULL, conta_origem_id INTEGER NOT NULL REFERENCES contas (id),
+            transferencia_id TEXT NOT NULL, UNIQUE (cartao_id, referencia))"""
+    )
+    conn.execute("INSERT INTO faturas_pagas VALUES (7, 1, '2026-10', 30000, '2026-10-10', 2, 'abc')")
+    conn.execute("PRAGMA user_version = 7")
+    conn.commit()
+    conn.close()
+
+    conn = db.conectar(caminho)
+    assert migracoes.versao(conn) == migracoes.ULTIMA_VERSAO
+    assert tuple(conn.execute("SELECT * FROM faturas_pagas").fetchone()) == (7, 1, "2026-10", 30000, "2026-10-10", 2, "abc")
+    conn.execute("INSERT INTO faturas_pagas (cartao_id, referencia, valor_centavos, data, conta_origem_id, transferencia_id) VALUES (1, '2026-10', 500, '2026-10-12', 2, 'def')")
+    assert conn.execute("SELECT COUNT(*) FROM faturas_pagas").fetchone()[0] == 2
+    assert not conn.execute("SELECT name FROM sqlite_master WHERE name = 'faturas_pagas_v7'").fetchone()
+    assert len(list((tmp_path / "backups").glob("meu-*-v7.db"))) == 1

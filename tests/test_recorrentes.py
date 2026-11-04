@@ -441,3 +441,27 @@ def test_migracao_v2_para_v3_preserva_dados_e_cria_backup(tmp_path):
     assert len(list((tmp_path / "backups").glob("meu-*-v2.db"))) == 1
     assert rec.gerar_pendentes(conn, date(2026, 3, 10)) == 3  # jan, fev, mar
     conn.close()
+
+
+def test_reativar_encerrada_nao_gera_retroativos(conn):
+    rid = _criar(conn, dia=25, inicio=date(2026, 8, 1))
+    rec.gerar_pendentes(conn, date(2026, 8, 30))  # ago realizado
+    rec.encerrar(conn, rid, date(2026, 8, 30))
+    rec.reativar(conn, rid, date(2026, 11, 3))  # parada em set e out
+    r = rec.obter(conn, rid)
+    assert (r["ativa"], r["pausada"], r["fim"]) == (1, 0, None)
+    assert rec.gerar_pendentes(conn, date(2026, 11, 3)) == 1
+    assert [(l["data"], l["status"]) for l in _gerados(conn, rid)] == [
+        ("2026-08-25", "realizado"), ("2026-11-25", "previsto")]
+    rec.reativar(conn, rid, date(2026, 11, 3))  # já ativa: não muda nada
+    assert rec.obter(conn, rid)["ativa"] == 1
+
+
+def test_reativar_no_mesmo_mes_gera_o_previsto_de_novo(conn):
+    rid = _criar(conn, dia=25)
+    rec.gerar_pendentes(conn, HOJE)
+    rec.encerrar(conn, rid, HOJE)
+    assert _gerados(conn, rid) == []
+    rec.reativar(conn, rid, date(2026, 10, 22))
+    rec.gerar_pendentes(conn, date(2026, 10, 22))
+    assert [(l["data"], l["status"]) for l in _gerados(conn, rid)] == [("2026-10-25", "previsto")]

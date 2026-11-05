@@ -130,6 +130,10 @@ class JanelaPrincipal(QMainWindow):
         self._atualizador = AtualizadorIndicadores(self.conn, self._hoje, parent=self)
         self._atualizador.concluido.connect(self._taxas_atualizadas)
         self._atalho_novo = QShortcut(QKeySequence("Ctrl+N"), self, activated=self.novo_lancamento)
+        self._atalhos_abas = [  # Ctrl+1..5 na ordem das abas
+            QShortcut(QKeySequence(f"Ctrl+{i}"), self, activated=lambda n=nome: self.mostrar_aba(n))
+            for i, nome in enumerate(ABAS, 1)
+        ]
         self._aplicar_layout(self.width() >= LARGURA_DUAS_COLUNAS)
         self._reorganizar_cabecalho()
         self.atualizar()

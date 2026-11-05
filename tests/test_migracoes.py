@@ -364,3 +364,61 @@ def test_v7_para_v8_permite_varios_pagamentos_por_fatura_preservando_dados(tmp_p
     assert conn.execute("SELECT COUNT(*) FROM faturas_pagas").fetchone()[0] == 2
     assert not conn.execute("SELECT name FROM sqlite_master WHERE name = 'faturas_pagas_v7'").fetchone()
     assert len(list((tmp_path / "backups").glob("meu-*-v7.db"))) == 1
+
+
+def test_v8_para_v9_cria_preferencias(tmp_path):
+    caminho = tmp_path / "meu.db"
+    conn = db.conectar(caminho)
+    conn.execute("DROP TABLE preferencias")
+    conn.execute("PRAGMA user_version = 8")
+    conn.commit()
+    conn.close()
+
+    conn = db.conectar(caminho)
+    assert migracoes.versao(conn) == migracoes.ULTIMA_VERSAO
+    assert db.ler_preferencia(conn, "x", "padrao") == "padrao"
+    db.gravar_preferencia(conn, "x", "1")
+    db.gravar_preferencia(conn, "x", "2")
+    assert db.ler_preferencia(conn, "x") == "2"
+    db.gravar_preferencia(conn, "x", None)
+    assert db.ler_preferencia(conn, "x") is None
+    assert len(list((tmp_path / "backups").glob("meu-*-v8.db"))) == 1
+
+
+def test_v9_para_v10_aceita_eventos_preservando_linhas(tmp_path):
+    caminho = tmp_path / "meu.db"
+    conn = db.conectar(caminho)
+    conn.execute("DROP TABLE operacoes_rv")
+    conn.execute(  # como era na v9: CHECK sem os eventos
+        """CREATE TABLE operacoes_rv (
+            id INTEGER PRIMARY KEY, ativo_id INTEGER NOT NULL REFERENCES ativos (id),
+            tipo TEXT NOT NULL CHECK (tipo IN ('compra', 'venda', 'dividendo', 'jcp', 'rendimento')),
+            data TEXT NOT NULL, quantidade REAL, preco_centavos INTEGER, valor_centavos INTEGER NOT NULL,
+            taxas_centavos INTEGER NOT NULL DEFAULT 0, afeta_conta INTEGER NOT NULL DEFAULT 0, transferencia_id TEXT,
+            lancamento_id INTEGER REFERENCES lancamentos (id) ON DELETE SET NULL,
+            origem TEXT NOT NULL DEFAULT 'manual' CHECK (origem IN ('manual', 'b3')), chave_dedup TEXT UNIQUE)"""
+    )
+    conn.execute("CREATE INDEX ix_operacoes_rv_ativo ON operacoes_rv (ativo_id)")
+    conn.execute("INSERT INTO ativos (id, nome, tipo, ticker) VALUES (1, 'Itausa', 'acao', 'ITSA4')")
+    conn.execute("INSERT INTO operacoes_rv VALUES (5, 1, 'compra', '2026-03-02', 100, 1000, 100000, 50, 0, NULL, NULL, 'b3', 'b3:abc')")
+    conn.execute("INSERT INTO operacoes_rv VALUES (6, 1, 'dividendo', '2026-04-02', NULL, NULL, 700, 0, 0, NULL, NULL, 'manual', NULL)")
+    conn.execute("PRAGMA user_version = 9")
+    conn.commit()
+    conn.close()
+
+    conn = db.conectar(caminho)
+    assert migracoes.versao(conn) == migracoes.ULTIMA_VERSAO
+    assert [tuple(r) for r in conn.execute("SELECT * FROM operacoes_rv ORDER BY id")] == [
+        (5, 1, "compra", "2026-03-02", 100, 1000, 100000, 50, 0, None, None, "b3", "b3:abc"),
+        (6, 1, "dividendo", "2026-04-02", None, None, 700, 0, 0, None, None, "manual", None),
+    ]
+    conn.execute("INSERT INTO operacoes_rv (ativo_id, tipo, data, quantidade, valor_centavos) VALUES (1, 'desdobramento', '2026-05-01', -3, 0)")
+    for tipo in ("bonificacao", "grupamento", "fracao"):
+        conn.execute("INSERT INTO operacoes_rv (ativo_id, tipo, data, quantidade, valor_centavos) VALUES (1, ?, '2026-05-01', 1, 0)", (tipo,))
+    with pytest.raises(sqlite3.IntegrityError):
+        conn.execute("INSERT INTO operacoes_rv (ativo_id, tipo, data, valor_centavos) VALUES (1, 'outro', '2026-05-01', 0)")
+    with pytest.raises(sqlite3.IntegrityError):  # o UNIQUE de chave_dedup continua
+        conn.execute("INSERT INTO operacoes_rv (ativo_id, tipo, data, valor_centavos, chave_dedup) VALUES (1, 'compra', '2026-05-01', 1, 'b3:abc')")
+    assert conn.execute("SELECT name FROM sqlite_master WHERE name = 'ix_operacoes_rv_ativo'").fetchone()
+    assert not conn.execute("SELECT name FROM sqlite_master WHERE name = 'operacoes_rv_v9'").fetchone()
+    assert len(list((tmp_path / "backups").glob("meu-*-v9.db"))) == 1

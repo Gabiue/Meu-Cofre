@@ -176,6 +176,36 @@ SELECT id, cartao_id, referencia, valor_centavos, data, conta_origem_id, transfe
         "DROP TABLE faturas_pagas_v7",
         "CREATE INDEX IF NOT EXISTS ix_faturas_pagas_fatura ON faturas_pagas (cartao_id, referencia)",
     ],
+    # v9: preferências do app (token da brapi, pausa do Yahoo...), uma linha por chave.
+    9: [
+        "CREATE TABLE IF NOT EXISTS preferencias (chave TEXT PRIMARY KEY, valor TEXT NOT NULL)",
+    ],
+    # v10: eventos corporativos da B3 em operacoes_rv (bonificacao, desdobramento, grupamento, fracao). O SQLite não
+    #  altera CHECK, então recria a tabela e copia as linhas (o índice do ativo vai embora com a tabela velha).
+    10: [
+        "ALTER TABLE operacoes_rv RENAME TO operacoes_rv_v9",
+        """CREATE TABLE operacoes_rv (
+    id               INTEGER PRIMARY KEY,
+    ativo_id         INTEGER NOT NULL REFERENCES ativos (id),
+    tipo             TEXT    NOT NULL CHECK (tipo IN ('compra', 'venda', 'dividendo', 'jcp', 'rendimento', 'bonificacao', 'desdobramento', 'grupamento', 'fracao')),
+    data             TEXT    NOT NULL,
+    quantidade       REAL,
+    preco_centavos   INTEGER,
+    valor_centavos   INTEGER NOT NULL,
+    taxas_centavos   INTEGER NOT NULL DEFAULT 0,
+    afeta_conta      INTEGER NOT NULL DEFAULT 0,
+    transferencia_id TEXT,
+    lancamento_id    INTEGER REFERENCES lancamentos (id) ON DELETE SET NULL,
+    origem           TEXT    NOT NULL DEFAULT 'manual' CHECK (origem IN ('manual', 'b3')),
+    chave_dedup      TEXT UNIQUE
+)""",
+        """INSERT INTO operacoes_rv (id, ativo_id, tipo, data, quantidade, preco_centavos, valor_centavos, taxas_centavos,
+    afeta_conta, transferencia_id, lancamento_id, origem, chave_dedup)
+SELECT id, ativo_id, tipo, data, quantidade, preco_centavos, valor_centavos, taxas_centavos,
+    afeta_conta, transferencia_id, lancamento_id, origem, chave_dedup FROM operacoes_rv_v9""",
+        "DROP TABLE operacoes_rv_v9",
+        "CREATE INDEX IF NOT EXISTS ix_operacoes_rv_ativo ON operacoes_rv (ativo_id)",
+    ],
 }
 ULTIMA_VERSAO = max(MIGRACOES)
 

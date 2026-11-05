@@ -186,7 +186,7 @@ def sobra_media(conn: sqlite3.Connection, hoje: date) -> tuple[int, int, bool]:
 
     Média de (entradas − saídas, sem transferências) dos últimos 3 meses completos que tenham lançamentos
     (o mês em que o uso começou só conta se começou até o dia DIA_LIMITE_INICIO).
-    Sem nenhum, usa o mês atual até hoje e marca `estimativa=True` ("poucos dados"). Sem dado algum: (0, 0, True).
+    Sem nenhum mês completo: (0, 0, True). O mês em andamento não entra: multiplicá-lo como se fosse inteiro enganaria.
     """
     sobras = []
     for ano, mes in _meses_completos(conn, hoje):
@@ -195,9 +195,6 @@ def sobra_media(conn: sqlite3.Connection, hoje: date) -> tuple[int, int, bool]:
             sobras.append(r.sobra)
     if sobras:
         return _media(sobras), len(sobras), False
-    r = relatorios.resumo_mes(conn, hoje.year, hoje.month, ate=hoje)
-    if r.entradas or r.saidas:
-        return r.sobra, 1, True
     return 0, 0, True
 
 

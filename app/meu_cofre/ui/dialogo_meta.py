@@ -401,7 +401,7 @@ class DialogoMeta(QDialog):
         if self._original is not None and self._original.guardado:
             notas.append(f"Já guardado: {reais(self._original.guardado)}")
         if previa.estimativa:
-            notas.append("Sobra estimada com poucos dados (só o mês atual)")
+            notas.append("Sem mês completo de lançamentos ainda: a sobra aparece depois dele")
         self.previa_nota.setText(" · ".join(notas))
         for w in (self.previa_destaque, self.previa_detalhe, self.previa_pilula):
             w.setVisible(True)

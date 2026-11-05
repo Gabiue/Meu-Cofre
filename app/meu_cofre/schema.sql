@@ -132,14 +132,15 @@ CREATE TABLE IF NOT EXISTS indicadores (
     PRIMARY KEY (serie, data)
 );
 
--- Compras, vendas e proventos de ações e FIIs. `afeta_conta` = 1: mexeu numa conta (transferência com a conta
+-- Compras, vendas, proventos e eventos corporativos (bonificação, desdobramento, grupamento, fração) de ações e FIIs. `afeta_conta` = 1: mexeu numa conta (transferência com a conta
 -- "Investimentos" ou entrada de provento, ligadas por `transferencia_id` / `lancamento_id`); 0: só a posição (histórico
 -- importado). `valor_centavos` = quantidade × preço (compra/venda, sem as taxas) ou o total recebido (provento).
+-- Desdobramento e grupamento guardam a `quantidade` com sinal; bonificação, o custo atribuído em `valor_centavos`.
 -- `chave_dedup` evita gravar duas vezes a mesma linha da planilha da B3 (NULL nas operações manuais).
 CREATE TABLE IF NOT EXISTS operacoes_rv (
     id               INTEGER PRIMARY KEY,
     ativo_id         INTEGER NOT NULL REFERENCES ativos (id),
-    tipo             TEXT    NOT NULL CHECK (tipo IN ('compra', 'venda', 'dividendo', 'jcp', 'rendimento')),
+    tipo             TEXT    NOT NULL CHECK (tipo IN ('compra', 'venda', 'dividendo', 'jcp', 'rendimento', 'bonificacao', 'desdobramento', 'grupamento', 'fracao')),
     data             TEXT    NOT NULL,
     quantidade       REAL,
     preco_centavos   INTEGER,
@@ -206,4 +207,9 @@ CREATE TABLE IF NOT EXISTS regras_categorizacao (
     tipo_match   TEXT    NOT NULL DEFAULT 'contem' CHECK (tipo_match IN ('contem', 'regex')),
     categoria_id INTEGER NOT NULL REFERENCES categorias (id),
     prioridade   INTEGER NOT NULL DEFAULT 100
+);
+
+CREATE TABLE IF NOT EXISTS preferencias (
+    chave TEXT PRIMARY KEY,
+    valor TEXT NOT NULL
 );

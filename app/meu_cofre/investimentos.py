@@ -37,7 +37,7 @@ from functools import cached_property, lru_cache
 
 import pandas as pd
 
-from meu_cofre import cotacoes, indicadores, metas, relatorios, renda_variavel
+from meu_cofre import cotacoes, db, indicadores, metas, renda_variavel
 from meu_cofre.lancamentos import formatar_brl
 
 NOME_CONTA = "Investimentos"
@@ -697,6 +697,11 @@ class _Contexto:
         self._proventos: list[tuple[date, int]] | None = None
 
     @cached_property
+    def progresso(self) -> "ProgressoAporte":
+        """O mês de hoje contra a meta de aporte (calculado uma vez por chamada)."""
+        return progresso_do_mes(self.conn, self.hoje)
+
+    @cached_property
     def carteira(self) -> renda_variavel.Carteira:
         """Ações e FIIs (só carrega se alguém pedir)."""
         return renda_variavel.Carteira(self.conn, self.hoje)
@@ -825,104 +830,155 @@ def comparar_cdi(
     return rend.centavos / equivalente * 100 if equivalente > 0 else None
 
 
-# --- Patrimônio e previsão ----------------------------------------------------------------------------------
+# --- Patrimônio, meta de aporte e previsão ----------------------------------------------------------------
 
 
 def _patrimonio(conn: sqlite3.Connection, hoje: date, ctx: _Contexto) -> dict:
-    em_conta, divida = relatorios.em_conta(conn, hoje), relatorios.devo(conn)
     investimentos, caixinhas = ctx.total(hoje, "outros"), ctx.total(hoje, "caixinhas")
     return {
-        "em_conta": em_conta, "investimentos": investimentos, "caixinhas": caixinhas, "divida": divida,
-        "renda_variavel": ctx.carteira.valor(hoje),
-        "total": em_conta + investimentos + caixinhas - divida,
+        "investimentos": investimentos, "caixinhas": caixinhas, "renda_variavel": ctx.carteira.valor(hoje),
+        "total": investimentos + caixinhas,
     }
 
 
 def patrimonio(conn: sqlite3.Connection, hoje: date) -> dict:
-    """Quanto você tem hoje: em conta + investimentos + caixinhas − dívida do cartão (parcelas futuras incluídas).
+    """O que você tem guardado hoje: investimentos + caixinhas. Conta corrente e dívida do cartão ficam de fora.
 
-    Chaves: `em_conta`, `investimentos` (renda fixa, Tesouro, ações e FIIs), `caixinhas`, `divida`, `renda_variavel` (a
-    parte de ações e FIIs, já dentro de `investimentos`), `total` (centavos).
+    Chaves: `investimentos` (renda fixa, Tesouro, ações e FIIs), `caixinhas`, `renda_variavel` (a parte de ações e
+    FIIs, já dentro de `investimentos`), `total` (centavos).
     """
     return _patrimonio(conn, hoje, _Contexto(conn, hoje))
 
 
-def _meses_entre(de: date, ate: date) -> float:
-    """Meses (com fração pelo dia) de `de` até `ate`: de 30/10 a 31/12 dá 1/31 + 1 + 31/31."""
-    if ate <= de:
-        return 0.0
-    dias_de, dias_ate = calendar.monthrange(de.year, de.month)[1], calendar.monthrange(ate.year, ate.month)[1]
-    if (de.year, de.month) == (ate.year, ate.month):
-        return (ate.day - de.day) / dias_de
-    inteiros = (ate.year * 12 + ate.month) - (de.year * 12 + de.month) - 1
-    return (dias_de - de.day) / dias_de + inteiros + ate.day / dias_ate
+PREF_META_APORTE = "meta_aporte_mensal"  # centavos, como texto
+MARGEM_META = 5000  # a até R$ 50 da meta (pra mais ou pra menos) conta como batida
+
+
+def meta_aporte(conn: sqlite3.Connection) -> int | None:
+    """A meta de aporte mensal em centavos, ou None se não há."""
+    texto = db.ler_preferencia(conn, PREF_META_APORTE)
+    return int(texto) if texto else None
+
+
+def definir_meta_aporte(conn: sqlite3.Connection, centavos: int | None) -> None:
+    """Grava a meta de aporte mensal. None ou 0 apaga."""
+    if centavos is not None and centavos < 0:
+        raise ValueError("A meta de aporte não pode ser negativa.")
+    db.gravar_preferencia(conn, PREF_META_APORTE, str(centavos) if centavos else None)
+
+
+def aportes_do_mes(conn: sqlite3.Connection, ano: int, mes: int) -> list[tuple[str, int]]:
+    """(nome do ativo, centavos líquidos) de cada ativo com movimento no mês, o maior primeiro, sem zeros.
+
+    Aporte soma e resgate desconta (saldo real não conta). Caixinhas: os lançamentos da conta "Caixinhas". Ações e FIIs:
+    o dinheiro que saiu (compra, com taxas) ou voltou (venda, sem taxas) da conta; histórico importado não conta."""
+    mes_texto = f"{ano:04d}-{mes:02d}"
+    por_ativo: dict[str, int] = {}
+
+    def somar(nome: str, centavos: int) -> None:
+        por_ativo[nome] = por_ativo.get(nome, 0) + centavos
+
+    for r in conn.execute(
+        "SELECT a.nome, m.tipo, m.valor_centavos FROM movimentacoes_ativos m JOIN ativos a ON a.id = m.ativo_id "
+        "WHERE m.tipo IN ('aporte', 'resgate') AND substr(m.data, 1, 7) = ?",
+        (mes_texto,),
+    ):
+        somar(r["nome"], r["valor_centavos"] if r["tipo"] == "aporte" else -r["valor_centavos"])
+    for r in conn.execute(
+        "SELECT a.nome, o.tipo, o.valor_centavos, o.taxas_centavos FROM operacoes_rv o JOIN ativos a ON a.id = o.ativo_id "
+        "WHERE o.tipo IN ('compra', 'venda') AND o.afeta_conta = 1 AND substr(o.data, 1, 7) = ?",
+        (mes_texto,),
+    ):
+        somar(r["nome"], r["valor_centavos"] + r["taxas_centavos"] if r["tipo"] == "compra" else -(r["valor_centavos"] - r["taxas_centavos"]))
+    caixinhas = conn.execute(
+        "SELECT COALESCE(SUM(l.valor_centavos), 0) FROM lancamentos l JOIN contas c ON c.id = l.conta_id "
+        "WHERE c.nome = ? AND substr(l.data, 1, 7) = ?",
+        (metas.NOME_CAIXINHAS, mes_texto),
+    ).fetchone()[0]
+    somar(NOME_CAIXINHAS, caixinhas)
+    return sorted(((n, v) for n, v in por_ativo.items() if v), key=lambda item: -item[1])
+
+
+@dataclass(frozen=True)
+class ProgressoAporte:
+    """O mês de hoje contra a meta. `situacao`: "sem_meta", "faltando", "batida" (a até MARGEM_META da meta) ou
+    "passou". `falta` só é maior que zero em "faltando"."""
+
+    meta: int | None
+    aportado: int
+    por_ativo: list[tuple[str, int]]
+    situacao: str
+    falta: int
+
+
+def progresso_do_mes(conn: sqlite3.Connection, hoje: date) -> ProgressoAporte:
+    por_ativo = aportes_do_mes(conn, hoje.year, hoje.month)
+    aportado, meta = sum(v for _n, v in por_ativo), meta_aporte(conn)
+    if meta is None:
+        return ProgressoAporte(None, aportado, por_ativo, "sem_meta", 0)
+    if aportado < meta - MARGEM_META:
+        return ProgressoAporte(meta, aportado, por_ativo, "faltando", meta - aportado)
+    return ProgressoAporte(meta, aportado, por_ativo, "batida" if aportado <= meta + MARGEM_META else "passou", 0)
 
 
 def previsao_fim_do_ano(conn: sqlite3.Connection, hoje: date) -> dict:
-    """Patrimônio em 31/12 se tudo seguir como está: o de hoje + a sobra média × os meses que faltam (frações pelo
-    dia) + o rendimento dos investimentos e das caixinhas até lá, com as taxas de hoje e sem novos aportes.
+    """Patrimônio guardado em 31/12 se a meta de aporte for cumprida: o de hoje + o que falta da meta neste mês + a
+    meta nos meses seguintes + o rendimento (da carteira de hoje, e dos aportes futuros como se rendessem igual) + os
+    proventos estimados. Sem meta, só o rendimento e os proventos. Conta corrente e cartão não entram.
 
-    Chaves: `alvo`, `patrimonio_hoje` (igual a `patrimonio()["total"]`), `parcelas_futuras` (parcelas do cartão
-    depois de hoje: o patrimônio de hoje já as desconta, mas elas também pesam na sobra média, então voltam aqui
-    pra não contar duas vezes), `sobra_mensal`, `sobra_estimativa` (poucos dados), `meses_restantes`,
-    `sobra_projetada`, `rendimento_projetado`, `proventos_projetados` (ações e FIIs: o histórico de proventos por cota
-    repetido até 31/12; os preços ficam como estão hoje), `total` (centavos, exceto datas e meses).
+    Chaves: `alvo`, `patrimonio_hoje` (igual a `patrimonio()["total"]`), `meta`, `aportes_planejados`,
+    `rendimento_projetado` (da carteira de hoje), `rendimento_dos_aportes`, `proventos_projetados` (ações e FIIs: o
+    histórico de proventos por cota repetido até 31/12; os preços ficam como estão hoje), `total` (centavos, exceto
+    `alvo` e `meta`).
     """
-    ctx = _Contexto(conn, hoje, fim=date(hoje.year, 12, 31))
-    return _previsao(conn, hoje, ctx)
+    return _previsao(hoje, _Contexto(conn, hoje, fim=date(hoje.year, 12, 31)))
 
 
-def _previsao(conn: sqlite3.Connection, hoje: date, ctx: "_Contexto") -> dict:
+def _previsao(hoje: date, ctx: "_Contexto") -> dict:
     """Única montagem da previsão de 31/12 (usada por `previsao_fim_do_ano` e por `resumo`)."""
-    pat = _patrimonio(conn, hoje, ctx)["total"]
-    prev = _projetar(hoje, date(hoje.year, 12, 31), ctx, _base_da_projecao(conn, hoje, ctx), metas.sobra_media(conn, hoje))
-    # Na tela, "hoje" tem de bater com o "Patrimônio hoje" do topo; a diferença vira um termo à parte.
-    prev["parcelas_futuras"] = prev["patrimonio_hoje"] - pat
-    prev["patrimonio_hoje"] = pat
-    return prev
+    return _projetar(hoje, date(hoje.year, 12, 31), ctx)
 
 
-def _base_da_projecao(conn: sqlite3.Connection, hoje: date, ctx: "_Contexto") -> int:
-    """Patrimônio de hoje descontando só a dívida do cartão ATÉ HOJE.
-
-    As parcelas futuras não entram aqui: elas já pesam na sobra média de cada mês (gasto no cartão conta no mês da
-    parcela). Descontar as duas coisas contaria a mesma parcela duas vezes.
-    """
-    pat = _patrimonio(conn, hoje, ctx)
-    return pat["total"] + pat["divida"] - relatorios.devo_ate(conn, hoje)
-
-
-def _projetar(hoje: date, alvo: date, ctx: _Contexto, patrimonio_hoje: int, sobra_media: tuple[int, int, bool]) -> dict:
-    sobra, _meses, estimativa = sobra_media
-    meses = _meses_entre(hoje, alvo)
-    projetada = round(sobra * meses)
-    rendimento_projetado = ctx.total(alvo) - ctx.total(hoje)
+def _projetar(hoje: date, alvo: date, ctx: _Contexto) -> dict:
+    """O patrimônio guardado em `alvo` (hoje ou depois): ver `previsao_fim_do_ano`."""
+    progresso = ctx.progresso
+    patrimonio_hoje = ctx.total(hoje)
+    rendimento_carteira = ctx.total(alvo) - patrimonio_hoje
+    dias = (alvo - hoje).days
+    # a carteira de hoje rende essa taxa por dia; os aportes futuros rendem igual a partir do dia em que entram
+    taxa = (ctx.total(alvo) / patrimonio_hoje) ** (1 / dias) - 1 if patrimonio_hoje > 0 and dias > 0 else 0.0
+    aportes = [(hoje, progresso.falta)] if progresso.meta is not None else []
+    if progresso.meta is not None:
+        m = hoje.year * 12 + hoje.month
+        aportes += [
+            (date((m + k - 1) // 12, (m + k - 1) % 12 + 1, 1), progresso.meta) for k in range(1, alvo.year * 12 + alvo.month - m + 1)
+        ]
+    planejados = sum(valor for _d, valor in aportes)
+    rendimento_aportes = round(sum(valor * ((1 + taxa) ** (alvo - d).days - 1) for d, valor in aportes))
     proventos = ctx.proventos_ate(alvo)
     return {
-        "alvo": alvo, "patrimonio_hoje": patrimonio_hoje, "sobra_mensal": sobra, "sobra_estimativa": estimativa,
-        "meses_restantes": meses, "sobra_projetada": projetada, "rendimento_projetado": rendimento_projetado,
-        "proventos_projetados": proventos, "total": patrimonio_hoje + projetada + rendimento_projetado + proventos,
+        "alvo": alvo, "patrimonio_hoje": patrimonio_hoje, "meta": progresso.meta, "aportes_planejados": planejados,
+        "rendimento_projetado": rendimento_carteira, "rendimento_dos_aportes": rendimento_aportes,
+        "proventos_projetados": proventos,
+        "total": patrimonio_hoje + planejados + rendimento_carteira + rendimento_aportes + proventos,
     }
 
 
 def serie_patrimonio_no_ano(conn: sqlite3.Connection, hoje: date) -> pd.DataFrame:
-    """O patrimônio ao longo do ano: um ponto por semana desde 1º de janeiro até hoje (o último ponto é hoje) e a
-    projeção, ao fim de cada mês, até 31/12. Colunas: data, centavos, projetado (bool)."""
+    """O patrimônio guardado (investimentos + caixinhas) ao longo do ano: um ponto por semana desde 1º de janeiro até
+    hoje (o último ponto é hoje) e a projeção, ao fim de cada mês, até 31/12, com a mesma regra da previsão (os aportes
+    planejados até aquela data e o rendimento). Colunas: data, centavos, projetado (bool)."""
     fim_do_ano = date(hoje.year, 12, 31)
     ctx = _Contexto(conn, hoje, fim=fim_do_ano)
     passadas, d = [], date(hoje.year, 1, 1)
     while d < hoje:
         passadas.append(d)
         d += timedelta(days=7)
-    linhas = [(d, relatorios.em_conta(conn, d) + ctx.total(d) - relatorios.devo_ate(conn, d), False) for d in passadas]
-    pat_hoje = _patrimonio(conn, hoje, ctx)["total"]
-    linhas.append((hoje, pat_hoje, False))
-    base = _base_da_projecao(conn, hoje, ctx)
-    sobra = metas.sobra_media(conn, hoje)
+    linhas = [(d, ctx.total(d), False) for d in passadas] + [(hoje, _patrimonio(conn, hoje, ctx)["total"], False)]
     fins_de_mes = [date(hoje.year, m, calendar.monthrange(hoje.year, m)[1]) for m in range(hoje.month, 12)]
     # fim de mês colado em hoje só repetiria o ponto de hoje: o primeiro projetado fica a uma semana ou mais
     for d in [f for f in fins_de_mes if (f - hoje).days >= 7] + ([fim_do_ano] if hoje < fim_do_ano else []):
-        linhas.append((d, _projetar(hoje, d, ctx, base, sobra)["total"], True))
+        linhas.append((d, _projetar(hoje, d, ctx)["total"], True))
     df = pd.DataFrame(linhas, columns=["data", "centavos", "projetado"])
     df["data"] = pd.to_datetime(df["data"])
     return df.astype({"centavos": "int64", "projetado": "bool"})
@@ -933,7 +989,7 @@ class ResumoInvestimentos:
     """Os números do topo da aba. `pct_cdi` é o rendimento do ano comparado ao CDI (None sem dados)."""
 
     patrimonio: dict
-    investido: int  # investimentos + caixinhas, a valor atual
+    progresso: ProgressoAporte
     rendimento_ano: Rendimento
     pct_cdi: float | None
     previsao: dict
@@ -942,12 +998,11 @@ class ResumoInvestimentos:
 def resumo(conn: sqlite3.Connection, hoje: date) -> ResumoInvestimentos:
     fim_do_ano = date(hoje.year, 12, 31)
     ctx = _Contexto(conn, hoje, fim=fim_do_ano)
-    pat = _patrimonio(conn, hoje, ctx)
     rend, equivalente = _rendimento_de(ctx, ctx.ativos, date(hoje.year, 1, 1), hoje)
     return ResumoInvestimentos(
-        patrimonio=pat,
-        investido=pat["investimentos"] + pat["caixinhas"],
+        patrimonio=_patrimonio(conn, hoje, ctx),
+        progresso=ctx.progresso,
         rendimento_ano=rend,
         pct_cdi=rend.centavos / equivalente * 100 if equivalente > 0 else None,
-        previsao=_previsao(conn, hoje, ctx),
+        previsao=_previsao(hoje, ctx),
     )

@@ -781,7 +781,7 @@ def listar(conn: sqlite3.Connection, hoje: date, incluir_encerrados: bool = Fals
 @dataclass(frozen=True)
 class Rendimento:
     """`centavos`: o que rendeu no período (bruto; saldo real conta como rendimento); `percentual`: rendimento ÷
-    capital médio aplicado (média ponderada pelos dias, a fórmula de Dietz modificada), None sem capital."""
+    o aplicado no período (saldo no início + aportes − resgates), None sem nada aplicado."""
 
     centavos: int
     percentual: float | None
@@ -790,9 +790,8 @@ class Rendimento:
 def _rendimento_de(ctx: _Contexto, ativos: list[Ativo], inicio: date, fim: date) -> tuple[Rendimento, float]:
     """(rendimento, o que o mesmo dinheiro teria rendido a 100% do CDI) de `ativos` entre `inicio` e `fim`."""
     antes = inicio - timedelta(days=1)
-    dias = (fim - antes).days
     cdi = ctx.mercado.curva("cdi", 100.0)
-    rendeu, capital, equivalente = 0, 0.0, 0.0
+    rendeu, aplicado, equivalente = 0, 0, 0.0
     for a in ativos:
         v0, v1 = ctx.valor(a, antes).centavos, ctx.valor(a, fim).centavos
         fluxos = [
@@ -801,9 +800,10 @@ def _rendimento_de(ctx: _Contexto, ativos: list[Ativo], inicio: date, fim: date)
             if e.tipo != "saldo_real" and inicio <= e.data <= fim
         ]
         rendeu += v1 - v0 - sum(f for _d, f in fluxos)
-        capital += v0 + sum(f * (fim - d).days / dias for d, f in fluxos)
+        # sobre o aplicado, não o capital médio do período: dinheiro de poucos dias inflaria o percentual
+        aplicado += v0 + sum(f for _d, f in fluxos)
         equivalente += v0 * (cdi.fator(antes, fim)[0] - 1) + sum(f * (cdi.fator(d, fim)[0] - 1) for d, f in fluxos)
-    return Rendimento(rendeu, rendeu / capital * 100 if capital > 0 else None), equivalente
+    return Rendimento(rendeu, rendeu / aplicado * 100 if aplicado > 0 else None), equivalente
 
 
 def rendimento(conn: sqlite3.Connection, ativo_id: int, inicio: date, fim: date, hoje: date | None = None) -> Rendimento:

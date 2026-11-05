@@ -499,7 +499,7 @@ def test_rendimento_de_um_aporte(conn):
     _aportar(conn, i, 100_000, date(2026, 10, 1))
     r = inv.rendimento(conn, i, date(2026, 10, 1), HOJE)
     assert r.centavos == inv.valor_atual(conn, i, HOJE)[0] - 100_000
-    assert r.percentual == pytest.approx(r.centavos / 100_000 * 100 / (1 - 1 / 30), rel=0.02)  # capital médio ≈ 29/30 do período
+    assert r.percentual == pytest.approx(r.centavos / 100_000 * 100)  # sobre o aplicado
     # num recorte menor, rende só nos dias dele
     meio = inv.rendimento(conn, i, date(2026, 10, 10), date(2026, 10, 20))
     assert meio.centavos == inv.valor_atual(conn, i, date(2026, 10, 20))[0] - inv.valor_atual(conn, i, date(2026, 10, 9))[0]
@@ -510,6 +510,14 @@ def test_rendimento_com_saldo_real_conta_a_correcao(conn):
     _aportar(conn, i, 100_000, date(2026, 10, 1))
     inv.registrar_saldo_real(conn, i, 101_000, date(2026, 10, 20))
     assert inv.rendimento(conn, i, date(2026, 10, 1), HOJE).centavos == 1_000
+
+
+def test_percentual_nao_infla_com_dinheiro_de_poucos_dias(conn):
+    _serie_diaria(conn, "cdi", date(2026, 1, 1), HOJE)
+    i = _novo(conn)
+    _aportar(conn, i, 45_000, HOJE - timedelta(days=1))
+    r = inv.rendimento(conn, i, date(HOJE.year, 1, 1), HOJE)
+    assert r.percentual == pytest.approx(r.centavos / 45_000 * 100) and r.percentual < 1
 
 
 def test_rendimento_sem_aplicacao_no_periodo(conn):

@@ -201,7 +201,7 @@ def test_numeros_do_topo(app, conn):
     assert pat["total"] == pat["investimentos"] + pat["caixinhas"] and aba._patrimonio.apoio.text() == "investimentos + caixinhas"
     assert aba._aporte.valor.text() == lanc.formatar_brl(inv.progresso_do_mes(conn, HOJE).aportado)
     r = inv.resumo(conn, HOJE)
-    assert aba._rendimento.valor.text().startswith("+R$ ") and aba._rendimento.apoio.text().endswith("no ano")
+    assert aba._rendimento.valor.text().startswith("+R$ ") and aba._rendimento.apoio.text().endswith("sobre o aplicado")
     assert not aba._pilula_cdi.isHidden() and aba._pilula_cdi.text().endswith(f"{r.pct_cdi:.0f}% do CDI")
     assert aba._previsao.valor.text() == lanc.formatar_brl(r.previsao["total"])
     assert aba._previsao.valor.property("destaque") is True  # dourado

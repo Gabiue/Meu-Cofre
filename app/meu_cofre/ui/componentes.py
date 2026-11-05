@@ -317,6 +317,7 @@ class Segmentado(QFrame):
             raise ValueError("Segmentado precisa de ao menos uma opção")
         self.setObjectName("Segmentado")
         self.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Fixed)
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)  # uma parada de Tab por grupo; os botões ficam NoFocus
         self._grupo = QButtonGroup(self)
         self._grupo.setExclusive(True)
         self._botoes: dict[str, QPushButton] = {}
@@ -338,6 +339,21 @@ class Segmentado(QFrame):
 
     def atual(self) -> str:
         return self._grupo.checkedButton().text()
+
+    def keyPressEvent(self, evento) -> None:
+        """Setas trocam a opção (pulando as desligadas), como um clique; o resto segue pro pai (Enter do diálogo)."""
+        passo = {Qt.Key.Key_Left: -1, Qt.Key.Key_Up: -1, Qt.Key.Key_Right: 1, Qt.Key.Key_Down: 1}.get(evento.key())
+        if passo is None:
+            super().keyPressEvent(evento)
+            return
+        evento.accept()
+        botoes = list(self._botoes.values())
+        i = botoes.index(self._grupo.checkedButton()) + passo
+        while 0 <= i < len(botoes):
+            if botoes[i].isEnabled():
+                botoes[i].click()
+                return
+            i += passo
 
     def definir(self, opcao: str) -> None:
         """Seleciona uma opção por código, sem emitir o sinal."""
@@ -496,6 +512,10 @@ class CampoData(QDateEdit):
         calendario.setHeaderTextFormat(formato)
         for dia in (Qt.DayOfWeek.Saturday, Qt.DayOfWeek.Sunday):
             calendario.setWeekdayTextFormat(dia, formato)
+
+    def focusNextPrevChild(self, proximo: bool) -> bool:
+        """Tab sai do campo todo (o padrão do Qt para a cada dia/mês/ano, três paradas por data)."""
+        return QWidget.focusNextPrevChild(self, proximo)
 
     def paintEvent(self, evento) -> None:
         super().paintEvent(evento)

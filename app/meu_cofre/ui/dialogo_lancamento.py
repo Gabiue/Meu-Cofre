@@ -131,6 +131,7 @@ class DialogoLancamento(QDialog):
         self._rolagem = QScrollArea()
         self._rolagem.setWidgetResizable(True)
         self._rolagem.setFrameShape(QFrame.Shape.NoFrame)
+        self._rolagem.setFocusPolicy(Qt.FocusPolicy.NoFocus)  # sem parada de Tab na área de rolagem
         self._rolagem.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self._corpo = corpo = QWidget()
         corpo.setObjectName("DialogoCorpo")

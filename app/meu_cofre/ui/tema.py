@@ -112,6 +112,7 @@ QPushButton:focus {{ outline: none; }}
 
 /* Segmentado */
 #Segmentado {{ background: {FUNDO}; border: 1px solid {BORDA}; border-radius: 17px; }}
+#Segmentado:focus {{ border: 1px solid {VERDE}; }}
 #SegmentadoOpcao {{ background: transparent; color: {TEXTO_SECUNDARIO}; border: none; border-radius: 13px;
     padding: 0 14px; min-height: 26px; font-size: {PX_RODAPE + 1}px; font-weight: 600; }}
 #SegmentadoOpcao:hover {{ color: {TEXTO}; }}

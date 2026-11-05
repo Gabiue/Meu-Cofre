@@ -245,7 +245,7 @@ def _ler(caminho: Path | str) -> tuple[list[OperacaoB3], list[Ignorada]]:
         produto = str(c.get("produto") or "").strip()
         resumo = " · ".join(str(c[k]).strip() for k in ("data", "movimentacao", "produto") if c.get(k) not in (None, ""))[:120]
 
-        def ignorar(motivo: str) -> None:
+        def ignorar(motivo: str, numero: int = numero, resumo: str = resumo) -> None:
             ignoradas.append(Ignorada(numero, motivo, resumo))
 
         codigo, _sep, nome = produto.partition(" - ")

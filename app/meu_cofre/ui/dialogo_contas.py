@@ -631,7 +631,7 @@ class DialogoContas(QDialog):
         if not self._acao or self._acao[0] != "desativar":
             return
         id_ = self._acao[1]
-        nome = cadastros._conta(self.conn, id_)["nome"]
+        nome = cadastros.obter_conta(self.conn, id_)["nome"]
         try:
             cadastros.desativar_conta(self.conn, id_)
         except ValueError as erro:
@@ -674,7 +674,7 @@ class DialogoContas(QDialog):
         if not self._acao or self._acao[0] != "editar":
             return False
         id_ = self._acao[1]
-        atual = cadastros._conta(self.conn, id_)
+        atual = cadastros.obter_conta(self.conn, id_)
         nome = atual["nome"]
         mudou_dias = (self.editar_fechamento.currentData(), self.editar_vencimento.currentData()) != (
             atual["dia_fechamento"], atual["dia_vencimento"],
@@ -704,7 +704,7 @@ class DialogoContas(QDialog):
 
     def reativar(self, conta_id: int) -> None:
         self._limpar_erro_geral()
-        nome = cadastros._conta(self.conn, conta_id)["nome"]
+        nome = cadastros.obter_conta(self.conn, conta_id)["nome"]
         cadastros.reativar_conta(self.conn, conta_id)
         self._gravou(f"Cartão reativado: {nome}")
 

@@ -591,7 +591,6 @@ def test_rosca_da_fatura_aberta_tem_grafico_com_a_serie(app, conn):
 
 
 def test_rosca_alterna_entre_aberta_e_fechada_e_acompanha_o_pagamento(app, conn):
-    inter = id_conta(conn, "Inter")
     cartao = _visa(conn)
     _compra_cat(conn, cartao, 30000, date(2026, 9, 15), "Mercado")  # fatura de outubro (fechada)
     _compra_cat(conn, cartao, 8000, date(2026, 10, 15), "Lazer")

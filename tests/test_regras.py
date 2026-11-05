@@ -126,8 +126,9 @@ def test_pendentes_e_aplicar_regras_so_nos_sem_categoria(conn):
 def test_ofx_pix_so_e_categorizado_por_regra_nao_pelo_historico(conn, tmp_path):
     _reg(conn, 'Pix enviado: "Fulano de Tal"', "Lazer", dia=1)  # histórico não vale pra Pix
     extrato = importar_ofx.ler(falso.inter(tmp_path / "i.ofx"))
-    pix = lambda: next(i for i in importar_ofx.prever(conn, extrato, id_conta(conn, "Inter"), HOJE).novas
-                       if i.transacao.descricao.startswith("Pix enviado"))
+    def pix():
+        return next(i for i in importar_ofx.prever(conn, extrato, id_conta(conn, "Inter"), HOJE).novas
+                    if i.transacao.descricao.startswith("Pix enviado"))
     assert pix().categoria_id is None
     cadastros.criar_regra(conn, "fulano", id_cat(conn, "Presentes e doações"))
     assert pix().categoria_id == id_cat(conn, "Presentes e doações")

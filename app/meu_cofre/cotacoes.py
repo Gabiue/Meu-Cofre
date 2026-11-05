@@ -23,7 +23,7 @@ import urllib.error
 import urllib.request
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone, UTC
 
 from meu_cofre.db import gravar_preferencia, ler_preferencia
 
@@ -79,7 +79,7 @@ def _centavos(reais: float) -> int:
 
 def _dia(epoch: float, deslocamento_s: int = 0) -> date:
     """Segundos desde 1970 -> a data no fuso da bolsa (`deslocamento_s` = gmtoffset do Yahoo)."""
-    return (datetime.fromtimestamp(0, timezone.utc) + timedelta(seconds=epoch + deslocamento_s)).date()
+    return (datetime.fromtimestamp(0, UTC) + timedelta(seconds=epoch + deslocamento_s)).date()
 
 
 # --- Interpretação das respostas ------------------------------------------------------------------

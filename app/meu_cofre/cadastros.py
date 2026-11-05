@@ -6,7 +6,6 @@ from datetime import date
 
 import pandas as pd
 
-from meu_cofre import lancamentos
 from meu_cofre.lancamentos import para_centavos
 
 NATUREZAS = ["essencial", "flexivel", "superfluo"]
@@ -80,7 +79,7 @@ def salvar_contas(conn: sqlite3.Connection, df: pd.DataFrame) -> None:
 _OBRIGATORIAS = {"corrente": "conta corrente", "dinheiro": "carteira"}
 
 
-def _conta(conn: sqlite3.Connection, conta_id: int) -> sqlite3.Row:
+def obter_conta(conn: sqlite3.Connection, conta_id: int) -> sqlite3.Row:
     linha = conn.execute("SELECT * FROM contas WHERE id = ?", (conta_id,)).fetchone()
     if linha is None:
         raise ValueError(f"Conta {conta_id} não existe.")
@@ -152,7 +151,7 @@ def criar_cartao(
 
 
 def _cartao(conn: sqlite3.Connection, conta_id: int) -> sqlite3.Row:
-    conta = _conta(conn, conta_id)
+    conta = obter_conta(conn, conta_id)
     if conta["tipo"] != "cartao":
         raise ValueError(f"{conta['nome']} não é um cartão.")
     return conta
@@ -198,7 +197,7 @@ def definir_final(conn: sqlite3.Connection, conta_id: int, final: str | None) ->
 
 
 def renomear_conta(conn: sqlite3.Connection, conta_id: int, nome: str) -> None:
-    _conta(conn, conta_id)
+    obter_conta(conn, conta_id)
     nome = _nome_livre(conn, nome, ignorar_id=conta_id)
     with conn:
         conn.execute("UPDATE contas SET nome = ? WHERE id = ?", (nome, conta_id))
@@ -206,7 +205,7 @@ def renomear_conta(conn: sqlite3.Connection, conta_id: int, nome: str) -> None:
 
 def definir_saldo_inicial(conn: sqlite3.Connection, conta_id: int, centavos: int) -> None:
     """Saldo de partida de uma conta corrente ou da carteira (pode ser negativo)."""
-    conta = _conta(conn, conta_id)
+    conta = obter_conta(conn, conta_id)
     if conta["tipo"] not in _OBRIGATORIAS:
         raise ValueError("Só conta corrente e carteira têm saldo inicial.")
     with conn:
@@ -215,7 +214,7 @@ def definir_saldo_inicial(conn: sqlite3.Connection, conta_id: int, centavos: int
 
 def desativar_conta(conn: sqlite3.Connection, conta_id: int) -> None:
     """Desativa (não apaga): o histórico fica. Não deixa desativar a última conta corrente ou carteira ativa."""
-    conta = _conta(conn, conta_id)
+    conta = obter_conta(conn, conta_id)
     if not conta["ativa"]:
         return
     if conta["tipo"] in _OBRIGATORIAS:
@@ -229,14 +228,14 @@ def desativar_conta(conn: sqlite3.Connection, conta_id: int) -> None:
 
 
 def reativar_conta(conn: sqlite3.Connection, conta_id: int) -> None:
-    _conta(conn, conta_id)
+    obter_conta(conn, conta_id)
     with conn:
         conn.execute("UPDATE contas SET ativa = 1 WHERE id = ?", (conta_id,))
 
 
 def saldo_da_conta(conn: sqlite3.Connection, conta_id: int, ate: date | None = None) -> int:
     """Saldo inicial + lançamentos da conta (até `ate`, ou todos). Cartão dá negativo (é dívida)."""
-    conta = _conta(conn, conta_id)
+    conta = obter_conta(conn, conta_id)
     filtro, params = ("AND data <= ?", [ate.isoformat()]) if ate else ("", [])
     movimentos = conn.execute(
         f"SELECT COALESCE(SUM(valor_centavos), 0) FROM lancamentos WHERE conta_id = ? {filtro}",
@@ -266,7 +265,7 @@ def categorias_por_tipo(conn: sqlite3.Connection, tipo: str, incluir_inativas: b
     return conn.execute(f"SELECT * FROM categorias WHERE tipo = ? {ativa} ORDER BY nome", (tipo,)).fetchall()
 
 
-def _categoria(conn: sqlite3.Connection, categoria_id: int, *, mutavel: bool = False) -> sqlite3.Row:
+def obter_categoria(conn: sqlite3.Connection, categoria_id: int, *, mutavel: bool = False) -> sqlite3.Row:
     linha = conn.execute("SELECT * FROM categorias WHERE id = ?", (categoria_id,)).fetchone()
     if linha is None:
         raise ValueError(f"Categoria {categoria_id} não existe.")
@@ -307,7 +306,7 @@ def criar_categoria(conn: sqlite3.Connection, nome: str, tipo: str, natureza: st
 
 
 def renomear_categoria(conn: sqlite3.Connection, categoria_id: int, nome: str) -> None:
-    _categoria(conn, categoria_id, mutavel=True)
+    obter_categoria(conn, categoria_id, mutavel=True)
     nome = _nome_categoria_livre(conn, nome, ignorar_id=categoria_id)
     with conn:
         conn.execute("UPDATE categorias SET nome = ? WHERE id = ?", (nome, categoria_id))
@@ -315,7 +314,7 @@ def renomear_categoria(conn: sqlite3.Connection, categoria_id: int, nome: str) -
 
 def definir_natureza(conn: sqlite3.Connection, categoria_id: int, natureza: str | None) -> None:
     """Essencial, flexível, supérfluo ou nenhuma (None). Alimenta a reserva de emergência e os relatórios."""
-    categoria = _categoria(conn, categoria_id, mutavel=True)
+    categoria = obter_categoria(conn, categoria_id, mutavel=True)
     _natureza_valida(natureza, categoria["tipo"])
     with conn:
         conn.execute("UPDATE categorias SET natureza = ? WHERE id = ?", (natureza, categoria_id))
@@ -323,13 +322,13 @@ def definir_natureza(conn: sqlite3.Connection, categoria_id: int, natureza: str 
 
 def desativar_categoria(conn: sqlite3.Connection, categoria_id: int) -> None:
     """Some das escolhas de novos lançamentos; os antigos mantêm a categoria."""
-    _categoria(conn, categoria_id, mutavel=True)
+    obter_categoria(conn, categoria_id, mutavel=True)
     with conn:
         conn.execute("UPDATE categorias SET ativa = 0 WHERE id = ?", (categoria_id,))
 
 
 def reativar_categoria(conn: sqlite3.Connection, categoria_id: int) -> None:
-    _categoria(conn, categoria_id)
+    obter_categoria(conn, categoria_id)
     with conn:
         conn.execute("UPDATE categorias SET ativa = 1 WHERE id = ?", (categoria_id,))
 
@@ -352,7 +351,7 @@ def _regra_validada(conn: sqlite3.Connection, padrao: str, categoria_id: int, ti
             raise ValueError(f"Regex inválida: {e}.") from e
     elif not any(ch.isalnum() for ch in padrao):
         raise ValueError("O trecho precisa ter letras ou números.")
-    categoria = _categoria(conn, categoria_id)
+    categoria = obter_categoria(conn, categoria_id)
     if categoria_do_sistema(categoria) or not categoria["ativa"]:
         raise ValueError("Escolha uma categoria ativa.")
     return padrao, tipo_match, categoria_id, int(prioridade)

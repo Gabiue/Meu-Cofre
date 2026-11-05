@@ -2,7 +2,7 @@
 Nunca usa a internet: `_obter_json` é trocado por respostas falsas e o buscador é injetado."""
 
 import urllib.error
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, UTC
 
 import pytest
 
@@ -15,7 +15,7 @@ GMT = -10800  # horário de Brasília
 
 def _ts(ano, mes, dia):
     """Meio-dia de Brasília como epoch (cai no dia certo mesmo com o deslocamento)."""
-    return int(datetime(ano, mes, dia, 15, tzinfo=timezone.utc).timestamp())
+    return int(datetime(ano, mes, dia, 15, tzinfo=UTC).timestamp())
 
 
 def _yahoo(preco=38.456, fechamentos=None, dividendos=None, tempo=None):

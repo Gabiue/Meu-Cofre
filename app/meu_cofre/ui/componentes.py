@@ -3,7 +3,6 @@
 from PySide6.QtCore import QPointF, QRectF, QSize, Qt, Signal
 from PySide6.QtGui import QColor, QPainter, QPen, QTextCharFormat
 from PySide6.QtWidgets import (
-    QBoxLayout,
     QButtonGroup,
     QCheckBox,
     QComboBox,
@@ -237,29 +236,6 @@ class NumeroDestaque(QWidget):
     def adicionar(self, widget: QWidget) -> None:
         """Acrescenta um widget (ex.: `Pilula`) logo abaixo do número, alinhado à esquerda."""
         self._layout.insertWidget(self._layout.count() - 1, widget, 0, Qt.AlignmentFlag.AlignLeft)
-
-
-class LinhaResponsiva(QWidget):
-    """Itens lado a lado; se não couberem (largura mínima de cada um), empilha em coluna."""
-
-    def __init__(self, largura_minima_item: int = 200, espaco: int = 24, parent: QWidget | None = None):
-        super().__init__(parent)
-        self._minimo = largura_minima_item
-        self._itens: list[QWidget] = []
-        self._layout = QBoxLayout(QBoxLayout.Direction.LeftToRight, self)
-        self._layout.setContentsMargins(0, 0, 0, 0)
-        self._layout.setSpacing(espaco)
-
-    def adicionar(self, widget: QWidget) -> None:
-        self._itens.append(widget)
-        self._layout.addWidget(widget, 1)
-
-    def resizeEvent(self, evento) -> None:
-        lado_a_lado = evento.size().width() >= self._minimo * len(self._itens) + self._layout.spacing() * (len(self._itens) - 1)
-        direcao = QBoxLayout.Direction.LeftToRight if lado_a_lado else QBoxLayout.Direction.TopToBottom
-        if self._layout.direction() != direcao:
-            self._layout.setDirection(direcao)
-        super().resizeEvent(evento)
 
 
 class GradeResponsiva(QWidget):

@@ -422,3 +422,11 @@ def test_grafico_sem_historico_de_precos_usa_a_cotacao_anterior_ou_o_custo(conn)
     df = inv.serie_patrimonio_no_ano(conn, HOJE).set_index("data")
     assert df.loc["2026-03-05", "centavos"] == 300_000 and df.loc["2026-06-04", "centavos"] == 400_000
     assert df.loc["2026-10-08", "centavos"] == 400_000  # a mais próxima até a data
+
+
+def test_renda_variavel_pode_ser_importado_antes_de_investimentos():
+    import subprocess
+    import sys
+
+    codigo = "from meu_cofre import renda_variavel; from meu_cofre import investimentos"
+    assert subprocess.run([sys.executable, "-c", codigo], capture_output=True).returncode == 0

@@ -25,3 +25,18 @@ def id_conta(conn, nome):
 
 def id_cat(conn, nome):
     return conn.execute("SELECT id FROM categorias WHERE nome = ?", (nome,)).fetchone()["id"]
+
+
+@pytest.hookimpl(trylast=True)
+def pytest_unconfigure(config):
+    """Sai sem a finalização do Python: com widgets ainda vivos, desmontar o Qt na saída dá segfault em algumas
+    máquinas (a CI terminava com código 139 depois de todos os testes passarem). O código de saída é o do pytest."""
+    import sys
+
+    sys.stdout.flush()
+    sys.stderr.flush()
+    os._exit(config._exit_status if hasattr(config, "_exit_status") else 0)
+
+
+def pytest_sessionfinish(session, exitstatus):
+    session.config._exit_status = int(exitstatus)

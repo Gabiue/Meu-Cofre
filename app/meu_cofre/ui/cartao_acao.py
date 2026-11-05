@@ -11,7 +11,7 @@ import math
 from datetime import date
 
 from PySide6.QtCore import QDate, Qt, Signal
-from PySide6.QtWidgets import QFrame, QGridLayout, QHBoxLayout, QLabel, QLineEdit, QPushButton, QSizePolicy, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QFrame, QGridLayout, QHBoxLayout, QLineEdit, QPushButton, QSizePolicy, QVBoxLayout, QWidget
 
 from meu_cofre import renda_variavel
 from meu_cofre.lancamentos import formatar_brl, formatar_brl_inteiro, para_centavos
@@ -595,7 +595,7 @@ class CartaoAcao(QFrame):
         sub.addWidget(self.resultado, 0, Qt.AlignmentFlag.AlignLeft)
         sub.addWidget(self.pilula_resultado, 0, Qt.AlignmentFlag.AlignLeft)
         for titulo, valor, apoio_w in (
-            (f"Quantidade", self.quantidade, self.apoio_quantidade),
+            ("Quantidade", self.quantidade, self.apoio_quantidade),
             ("Preço médio", self.preco_medio, self.apoio_preco_medio),
             ("Cotação", self.cotacao, self.apoio_cotacao),
             ("Valor atual", self.valor_atual, self.apoio_valor),

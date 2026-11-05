@@ -236,7 +236,6 @@ def test_lista_agrupada_por_tipo_com_caixinhas_primeiro(app, conn):
 
 def test_valor_estimado_com_taxa_incompleta_leva_aproximado_e_saldo_real_leva_a_data(app, conn):
     _novo(conn)
-    cdb = inv.listar(conn, HOJE) and None
     a = _novo(conn, "Outro")
     inv.aportar(conn, a, 100_000, id_conta(conn, "Inter"), date(2026, 10, 1))  # sem série: taxa em falta
     aba = _aba(conn)

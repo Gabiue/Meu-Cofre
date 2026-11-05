@@ -148,8 +148,8 @@ def test_lista_em_ordem_de_prioridade_com_barra_percentual_e_plano(app, conn):
 def test_pilulas_de_viabilidade_parcial_e_nao_cabe(app, conn):
     _historico(conn)  # sobra 2000
     _meta(conn, "Reserva de emergência", valor=1_200_000, modo="mensal", mensal=120_000, reserva=True)
-    v = _meta(conn, "Viagem", valor=600_000, modo="mensal", mensal=150_000)
-    c = _meta(conn, "Cadeira", valor=100_000, modo="mensal", mensal=10_000)
+    _meta(conn, "Viagem", valor=600_000, modo="mensal", mensal=150_000)
+    _meta(conn, "Cadeira", valor=100_000, modo="mensal", mensal=10_000)
     aba = _aba(conn)
     reserva, viagem, cadeira = aba.cartoes()
     assert not reserva.pilula_reserva.isHidden()
@@ -258,7 +258,7 @@ def test_subir_e_descer_prioridade(app, conn):
 
 
 def test_concluir_arquivar_e_reativar_com_encerradas_recolhidas(app, conn):
-    a, b, c = _meta(conn, "A"), _meta(conn, "B"), _meta(conn, "C")
+    a, b, _c = _meta(conn, "A"), _meta(conn, "B"), _meta(conn, "C")
     metas.guardar(conn, a, 10_000, id_conta(conn, "Inter"), HOJE)
     aba = _aba(conn)
     avisos = []

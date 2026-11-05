@@ -8,7 +8,6 @@ from pathlib import Path
 
 import pytest
 import shiboken6
-from conftest import id_conta
 from PySide6.QtWidgets import QApplication, QMessageBox, QPushButton
 
 from meu_cofre import cotacoes, db, relatorios

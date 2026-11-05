@@ -212,7 +212,7 @@ def test_mover_prioridade_troca_com_o_vizinho_e_para_nos_limites(conn):
 
 
 def test_mover_prioridade_ignora_metas_encerradas(conn):
-    a, b, c = _meta(conn, "A"), _meta(conn, "B"), _meta(conn, "C")
+    _a, b, c = _meta(conn, "A"), _meta(conn, "B"), _meta(conn, "C")
     metas.arquivar(conn, b)
     metas.mover_prioridade(conn, c, -1)  # pula a arquivada
     assert [m.nome for m in metas.listar(conn, HOJE)] == ["C", "A"]
@@ -511,8 +511,8 @@ def test_simular_nova_meta_valida(conn):
 def test_simular_edicao_compara_com_a_meta_como_estava(conn):
     _historico(conn)  # sobra 2000
     a = _meta(conn, "Viagem", valor=600_000, modo="mensal", mensal=100_000)  # 1000
-    b = _meta(conn, "Cadeira", valor=300_000, modo="mensal", mensal=60_000)  # 600
-    c = _meta(conn, "Tela", valor=200_000, modo="mensal", mensal=40_000)  # 400: cabe tudo (2000)
+    _meta(conn, "Cadeira", valor=300_000, modo="mensal", mensal=60_000)  # 600
+    _meta(conn, "Tela", valor=200_000, modo="mensal", mensal=40_000)  # 400: cabe tudo (2000)
     p = metas.simular_edicao(conn, HOJE, a, nome="Viagem", valor_alvo_centavos=600_000, modo="mensal", mensal_centavos=150_000)
     assert p.meta.alocado == 150_000
     # sobram 500 pra Cadeira (era 600: 5 meses viram 6) e nada pra Tela (deixa de caber)

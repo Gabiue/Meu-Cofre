@@ -319,7 +319,7 @@ class DialogoCategorias(QDialog):
         self.alterado.emit(mensagem)
 
     def _nome(self, categoria_id: int) -> str:
-        return cadastros._categoria(self.conn, categoria_id)["nome"]
+        return cadastros.obter_categoria(self.conn, categoria_id)["nome"]
 
     def mostrar_desativadas(self, tipo: str, mostrar: bool) -> None:
         (self._mostrar_desativadas.add if mostrar else self._mostrar_desativadas.discard)(tipo)

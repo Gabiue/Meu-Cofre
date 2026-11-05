@@ -544,7 +544,7 @@ class AbaInvestimentos(QScrollArea):
         self._aporte_ativos.setVisible(bool(r.progresso.por_ativo))
         rend = r.rendimento_ano
         self._rendimento.definir(
-            _brl_com_sinal(rend.centavos), _pct(rend.percentual, sinal=True) + " no ano" if rend.percentual is not None else "ainda sem aplicações"
+            _brl_com_sinal(rend.centavos), _pct(rend.percentual, sinal=True) + " sobre o aplicado" if rend.percentual is not None else "ainda sem aplicações"
         )
         if r.pct_cdi is None:
             self._pilula_cdi.setVisible(False)

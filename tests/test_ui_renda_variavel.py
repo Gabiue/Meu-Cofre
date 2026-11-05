@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 import shiboken6
 from conftest import id_conta
-from PySide6.QtWidgets import QApplication, QMessageBox
+from PySide6.QtWidgets import QApplication, QMessageBox, QPushButton
 
 from meu_cofre import cotacoes, db, relatorios
 from meu_cofre import investimentos as inv
@@ -437,6 +437,22 @@ def test_descrever_operacao():
     provento = OperacaoB3(3, "VALE3", "", "jcp", date(2026, 6, 10), 40, None, 2210, "k2")
     assert descrever_operacao(compra) == "02/03/2026 · Compra · PETR4 · 100 × R$ 35,00 = R$ 3.500,00"
     assert descrever_operacao(provento) == "10/06/2026 · JCP · VALE3 · R$ 22,10"
+    bonus = OperacaoB3(4, "ITSA4", "", "bonificacao", date(2026, 3, 10), 10, None, 5000, "k3")
+    grup = OperacaoB3(5, "ITSA4", "", "grupamento", date(2026, 3, 30), -198, None, 0, "k4")
+    assert descrever_operacao(bonus) == "10/03/2026 · Bonificação · ITSA4 · 10 cotas · custo R$ 50,00"
+    assert descrever_operacao(grup) == "30/03/2026 · Grupamento · ITSA4 · -198 cotas"
+
+
+def test_historico_do_ativo_rotula_eventos_e_nao_deixa_editar(app):
+    from meu_cofre.ui.cartao_acao import HistoricoAtivo, descrever_item
+
+    item = {"fonte": "rv", "id": 1, "tipo": "desdobramento", "data": date(2026, 3, 20), "valor": 0, "quantidade": 110.0,
+            "preco": None, "taxas": 0, "afeta_conta": False}
+    assert descrever_item(item) == "Desdobramento · +110"
+    assert descrever_item({**item, "tipo": "bonificacao", "valor": 5000}) == "Bonificação · 110 cotas · custo R$ 50,00"
+    h = HistoricoAtivo()
+    h.mostrar([item])
+    assert [b.text() for b in h.findChildren(QPushButton)] == ["Excluir"]
 
 
 def test_botao_da_aba_abre_a_janela_e_a_lista_se_atualiza(app, conn, planilha):

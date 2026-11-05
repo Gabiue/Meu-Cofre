@@ -7,7 +7,12 @@ histórico importado da B3, de dinheiro que já passou por fora do app.
 
 **Preço médio.** Média ponderada das compras, taxas incluídas. Venda não muda o preço médio (só a quantidade e o custo,
 na mesma proporção); zerar a posição zera o preço médio e a recompra começa do zero. O lucro das vendas (líquido de
-taxas, sem IR) fica em `realizado`. Dentro do mesmo dia as compras valem antes das vendas.
+taxas, sem IR) fica em `realizado`. Dentro do mesmo dia valem as compras, depois os eventos e por fim as vendas.
+
+**Eventos corporativos** (só importados da B3, nunca mexem em conta): `bonificacao` soma cotas e o custo atribuído
+(`valor_centavos`, 0 se a empresa não atribuiu: o preço médio cai); `desdobramento` e `grupamento` somam a
+`quantidade` **com sinal** (entrou +, saiu −) sem mudar o custo, então o preço médio se ajusta; `fracao` tira cotas ao
+preço médio, como uma venda, mas sem lucro nem prejuízo.
 
 **Cotação.** Última cotação guardada em `cotacoes` até a data (ver `cotacoes.py`). Sem nenhuma, a posição não tem valor
 atual nem resultado, e o patrimônio usa o custo (pra não despencar só porque a rede falhou).
@@ -35,6 +40,7 @@ from meu_cofre.lancamentos import somar_meses
 
 TIPOS_PROVENTO = ("dividendo", "jcp", "rendimento")
 NOMES_PROVENTO = {"dividendo": "Dividendo", "jcp": "JCP", "rendimento": "Rendimento"}
+NOMES_EVENTO = {"bonificacao": "Bonificação", "desdobramento": "Desdobramento", "grupamento": "Grupamento", "fracao": "Fração"}
 CATEGORIA_PROVENTOS = "Rendimentos"
 _EPS = 1e-9  # quantidade abaixo disso é zero (resto de ponto flutuante)
 
@@ -72,8 +78,8 @@ def operacoes(conn: sqlite3.Connection, ativo_id: int, ate: date | None = None) 
 
 
 def _ordenar(ops: list[Operacao]) -> list[Operacao]:
-    """Por data; no mesmo dia as compras antes das vendas (assim vender o que se comprou no dia nunca estoura)."""
-    return sorted(ops, key=lambda o: (o.data, o.tipo != "compra", o.id))
+    """Por data; no mesmo dia as compras, os eventos e só então as vendas (vender o que se comprou no dia nunca estoura)."""
+    return sorted(ops, key=lambda o: (o.data, 0 if o.tipo == "compra" else 2 if o.tipo == "venda" else 1, o.id))
 
 
 # --- Preço médio e custo (percorrendo as operações) ---------------------------------------------------
@@ -98,6 +104,22 @@ def _estado(ops: list[Operacao]) -> _Estado:
         if o.tipo == "compra":
             e.quantidade += o.quantidade
             e.custo += o.valor_centavos + o.taxas_centavos
+        elif o.tipo == "bonificacao":
+            e.quantidade += o.quantidade
+            e.custo += o.valor_centavos
+        elif o.tipo in ("desdobramento", "grupamento"):
+            e.quantidade += o.quantidade  # com sinal; o custo fica
+            e.minimo = min(e.minimo, e.quantidade)
+            if e.quantidade <= _EPS:
+                e.quantidade, e.custo = 0.0, 0.0
+        elif o.tipo == "fracao":
+            e.minimo = min(e.minimo, e.quantidade - o.quantidade)
+            tirada = min(o.quantidade, e.quantidade)
+            if e.quantidade > _EPS:
+                e.custo -= e.custo * tirada / e.quantidade
+                e.quantidade -= tirada
+            if e.quantidade <= _EPS:
+                e.quantidade, e.custo = 0.0, 0.0
         elif o.tipo == "venda":
             liquido = o.valor_centavos - o.taxas_centavos
             e.minimo = min(e.minimo, e.quantidade - o.quantidade)
@@ -300,9 +322,11 @@ def editar_operacao(
     taxas: int = 0, valor: int | None = None,
 ) -> None:
     """Corrige uma operação. Compra e venda: `quantidade`, `preco` (centavos por cota) e `taxas`; provento: `valor`.
-    O tipo não muda. Com `afeta_conta`, a transferência (ou a entrada do provento) acompanha. O preço médio e a posição
+    O tipo não muda. Evento corporativo (bonificação, desdobramento...) não se edita: exclui e importa de novo. Com `afeta_conta`, a transferência (ou a entrada do provento) acompanha. O preço médio e a posição
     saem das operações, então se acertam sozinhos. Não deixa uma venda sem as cotas que ela vende."""
     op, linha = _operacao_gravada(conn, operacao_id)
+    if op.tipo in NOMES_EVENTO:
+        raise ValueError(f"{NOMES_EVENTO[op.tipo]} não se edita. Exclua e importe de novo, se precisar.")
     ticker = investimentos.obter(conn, op.ativo_id).ticker
     if op.tipo in TIPOS_PROVENTO:
         if valor is None or valor <= 0:

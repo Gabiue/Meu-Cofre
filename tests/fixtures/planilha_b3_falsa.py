@@ -29,7 +29,7 @@ LINHAS = [
     ["Credito", "07/04/2026", "Transferência - Liquidação", MXRF, CORRETORA, 200, "R$ 10,00", "R$ 2.000,00"],
     # as que o app ignora
     ["Credito", "11/03/2026", "Transferência", PETR, CORRETORA, 10, "-", "-"],
-    ["Credito", "12/03/2026", "Bonificação em Ativos", VALE, CORRETORA, 4, "R$ 0,00", "-"],
+    ["Credito", "12/03/2026", "Direito de Subscrição", VALE, CORRETORA, 4, "-", "-"],
     ["Credito", "13/03/2026", "Transferência - Liquidação", "Tesouro Selic 2029", CORRETORA, 1, "R$ 14.000,00", "R$ 14.000,00"],
     ["Credito", "bla", "Dividendo", VALE, CORRETORA, 40, "R$ 0,40", "R$ 16,00"],
 ]

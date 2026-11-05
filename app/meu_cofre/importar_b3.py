@@ -11,8 +11,18 @@ ordem entre linhas idênticas do mesmo arquivo), e a chave é única no banco.
 
 A planilha é tolerante: nomes de coluna com ou sem acento, em qualquer caixa e com espaços a mais; valores como número
 ou texto ("R$ 1.234,56", "-"). Entram compras e vendas ("Transferência - Liquidação", com Crédito = compra e
-Débito = venda) e proventos ("Dividendo", "Juros Sobre Capital Próprio", "Rendimento") de ações e FIIs. O resto
-(Tesouro, bonificação, transferência de custódia, subscrição...) é ignorado e aparece na prévia.
+Débito = venda), proventos ("Dividendo", "Juros Sobre Capital Próprio", "Rendimento") e eventos corporativos de ações
+e FIIs:
+
+- "Bonificação em Ativos": `bonificacao` (+ cotas, + o custo atribuído pela empresa; sem custo, o preço médio cai);
+- "Desdobro"/"Desdobramento" e "Grupamento": `desdobramento` e `grupamento`, com a quantidade **com sinal** (Crédito
+  +, Débito −); o custo não muda e o preço médio se ajusta;
+- "Fração em Ativos": `fracao`, sai da posição ao preço médio, sem lucro nem prejuízo;
+- Subscrição exercida ("Direitos de Subscrição - Exercido", "Subscrição", "Recibo de Subscrição"): vira `compra` do
+  ticker-base (HGLG13 -> HGLG11, ITSA9 -> ITSA3, ITSA10 -> ITSA4).
+
+O resto (Tesouro, direito de subscrição ainda não exercido, "Atualização" do recibo, "Transferência" de custódia entre
+corretoras, "Leilão de Fração"...) é ignorado e aparece na prévia, com o motivo.
 """
 
 import hashlib
@@ -41,6 +51,7 @@ COLUNAS = {
     "valor da operacao": "valor", "valor": "valor",
 }
 OBRIGATORIAS = ("data", "movimentacao", "produto")
+EVENTOS = ("bonificacao", "desdobramento", "grupamento", "fracao")  # mexem na posição, nunca numa conta
 PADRAO_TICKER = re.compile(r"^([A-Z]{4}\d{1,2})F?$")  # PETR4, HGLG11 e o fracionário PETR4F
 LINHAS_PROCURANDO_CABECALHO = 30
 
@@ -54,9 +65,9 @@ class OperacaoB3:
     linha: int  # linha na planilha
     ticker: str
     nome: str
-    tipo: str  # compra | venda | dividendo | jcp | rendimento
+    tipo: str  # compra | venda | dividendo | jcp | rendimento | bonificacao | desdobramento | grupamento | fracao
     data: date
-    quantidade: float | None
+    quantidade: float | None  # desdobramento e grupamento: com sinal (entrou +, saiu −)
     preco_centavos: int | None
     valor_centavos: int
     chave: str
@@ -175,9 +186,17 @@ def _nome_legivel(nome: str) -> str:
     return nome.title() if nome.isupper() else nome
 
 
+def _ticker_base(ticker: str) -> str:
+    """Ticker do papel a que o direito/recibo de subscrição dá origem: FII 12-15 -> 11 (HGLG13 -> HGLG11); ação 1 e 9
+    -> 3, 2 e 10 -> 4 (ITSA9 -> ITSA3, ITSA10 -> ITSA4). Qualquer outro fica como está."""
+    raiz, numero = ticker[:4], ticker[4:]
+    return raiz + {"12": "11", "13": "11", "14": "11", "15": "11", "1": "3", "9": "3", "2": "4", "10": "4"}.get(numero, numero)
+
+
 def _classificar(movimentacao: str, sentido: str) -> tuple[str | None, str]:
-    """(tipo, motivo). tipo None = ignorar, com o motivo."""
+    """(tipo, motivo). tipo None = ignorar, com o motivo. "subscricao" é compra do ticker-base (ver `_ticker_base`)."""
     mov = _normal(movimentacao)
+    credito, debito = sentido.startswith("cred"), sentido.startswith("deb")
     if "dividendo" in mov:
         return "dividendo", ""
     if "juros sobre capital" in mov:
@@ -185,11 +204,29 @@ def _classificar(movimentacao: str, sentido: str) -> tuple[str | None, str]:
     if mov.startswith("rendimento"):
         return "rendimento", ""
     if "liquidacao" in mov:
-        if sentido.startswith("cred"):
+        if credito:
             return "compra", ""
-        if sentido.startswith("deb"):
+        if debito:
             return "venda", ""
         return None, "Não deu pra saber se foi compra ou venda (coluna Entrada/Saída)"
+    if mov.startswith("bonificacao"):
+        return ("bonificacao", "") if credito else (None, "Bonificação sem crédito: não importada")
+    if mov.startswith(("desdobr", "grupamento")):
+        if not (credito or debito):
+            return None, "Não deu pra saber se as cotas entraram ou saíram (coluna Entrada/Saída)"
+        return ("desdobramento" if mov.startswith("desdobr") else "grupamento"), ""
+    if mov.startswith("fracao"):
+        return ("fracao", "") if debito else (None, "Fração sem débito: não importada")
+    if mov.startswith("leilao de fracao"):
+        return None, "Valor das frações vendidas em leilão: lance como entrada na conta se quiser"
+    if mov in ("direitos de subscricao - exercido", "subscricao", "recibo de subscricao"):
+        return ("subscricao", "") if credito else (None, "Subscrição sem crédito: não importada")
+    if mov == "atualizacao":
+        return None, "Conversão do recibo: já contado na subscrição"
+    if mov in ("direito de subscricao", "cessao de direitos") or mov.startswith("cessao de direitos"):
+        return None, "Direito de subscrição ainda não exercido: só entra quando for exercido"
+    if mov == "transferencia":
+        return None, "Troca de corretora: a posição não muda"
     return None, f"Movimentação não importada: {movimentacao.strip() or 'sem descrição'}"
 
 
@@ -213,32 +250,41 @@ def _ler(caminho: Path | str) -> tuple[list[OperacaoB3], list[Ignorada]]:
 
         codigo, _sep, nome = produto.partition(" - ")
         achou = PADRAO_TICKER.match(codigo.strip().upper())
-        tipo, motivo = _classificar(str(c.get("movimentacao") or ""), _normal(c.get("sentido")))
+        sentido = _normal(c.get("sentido"))
+        tipo, motivo = _classificar(str(c.get("movimentacao") or ""), sentido)
         if tipo is None:
             ignorar(motivo)
             continue
         if not achou:
             ignorar("O produto não é ação nem FII")
             continue
+        ticker = achou.group(1)
+        if tipo == "subscricao":
+            tipo, ticker = "compra", _ticker_base(ticker)
         dia = _data(c.get("data"))
         if dia is None:
             ignorar("Data inválida")
             continue
         quantidade, preco, valor = _numero(c.get("quantidade")), _centavos(_numero(c.get("preco"))), _centavos(_numero(c.get("valor")))
-        if tipo in ("compra", "venda"):
+        if tipo in ("compra", "venda", *EVENTOS):
             if quantidade is None or quantidade <= 0:
                 ignorar("Sem quantidade")
                 continue
+        if tipo in EVENTOS:
+            valor = max(valor or 0, 0)  # só a bonificação traz valor (o custo atribuído); nos outros fica 0
+            if tipo in ("desdobramento", "grupamento") and sentido.startswith("deb"):
+                quantidade = -quantidade
+        elif tipo in ("compra", "venda"):
             if valor is None and preco is not None:
                 valor = round(float(quantidade) * preco)
             if preco is None and valor is not None:
                 preco = round(valor / float(quantidade))
-        if valor is None or valor <= 0:
+        if tipo not in EVENTOS and (valor is None or valor <= 0):
             ignorar("Sem valor")
             continue
         instituicao = str(c.get("instituicao") or "")
         op = OperacaoB3(
-            linha=numero, ticker=achou.group(1), nome=nome.strip(), tipo=tipo, data=dia,
+            linha=numero, ticker=ticker, nome=nome.strip(), tipo=tipo, data=dia,
             quantidade=float(quantidade) if quantidade is not None else None,
             preco_centavos=preco if tipo in ("compra", "venda") else None, valor_centavos=valor, chave="",
         )

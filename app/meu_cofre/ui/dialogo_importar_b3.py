@@ -12,7 +12,7 @@ from pathlib import Path
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import QDialog, QFileDialog, QFrame, QHBoxLayout, QLabel, QScrollArea, QVBoxLayout, QWidget
 
-from meu_cofre import importar_b3
+from meu_cofre import importar_b3, renda_variavel
 from meu_cofre.importar_b3 import AtivoNovo, ImportacaoErro, OperacaoB3, Previa
 from meu_cofre.lancamentos import formatar_brl
 from meu_cofre.ui import tema
@@ -23,7 +23,10 @@ LARGURA = 640
 ALTURA = 680
 LINHAS_VISIVEIS = 8  # operações novas listadas antes do "e mais N"
 NOMES_TIPO = {"acao": "Ação", "fii": "FII"}
-NOMES_OPERACAO = {"compra": "Compra", "venda": "Venda", "dividendo": "Dividendo", "jcp": "JCP", "rendimento": "Rendimento"}
+NOMES_OPERACAO = {
+    "compra": "Compra", "venda": "Venda", "dividendo": "Dividendo", "jcp": "JCP", "rendimento": "Rendimento",
+    **renda_variavel.NOMES_EVENTO,
+}
 
 
 def _rotulo(texto: str, nome: str, quebra: bool = False) -> QLabel:
@@ -34,10 +37,13 @@ def _rotulo(texto: str, nome: str, quebra: bool = False) -> QLabel:
 
 
 def descrever_operacao(o: OperacaoB3) -> str:
-    """"02/03/2026 · Compra · PETR4 · 100 × R$ 35,00 = R$ 3.500,00" (proventos: só o valor)."""
+    """"02/03/2026 · Compra · PETR4 · 100 × R$ 35,00 = R$ 3.500,00" (proventos: só o valor; eventos: a quantidade)."""
     base = f"{o.data:%d/%m/%Y} · {NOMES_OPERACAO[o.tipo]} · {o.ticker}"
     if o.tipo in ("compra", "venda"):
         return f"{base} · {formatar_quantidade(o.quantidade)} × {formatar_brl(o.preco_centavos)} = {formatar_brl(o.valor_centavos)}"
+    if o.tipo in importar_b3.EVENTOS:
+        sinal = f"{o.quantidade:+g}".replace(".", ",") if o.tipo in ("desdobramento", "grupamento") else formatar_quantidade(o.quantidade)
+        return f"{base} · {sinal} cotas" + (f" · custo {formatar_brl(o.valor_centavos)}" if o.tipo == "bonificacao" else "")
     return f"{base} · {formatar_brl(o.valor_centavos)}"
 
 
@@ -97,8 +103,8 @@ class DialogoImportarB3(QDialog):
         coluna.addWidget(_rotulo("Importar da B3", "DialogoTitulo"))
         coluna.addWidget(
             _rotulo(
-                "Escolha a planilha de movimentações da Área do Investidor da B3 (.xlsx). Compras, vendas e proventos de "
-                "ações e FIIs entram só como histórico da carteira: nenhuma conta é alterada. Importar de novo a mesma "
+                "Escolha a planilha de movimentações da Área do Investidor da B3 (.xlsx). Compras, vendas, proventos e eventos "
+                "(bonificação, desdobramento, grupamento, fração, subscrição) de ações e FIIs entram só como histórico da carteira: nenhuma conta é alterada. Importar de novo a mesma "
                 "planilha não duplica nada.",
                 "DialogoDetalhe",
                 quebra=True,

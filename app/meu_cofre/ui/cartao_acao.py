@@ -250,7 +250,7 @@ class FormRV(QFrame):
 
 NOMES_OPERACAO = {
     "aporte": "Aporte", "resgate": "Resgate", "saldo_real": "Saldo no banco", "compra": "Compra", "venda": "Venda",
-    **renda_variavel.NOMES_PROVENTO,
+    **renda_variavel.NOMES_PROVENTO, **renda_variavel.NOMES_EVENTO,
 }
 
 
@@ -261,6 +261,10 @@ def descrever_item(i: dict) -> str:
         texto += f" · {formatar_quantidade(i['quantidade'])} × {formatar_brl(i['preco'])}"
         if i["taxas"]:
             texto += f" · taxas {formatar_brl(i['taxas'])}"
+    elif i["tipo"] in renda_variavel.NOMES_EVENTO:
+        texto += f" · {i['quantidade']:+g}".replace(".", ",") if i["tipo"] in ("desdobramento", "grupamento") else f" · {formatar_quantidade(i['quantidade'])} cotas"
+        if i["tipo"] == "bonificacao":
+            texto += f" · custo {formatar_brl(i['valor'])}"
     return texto
 
 
@@ -428,11 +432,12 @@ class HistoricoAtivo(QFrame):
         if i["tipo"] != "saldo_real":
             linha.addWidget(Pilula("na conta" if i["afeta_conta"] else "só o histórico"))
         linha.addWidget(valor)
-        editar = _acao("Editar", largura=64)
-        editar.clicked.connect(lambda _=False, i=i: self.abrir_edicao(i["id"]))
+        if i["tipo"] not in renda_variavel.NOMES_EVENTO:  # evento corporativo só se exclui
+            editar = _acao("Editar", largura=64)
+            editar.clicked.connect(lambda _=False, i=i: self.abrir_edicao(i["id"]))
+            linha.addWidget(editar)
         apagar = _acao("Excluir", perigo=True, largura=64)
         apagar.clicked.connect(lambda _=False, i=i: self.pedir_exclusao(i["id"]))
-        linha.addWidget(editar)
         linha.addWidget(apagar)
         coluna.addLayout(linha)
         if self._editando == i["id"]:

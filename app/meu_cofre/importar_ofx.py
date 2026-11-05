@@ -355,6 +355,6 @@ def confirmar(conn: sqlite3.Connection, previa: Previa, escolhas: dict[int, int 
         diferenca = e.saldo_centavos - cadastros.saldo_da_conta(conn, previa.conta_id, e.saldo_data)
         if diferenca:
             cadastros.definir_saldo_inicial(
-                conn, previa.conta_id, cadastros._conta(conn, previa.conta_id)["saldo_inicial_centavos"] + diferenca
+                conn, previa.conta_id, cadastros.obter_conta(conn, previa.conta_id)["saldo_inicial_centavos"] + diferenca
             )
     return {"novas": novas, "conciliadas": conciliadas, "ja_importadas": ja, "diferenca_saldo": diferenca}

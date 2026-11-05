@@ -234,7 +234,6 @@ def test_recente_sem_categoria_mostra_a_categorizar(app, conn):
 
 def test_rosca_com_dados_tem_grafico_com_a_serie(app, conn):
     """Regressão: a rosca montava o gráfico mas não o entregava à vista (aparecia um retângulo branco)."""
-    from meu_cofre.ui.graficos import PainelRosca
 
     _reg(conn, 5000, cat="Mercado")
     _reg(conn, 3000, cat="Transporte")

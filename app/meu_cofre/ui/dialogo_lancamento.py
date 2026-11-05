@@ -26,7 +26,6 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QPushButton,
     QScrollArea,
-    QSizePolicy,
     QStackedWidget,
     QVBoxLayout,
     QWidget,
@@ -132,6 +131,7 @@ class DialogoLancamento(QDialog):
         self._rolagem = QScrollArea()
         self._rolagem.setWidgetResizable(True)
         self._rolagem.setFrameShape(QFrame.Shape.NoFrame)
+        self._rolagem.setFocusPolicy(Qt.FocusPolicy.NoFocus)  # sem parada de Tab na área de rolagem
         self._rolagem.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self._corpo = corpo = QWidget()
         corpo.setObjectName("DialogoCorpo")
@@ -771,7 +771,7 @@ class DialogoLancamento(QDialog):
             categoria_id = sugerida
         self._oferta = None
         if not self.editando and categoria_id is not None and categoria_id != sugerida:
-            self._oferta = (categoria_id, self.categoria.currentText() or cadastros._categoria(self.conn, categoria_id)["nome"])
+            self._oferta = (categoria_id, self.categoria.currentText() or cadastros.obter_categoria(self.conn, categoria_id)["nome"])
         data = self.data.date().toPython()
 
         try:

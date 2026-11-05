@@ -33,7 +33,7 @@ import uuid
 from bisect import bisect_right
 from dataclasses import dataclass
 from datetime import date, timedelta
-from functools import cached_property, lru_cache
+from functools import cached_property, cache
 
 import pandas as pd
 
@@ -70,7 +70,7 @@ def _pascoa(ano: int) -> date:
     return date(ano, mes, dia + 1)
 
 
-@lru_cache(maxsize=None)
+@cache
 def feriados(ano: int) -> frozenset[date]:
     """Feriados nacionais em que o mercado não funciona (Carnaval, Sexta Santa e Corpus Christi incluídos)."""
     pascoa = _pascoa(ano)
@@ -85,7 +85,7 @@ def dia_util(d: date) -> bool:
     return d.weekday() < 5 and d not in feriados(d.year)
 
 
-@lru_cache(maxsize=None)
+@cache
 def _dias_uteis_do_mes(ano: int, mes: int) -> int:
     return sum(dia_util(date(ano, mes, d)) for d in range(1, calendar.monthrange(ano, mes)[1] + 1))
 
@@ -702,7 +702,7 @@ class _Contexto:
         return progresso_do_mes(self.conn, self.hoje)
 
     @cached_property
-    def carteira(self) -> renda_variavel.Carteira:
+    def carteira(self) -> "renda_variavel.Carteira":  # string: os dois módulos se importam
         """Ações e FIIs (só carrega se alguém pedir)."""
         return renda_variavel.Carteira(self.conn, self.hoje)
 

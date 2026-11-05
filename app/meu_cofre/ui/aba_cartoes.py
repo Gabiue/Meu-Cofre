@@ -608,7 +608,7 @@ class AbaCartoes(QScrollArea):
             self._pagando = self._desfazendo = None
         self._atualizar_seletor()
 
-        cartao = cadastros._conta(self.conn, self._cartao_id)
+        cartao = cadastros.obter_conta(self.conn, self._cartao_id)
         lista = faturas.faturas_do_cartao(self.conn, self._cartao_id, hoje)
         nome = nome_com_final(cartao["nome"], cartao["final"])
         self._cartao_destaque.titulo.setText(nome.upper())

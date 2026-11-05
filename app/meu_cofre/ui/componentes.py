@@ -3,7 +3,6 @@
 from PySide6.QtCore import QPointF, QRectF, QSize, Qt, Signal
 from PySide6.QtGui import QColor, QPainter, QPen, QTextCharFormat
 from PySide6.QtWidgets import (
-    QBoxLayout,
     QButtonGroup,
     QCheckBox,
     QComboBox,
@@ -239,29 +238,6 @@ class NumeroDestaque(QWidget):
         self._layout.insertWidget(self._layout.count() - 1, widget, 0, Qt.AlignmentFlag.AlignLeft)
 
 
-class LinhaResponsiva(QWidget):
-    """Itens lado a lado; se não couberem (largura mínima de cada um), empilha em coluna."""
-
-    def __init__(self, largura_minima_item: int = 200, espaco: int = 24, parent: QWidget | None = None):
-        super().__init__(parent)
-        self._minimo = largura_minima_item
-        self._itens: list[QWidget] = []
-        self._layout = QBoxLayout(QBoxLayout.Direction.LeftToRight, self)
-        self._layout.setContentsMargins(0, 0, 0, 0)
-        self._layout.setSpacing(espaco)
-
-    def adicionar(self, widget: QWidget) -> None:
-        self._itens.append(widget)
-        self._layout.addWidget(widget, 1)
-
-    def resizeEvent(self, evento) -> None:
-        lado_a_lado = evento.size().width() >= self._minimo * len(self._itens) + self._layout.spacing() * (len(self._itens) - 1)
-        direcao = QBoxLayout.Direction.LeftToRight if lado_a_lado else QBoxLayout.Direction.TopToBottom
-        if self._layout.direction() != direcao:
-            self._layout.setDirection(direcao)
-        super().resizeEvent(evento)
-
-
 class GradeResponsiva(QWidget):
     """Itens em grade: tantas colunas quantas couberem (cada item com `largura_minima_item`), até um item por
     coluna. Com 4 itens: 4 lado a lado, 2 × 2 ou empilhados, conforme a largura. `colunas_permitidas` restringe quantas
@@ -341,6 +317,7 @@ class Segmentado(QFrame):
             raise ValueError("Segmentado precisa de ao menos uma opção")
         self.setObjectName("Segmentado")
         self.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Fixed)
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)  # uma parada de Tab por grupo; os botões ficam NoFocus
         self._grupo = QButtonGroup(self)
         self._grupo.setExclusive(True)
         self._botoes: dict[str, QPushButton] = {}
@@ -362,6 +339,21 @@ class Segmentado(QFrame):
 
     def atual(self) -> str:
         return self._grupo.checkedButton().text()
+
+    def keyPressEvent(self, evento) -> None:
+        """Setas trocam a opção (pulando as desligadas), como um clique; o resto segue pro pai (Enter do diálogo)."""
+        passo = {Qt.Key.Key_Left: -1, Qt.Key.Key_Up: -1, Qt.Key.Key_Right: 1, Qt.Key.Key_Down: 1}.get(evento.key())
+        if passo is None:
+            super().keyPressEvent(evento)
+            return
+        evento.accept()
+        botoes = list(self._botoes.values())
+        i = botoes.index(self._grupo.checkedButton()) + passo
+        while 0 <= i < len(botoes):
+            if botoes[i].isEnabled():
+                botoes[i].click()
+                return
+            i += passo
 
     def definir(self, opcao: str) -> None:
         """Seleciona uma opção por código, sem emitir o sinal."""
@@ -520,6 +512,10 @@ class CampoData(QDateEdit):
         calendario.setHeaderTextFormat(formato)
         for dia in (Qt.DayOfWeek.Saturday, Qt.DayOfWeek.Sunday):
             calendario.setWeekdayTextFormat(dia, formato)
+
+    def focusNextPrevChild(self, proximo: bool) -> bool:
+        """Tab sai do campo todo (o padrão do Qt para a cada dia/mês/ano, três paradas por data)."""
+        return QWidget.focusNextPrevChild(self, proximo)
 
     def paintEvent(self, evento) -> None:
         super().paintEvent(evento)

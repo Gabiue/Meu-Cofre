@@ -1,0 +1,23 @@
+name: testes
+
+on:
+  push:
+    branches: [main, develop]  # as outras rodam pelo pull_request
+  pull_request:
+
+jobs:
+  testes:
+    runs-on: ubuntu-24.04
+    env:
+      QT_QPA_PLATFORM: offscreen  # sem tela
+      MEU_COFRE_SEM_REDE: "1"     # testes nunca acessam a internet
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - name: Bibliotecas do Qt
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libegl1 libgl1 libxkbcommon0 libfontconfig1 libdbus-1-3 libglib2.0-0 fonts-noto-core  # Noto Sans: a mesma fonte das medidas de layout dos testes
+      - run: uv sync --locked
+      - name: Lint
+        run: uv run ruff check
+      - name: Testes
+        run: uv run pytest -q

@@ -12,7 +12,7 @@ jobs:
       matrix:
         os: [ubuntu-24.04, windows-latest]
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 25  # um teste travado não pode prender o runner por horas
+    timeout-minutes: 40  # o Windows leva uns 20 min; um teste travado não pode prender o runner por horas
     env:
       QT_QPA_PLATFORM: offscreen  # sem tela
       MEU_COFRE_SEM_REDE: "1"     # testes nunca acessam a internet

@@ -22,6 +22,7 @@ def ambiente(tmp_path, monkeypatch):
     monkeypatch.delenv("MEU_COFRE_DB", raising=False)
     monkeypatch.delenv("XDG_DATA_HOME", raising=False)
     monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path / "home"))  # o Path.home() do Windows
     monkeypatch.setattr(config, "RAIZ", tmp_path / "projeto")
     return tmp_path
 

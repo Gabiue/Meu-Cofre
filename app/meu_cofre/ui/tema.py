@@ -4,6 +4,9 @@ Tudo que é cor, tamanho de texto ou raio de canto mora aqui. Os componentes e a
 só referenciam estas constantes (ou as propriedades do QSS global gerado por `gerar_qss`).
 """
 
+from functools import cache
+from pathlib import Path
+
 from PySide6.QtGui import QColor, QFont, QFontDatabase, QPalette
 from PySide6.QtWidgets import QApplication
 
@@ -50,8 +53,18 @@ PX_TITULO_DIALOGO = 18
 PX_VALOR = 22
 
 
+FONTE_EMBUTIDA = Path(__file__).with_name("fontes") / "AdwaitaSans-Regular.ttf"  # variável: cobre todos os pesos (OFL)
+
+
+@cache
+def _fonte_embutida_carregada() -> bool:
+    return QFontDatabase.addApplicationFont(str(FONTE_EMBUTIDA)) != -1  # uma vez por processo
+
+
 def familia_da_fonte() -> str:
-    """Primeira família preferida que existe no sistema (senão, a padrão do Qt)."""
+    """A fonte embutida (a mesma cara e as mesmas medidas em Linux e Windows); sem ela, a primeira preferida instalada."""
+    if _fonte_embutida_carregada():
+        return "Adwaita Sans"
     instaladas = set(QFontDatabase.families())
     for familia in FAMILIAS_PREFERIDAS:
         if familia in instaladas:

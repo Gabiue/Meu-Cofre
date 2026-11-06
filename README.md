@@ -164,6 +164,10 @@ Configurar o msmtp (conta e senha de app do email) é com você; o meu-cofre nã
 
 `MEU_COFRE_SEM_REDE=1` desliga qualquer acesso à internet. Os testes usam bancos temporários e só dados falsos. A CI (GitHub Actions) roda o lint e os testes em cada pull request e nos pushes para `main` e `develop`.
 
+## Créditos
+
+A interface usa a fonte [Adwaita Sans](https://gitlab.gnome.org/GNOME/adwaita-fonts) (derivada da Inter), embutida em `app/meu_cofre/ui/fontes/` sob a licença SIL Open Font License 1.1 (ver `LICENSE-AdwaitaSans.txt`).
+
 ## Privacidade
 
 A pasta `data/` (banco, extratos) e a documentação interna ficam fora do git. Nunca coloque dados financeiros reais no repositório, nos testes nem nos prints.

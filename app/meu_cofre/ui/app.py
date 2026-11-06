@@ -25,7 +25,7 @@ def _tamanho_screenshot() -> tuple[int, int]:
 
 def _abrir_dialogo_de_revisao(janela: JanelaPrincipal, app: QApplication, modo: str):
     """MEU_COFRE_DIALOGO=novo|cartao|repetir|transferencia|contas|editar:<id>|excluir:<id>|recorrente:<id>|meta|simulador|pagar|ativo|
-    aportar|saldo|cotacoes|meta-aporte|importar|comprar|provento|rolar:acoes|rolar:proventos: abre o diálogo já preparado (screenshots). `pagar` não é diálogo: abre a confirmação de pagamento da
+    aportar|saldo|cotacoes|meta-aporte|relatorio|importar|comprar|provento|rolar:acoes|rolar:proventos: abre o diálogo já preparado (screenshots). `pagar` não é diálogo: abre a confirmação de pagamento da
     aba Cartões. `meta` abre a nova meta com uma prévia preenchida e `simulador` preenche e rola até o simulador da aba
     Metas. `ativo` abre o novo investimento preenchido; `aportar` e `saldo` abrem o formulário na linha do segundo
     investimento da aba Investimentos. `importar` abre "Importar da B3" com a prévia da planilha em MEU_COFRE_PLANILHA;
@@ -71,6 +71,15 @@ def _abrir_dialogo_de_revisao(janela: JanelaPrincipal, app: QApplication, modo: 
         dialogo.botao_remover.setEnabled(True)
         for _ in range(3):
             app.processEvents()
+        return dialogo
+    if nome == "relatorio":
+        dialogo = janela.abrir_relatorio()
+        dialogo.contexto.setPlainText("Moro sozinho e quero juntar pra uma viagem.")  # texto de exemplo (screenshot)
+        dialogo.atualizar_previa()
+        for _ in range(3):
+            app.processEvents()
+        dialogo.resize(dialogo.width(), janela.height() - 60)
+        app.processEvents()
         return dialogo
     if nome == "meta-aporte":
         dialogo = janela.aba_investimentos.abrir_meta_aporte()
@@ -156,6 +165,10 @@ def _compor_screenshot(janela: JanelaPrincipal, dialogo) -> QPixmap:
 
 
 def main() -> int:
+    if sys.argv[1:2] == ["relatorio"]:  # linha de comando: sem Qt e sem janela (timer do systemd)
+        from meu_cofre import relatorio_automatico
+
+        return relatorio_automatico.main(sys.argv[2:])
     app = QApplication(sys.argv)
     app.setApplicationName("meu-cofre")
     # Casa a janela com o meu-cofre.desktop (ícone certo no lançador e na barra) e define o ícone.

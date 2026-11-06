@@ -114,6 +114,25 @@ Cria o `.desktop` e o ícone. O atalho roda uma cópia estável da `main` em `~/
 
 Para refazer os prints deste README (offscreen, sem abrir janela): `uv run python scripts/prints_readme.py`.
 
+## Relatório automático
+
+    uv run meu-cofre relatorio [--mes AAAA-MM] [--saida CAMINHO|-] [--forcar]
+
+Gera o relatório do mês (padrão: o mês anterior) sem abrir janela e imprime o caminho do arquivo, `relatorios/AAAA-MM.md` ao lado do banco. Não reescreve um arquivo que já existe (use `--forcar`); `--saida -` escreve o markdown na saída padrão, pra encadear num pipe. Mês sem lançamentos não gera nada e não é erro. Ao abrir o app num mês novo, o relatório do mês passado também é gravado, com um aviso no Resumo.
+
+Pra gerar sozinho no dia 1 (ou no próximo boot, se o PC estava desligado), instale o timer do systemd (Linux, depois do `instalar-atalho.sh`):
+
+    sh scripts/instalar-relatorio-automatico.sh
+    sh scripts/instalar-relatorio-automatico.sh --remover
+
+Se existir um executável `~/.config/meu-cofre/depois-do-relatorio`, o timer o chama com o caminho do arquivo. Exemplo pra mandar por email com [msmtp](https://marlam.de/msmtp/):
+
+    #!/bin/sh
+    # ~/.config/meu-cofre/depois-do-relatorio  (chmod +x)
+    { printf 'To: voce@exemplo.com\nSubject: Relatório do mês\n\n'; cat "$1"; } | msmtp voce@exemplo.com
+
+Configurar o msmtp (conta e senha de app do email) é com você; o meu-cofre não guarda credencial nem envia nada. Com esse passo, os números do relatório passam pelo provedor de email.
+
 ## Testes
 
     QT_QPA_PLATFORM=offscreen MEU_COFRE_SEM_REDE=1 uv run pytest -q

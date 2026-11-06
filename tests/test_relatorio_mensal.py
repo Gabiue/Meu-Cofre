@@ -241,6 +241,8 @@ def test_metas_aporte_do_mes_e_patrimonio(conn):
     t = _relatorio(conn)
     assert "- Viagem: R$ 300,00 de R$ 3.000,00 (10%)" in t
     assert "Aportes no mês: R$ 700,00 para uma meta de aporte de R$ 1.000,00 (faltaram R$ 300,00)" in t
+    # o mês atual ainda não acabou: "faltam"
+    assert "(faltam R$ 100,00)" in gerar(conn, 2026, 10, HOJE)
     assert "- CDB: R$ 400,00" in t
     assert "- Caixinhas (metas): R$ 300,00" in t
     assert f"Patrimônio guardado hoje: R$ {investimentos.patrimonio(conn, HOJE)['total'] // 100:,}".replace(",", ".") in t
@@ -311,7 +313,7 @@ def test_pix_pra_pessoa_nunca_mostra_o_nome(conn):
         ("Ajuda do tio", "Renda extra", "receita", "pix", 100, "Pix recebido"),
         ("Conta do bar", "Reembolsos", "receita", "pix", 100, "Pix recebido"),
         ("Presente da Ana", "Presentes e doações", "despesa", "pix", -100, "Pix enviado"),
-        ("Presente da Ana", "Presentes e doações", "despesa", "cartao", -100, "Presente da Ana"),  # não é pix
+        ("Presente da Ana", "Presentes e doações", "despesa", "cartao", -100, "Presente ou doação"),  # nunca o nome, em qualquer método
         ("Empresa X", "Salário", "receita", "pix", 100, "Empresa X"),
         ("Aplicação", "Rendimentos", "receita", "pix", 100, "Aplicação"),
         ("Pix pro mercado", "Mercado", "despesa", "pix", -100, "Pix pro mercado"),

@@ -9,8 +9,9 @@ Transferências (fatura, aportes, guardar em meta) ficam fora de tudo, pela mesm
 
 **Privacidade** (`descricao_publica`). Pix pra pessoas nunca mostra o nome. Viram "Pix enviado" / "Pix recebido"
 (pelo sinal do valor): (a) descrições no formato de Pix do extrato ("Pix enviado: Cp :123-FULANO", "Pix recebido: ...");
-(b) lançamentos com método pix em categorias de pessoas: as de receita que não são Salário/Rendimentos (Dinheiro
-recebido, Renda extra, Reembolsos...) e "Presentes e doações". Vale em toda seção que mostra descrição.
+(b) lançamentos com método pix em categorias de receita que não são Salário/Rendimentos (Dinheiro recebido, Renda
+extra, Reembolsos...). Em "Presentes e doações" a descrição nunca aparece, em qualquer método (vira "Pix enviado" no
+Pix e "Presente ou doação" no resto), porque costuma ter o nome de quem recebeu. Vale em toda seção que mostra descrição.
 """
 
 import re
@@ -48,12 +49,14 @@ def nome_do_mes(ano: int, mes: int) -> str:
 
 
 def descricao_publica(descricao: str, categoria: str, categoria_tipo: str | None, metodo: str | None, centavos: int) -> str:
-    """A descrição que pode ir no relatório: Pix pra pessoas vira "Pix enviado"/"Pix recebido" (ver o topo do módulo)."""
+    """A descrição que pode ir no relatório: sem nome de pessoa (ver o topo do módulo)."""
     de_pessoas = categoria == _CATEGORIA_DE_PESSOAS or (
         categoria_tipo == "receita" and categoria not in _CATEGORIAS_DE_RENDA_PROPRIA
     )
     if _PIX_DO_EXTRATO.match(normalizar(descricao)) or (metodo == "pix" and de_pessoas):
         return "Pix enviado" if centavos < 0 else "Pix recebido"
+    if categoria == _CATEGORIA_DE_PESSOAS:
+        return "Presente ou doação"
     return descricao
 
 
@@ -258,10 +261,11 @@ def _metas_e_investimentos(conn, ano, mes, hoje) -> list[str]:
         texto.append("Nenhuma meta ativa.")
     # progresso_do_mes só olha o ano e o mês da data, então serve pra qualquer mês.
     p = investimentos.progresso_do_mes(conn, date(ano, mes, 1))
+    falta = "faltam" if (ano, mes) == (hoje.year, hoje.month) else "faltaram"  # o mês atual ainda não acabou
     linha = f"Aportes no mês: {formatar_brl(p.aportado)}"
     if p.meta is not None:
         linha += f" para uma meta de aporte de {formatar_brl(p.meta)}"
-        linha += {"faltando": f" (faltaram {formatar_brl(p.falta)})", "batida": " (meta batida)", "passou": " (acima da meta)"}[p.situacao]
+        linha += {"faltando": f" ({falta} {formatar_brl(p.falta)})", "batida": " (meta batida)", "passou": " (acima da meta)"}[p.situacao]
     else:
         linha += " (sem meta de aporte definida)"
     texto.append(linha)

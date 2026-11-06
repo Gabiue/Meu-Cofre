@@ -28,7 +28,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from meu_cofre import lancamentos, recorrentes, relatorios
+from meu_cofre import lancamentos, recorrentes, relatorio_automatico, relatorio_mensal, relatorios
 from meu_cofre.lancamentos import formatar_brl, formatar_brl_inteiro, nome_com_final
 from meu_cofre.ui import tema
 from meu_cofre.ui.componentes import (
@@ -139,6 +139,7 @@ class JanelaPrincipal(QMainWindow):
         self._aplicar_layout(self.width() >= LARGURA_DUAS_COLUNAS)
         self._reorganizar_cabecalho()
         self.atualizar()
+        self._avisar_relatorio_novo()
 
     def _hoje(self) -> date:
         return self._hoje_fixo or date.today()
@@ -313,6 +314,11 @@ class JanelaPrincipal(QMainWindow):
         self.botao_relatorio.setToolTip("Relatório do mês pra levar a uma IA (Ctrl+R)")
         self.botao_relatorio.clicked.connect(lambda: self.abrir_relatorio())
         cartao = Cartao("Resumo", acao=self.botao_relatorio)
+        self.pilula_relatorio = PilulaClicavel("", "neutra")
+        self.pilula_relatorio.setToolTip("O relatório do mês passado foi salvo em relatorios/ ao lado do banco: clique pra abrir")
+        self.pilula_relatorio.clicada.connect(lambda: self.abrir_relatorio())
+        self.pilula_relatorio.setVisible(False)
+        cartao.corpo.addWidget(self.pilula_relatorio, 0, Qt.AlignmentFlag.AlignLeft)
         self._em_conta = NumeroDestaque("Em conta", "", "Saldo de hoje nas contas e na carteira")
         self._devo = NumeroDestaque("Devo", "", "Cartão em aberto, com parcelas futuras")
         self._gastei = NumeroDestaque("Gastei no mês", "", "")
@@ -512,6 +518,15 @@ class JanelaPrincipal(QMainWindow):
         self.dialogo_contas = dialogo
         dialogo.open()
         return dialogo
+
+    def _avisar_relatorio_novo(self) -> None:
+        """Num mês novo, grava o relatório do mês passado (se ainda não existe e há lançamentos) e avisa no Resumo."""
+        ano, mes = relatorio_automatico.mes_anterior(self._hoje())
+        if relatorio_automatico.caminho_do_mes(self.conn, ano, mes).exists():
+            return
+        if relatorio_automatico.gerar_arquivo(self.conn, ano, mes, self._hoje()):
+            self.pilula_relatorio.setText(f"Relatório de {relatorio_mensal.MESES[mes - 1]} pronto")
+            self.pilula_relatorio.setVisible(True)
 
     def abrir_relatorio(self) -> DialogoRelatorio:
         """Botão "Relatório" (Ctrl+R): a prévia do relatório do mês passado, pra copiar. Não grava nada nos lançamentos."""

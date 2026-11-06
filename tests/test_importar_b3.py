@@ -150,7 +150,7 @@ def test_arquivo_que_nao_serve_da_erro_claro(conn, tmp_path):
     with pytest.raises(b3.ImportacaoErro, match="abrir"):
         b3.prever(conn, tmp_path / "nao-existe.xlsx")
     texto = tmp_path / "x.xlsx"
-    texto.write_text("isto não é uma planilha")
+    texto.write_text("isto não é uma planilha", encoding="utf-8")
     with pytest.raises(b3.ImportacaoErro, match="abrir"):
         b3.prever(conn, texto)
     livro = openpyxl.Workbook()

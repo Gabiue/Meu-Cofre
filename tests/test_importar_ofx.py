@@ -74,10 +74,10 @@ def test_tolera_cp1252_tags_sem_fechamento_e_valor_com_virgula(tmp_path):
 
 def test_arquivo_que_nao_e_ofx(tmp_path):
     f = tmp_path / "x.ofx"
-    f.write_text("data,valor\n2026-10-01,10")
+    f.write_text("data,valor\n2026-10-01,10", encoding="utf-8")
     with pytest.raises(ofx.ImportacaoErro, match="OFX"):
         ofx.ler(f)
-    f.write_text("<OFX></OFX>")
+    f.write_text("<OFX></OFX>", encoding="utf-8")
     with pytest.raises(ofx.ImportacaoErro, match="transações"):
         ofx.ler(f)
 

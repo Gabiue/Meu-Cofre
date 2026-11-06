@@ -40,7 +40,7 @@ RAIO_CARTAO = 12
 PADDING_CARTAO = 20
 
 # --- Tipografia (px) -----------------------------------------------------------------
-FAMILIAS_PREFERIDAS = ("Inter", "Adwaita Sans", "Noto Sans")
+FAMILIAS_PREFERIDAS = ("Inter", "Adwaita Sans", "Noto Sans", "Segoe UI")
 PX_TEXTO = 14
 PX_TITULO_CARTAO = 11
 PX_RODAPE = 12

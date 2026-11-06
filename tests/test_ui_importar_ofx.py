@@ -108,7 +108,7 @@ def test_reimportar_so_oferece_acertar_o_saldo_e_erro_fica_na_janela(app, conn, 
     d2.marcador_saldo.setChecked(False)
     assert not d2.botao_importar.isEnabled() and not d2.confirmar()
     ruim = tmp_path / "x.ofx"
-    ruim.write_text("não é ofx")
+    ruim.write_text("não é ofx", encoding="utf-8")
     assert not d2.carregar(ruim) and "OFX" in d2.erro.text() and not d2.botao_importar.isEnabled()
 
 

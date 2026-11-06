@@ -61,6 +61,9 @@ def main(argv: list[str], hoje: date | None = None) -> int:
     analisador.add_argument("--saida", help="arquivo de saída, ou - pra escrever na saída padrão (padrão: relatorios/AAAA-MM.md ao lado do banco)")
     analisador.add_argument("--forcar", action="store_true", help="refaz o arquivo mesmo que ele já exista")
     args = analisador.parse_args(argv)
+    for saida in (sys.stdout, sys.stderr):  # console do Windows usa cp1252: acentos do markdown e do caminho saem em utf-8
+        if hasattr(saida, "reconfigure"):
+            saida.reconfigure(encoding="utf-8")
 
     hoje = hoje or date.today()
     ano, mes = args.mes or mes_anterior(hoje)
@@ -81,3 +84,7 @@ def main(argv: list[str], hoje: date | None = None) -> int:
         return 0
     print(caminho)
     return 0
+
+
+if __name__ == "__main__":  # tarefa agendada do Windows: python -m meu_cofre.relatorio_automatico
+    sys.exit(main(sys.argv[1:]))

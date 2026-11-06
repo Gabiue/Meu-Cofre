@@ -167,6 +167,9 @@ QPushButton#BotaoMes:disabled {{ color: {BORDA}; border-color: {BORDA}; backgrou
 #Dialogo QLineEdit:hover, #Dialogo QComboBox:hover, #Dialogo QDateEdit:hover, #FormPagamento QLineEdit:hover, #FormPagamento QComboBox:hover, #FormPagamento QDateEdit:hover, #FormMeta QLineEdit:hover, #FormMeta QComboBox:hover, #FormMeta QDateEdit:hover {{ border-color: {TEXTO_APAGADO}; }}
 #Dialogo QLineEdit:focus, #Dialogo QComboBox:focus, #Dialogo QDateEdit:focus, #FormPagamento QLineEdit:focus, #FormPagamento QComboBox:focus, #FormPagamento QDateEdit:focus, #FormMeta QLineEdit:focus, #FormMeta QComboBox:focus, #FormMeta QDateEdit:focus {{ border-color: {VERDE}; }}
 #Dialogo QLineEdit[erro="true"], #Dialogo QComboBox[erro="true"], #FormPagamento QLineEdit[erro="true"], #FormMeta QLineEdit[erro="true"] {{ border-color: {VERMELHO}; }}
+#Dialogo QPlainTextEdit {{ background: {FUNDO}; color: {TEXTO}; border: 1px solid {BORDA}; border-radius: 8px;
+    padding: 6px 10px; selection-background-color: {VERDE}; selection-color: {TEXTO_SOBRE_VERDE}; }}
+#Dialogo QPlainTextEdit:focus {{ border-color: {VERDE}; }}
 #Dialogo QLineEdit#CampoValor, #FormPagamento QLineEdit#CampoValor, #FormMeta QLineEdit#CampoValor {{ font-size: {PX_VALOR}px; font-weight: 700; min-height: 44px; }}
 #Dialogo QComboBox::drop-down, #Dialogo QDateEdit::drop-down, #FormPagamento QComboBox::drop-down, #FormPagamento QDateEdit::drop-down, #FormMeta QComboBox::drop-down, #FormMeta QDateEdit::drop-down {{ width: 30px; border: none; background: transparent; }}
 #Dialogo QComboBox::down-arrow, #Dialogo QDateEdit::down-arrow, #FormPagamento QComboBox::down-arrow, #FormPagamento QDateEdit::down-arrow, #FormMeta QComboBox::down-arrow, #FormMeta QDateEdit::down-arrow {{ image: none; width: 0; height: 0; }}

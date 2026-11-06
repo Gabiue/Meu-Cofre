@@ -50,6 +50,7 @@ from meu_cofre.ui.dialogo_a_categorizar import DialogoACategorizar
 from meu_cofre.ui.dialogo_categorias import DialogoCategorias
 from meu_cofre.ui.dialogo_contas import DialogoContas
 from meu_cofre.ui.dialogo_lancamento import DialogoLancamento
+from meu_cofre.ui.dialogo_relatorio import DialogoRelatorio
 from meu_cofre.ui.graficos import (
     MESES_CURTOS,
     OPCAO_FLUXO,
@@ -130,6 +131,7 @@ class JanelaPrincipal(QMainWindow):
         self._atualizador = AtualizadorIndicadores(self.conn, self._hoje, parent=self)
         self._atualizador.concluido.connect(self._taxas_atualizadas)
         self._atalho_novo = QShortcut(QKeySequence("Ctrl+N"), self, activated=self.novo_lancamento)
+        self._atalho_relatorio = QShortcut(QKeySequence("Ctrl+R"), self, activated=self.abrir_relatorio)
         self._atalhos_abas = [  # Ctrl+1..5 na ordem das abas
             QShortcut(QKeySequence(f"Ctrl+{i}"), self, activated=lambda n=nome: self.mostrar_aba(n))
             for i, nome in enumerate(ABAS, 1)
@@ -304,7 +306,13 @@ class JanelaPrincipal(QMainWindow):
         return cartao
 
     def _montar_resumo(self) -> Cartao:
-        cartao = Cartao("Resumo")
+        # o relatório é sobre o mês: fica no Resumo, não no cabeçalho (que já está no limite em janelas estreitas)
+        self.botao_relatorio = QPushButton("Relatório do mês…")
+        self.botao_relatorio.setObjectName("BotaoLink")
+        self.botao_relatorio.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.botao_relatorio.setToolTip("Relatório do mês pra levar a uma IA (Ctrl+R)")
+        self.botao_relatorio.clicked.connect(lambda: self.abrir_relatorio())
+        cartao = Cartao("Resumo", acao=self.botao_relatorio)
         self._em_conta = NumeroDestaque("Em conta", "", "Saldo de hoje nas contas e na carteira")
         self._devo = NumeroDestaque("Devo", "", "Cartão em aberto, com parcelas futuras")
         self._gastei = NumeroDestaque("Gastei no mês", "", "")
@@ -502,6 +510,13 @@ class JanelaPrincipal(QMainWindow):
         dialogo.alterado.connect(self._lancamento_gravado)
         dialogo.finished.connect(lambda _codigo: setattr(self, "dialogo_contas", None))
         self.dialogo_contas = dialogo
+        dialogo.open()
+        return dialogo
+
+    def abrir_relatorio(self) -> DialogoRelatorio:
+        """Botão "Relatório" (Ctrl+R): a prévia do relatório do mês passado, pra copiar. Não grava nada nos lançamentos."""
+        dialogo = DialogoRelatorio(self.conn, self._hoje(), parent=self)
+        dialogo.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
         dialogo.open()
         return dialogo
 

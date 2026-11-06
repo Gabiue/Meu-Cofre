@@ -4,7 +4,7 @@
 #   sh scripts/instalar-relatorio-automatico.sh            # instala/atualiza e liga o timer
 #   sh scripts/instalar-relatorio-automatico.sh --remover  # desliga e apaga os arquivos
 #
-# Roda `meu-cofre relatorio` na cópia estável criada por scripts/instalar-atalho.sh (rode aquele antes).
+# Roda `meu-cofre relatorio` na cópia estável criada por scripts/instalar.sh (rode aquele antes; sem git, usa a pasta do projeto).
 # Passo opcional depois de gerar: se existir um executável ~/.config/meu-cofre/depois-do-relatorio (você cria,
 # ex.: mandar por email), ele é chamado com o caminho do arquivo como argumento. O app em si nunca envia nada.
 # Variáveis opcionais: MEU_COFRE_ESTAVEL, MEU_COFRE_DB e MEU_COFRE_SEM_SYSTEMCTL=1 (só escreve os arquivos; usado nos testes).
@@ -12,7 +12,9 @@ set -eu
 
 REPO=$(cd "$(dirname "$0")/.." && pwd)
 ESTAVEL=${MEU_COFRE_ESTAVEL:-$HOME/.local/share/meu-cofre/estavel}
-BANCO=${MEU_COFRE_DB:-$REPO/data/meu-cofre.db}
+# Só fixa o banco se veio da variável ou existe em data/ (instalação antiga); senão a config usa a pasta XDG.
+BANCO=${MEU_COFRE_DB:-}
+[ -n "$BANCO" ] || { [ ! -e "$REPO/data/meu-cofre.db" ] || BANCO=$REPO/data/meu-cofre.db; }
 CONFIG=${XDG_CONFIG_HOME:-$HOME/.config}
 UNIDADES=$CONFIG/systemd/user
 GANCHO=$CONFIG/meu-cofre/depois-do-relatorio
@@ -33,17 +35,19 @@ if [ "${1:-}" = "--remover" ]; then
 fi
 
 if [ ! -d "$ESTAVEL" ]; then
-    echo "erro: cópia estável não encontrada em $ESTAVEL; rode antes: sh scripts/instalar-atalho.sh" >&2
-    exit 1
+    # Instalação sem git (ZIP): não há cópia estável, roda a própria pasta do projeto.
+    [ ! -e "$REPO/.git" ] || { echo "erro: cópia estável não encontrada em $ESTAVEL; rode antes: sh scripts/instalar.sh" >&2; exit 1; }
+    ESTAVEL=$REPO
 fi
 UV=$(command -v uv)
 mkdir -p "$UNIDADES"
 
+VAR_BANCO=; [ -z "$BANCO" ] || VAR_BANCO="MEU_COFRE_DB=\"$BANCO\""
 # O wrapper gera o relatório e, se o gancho existir, entrega o caminho do arquivo a ele.
 cat > "$WRAPPER" <<EOF2
 #!/bin/sh
 set -eu
-arquivo=\$(env MEU_COFRE_DB="$BANCO" "$UV" run meu-cofre relatorio)
+arquivo=\$(env $VAR_BANCO "$UV" run meu-cofre relatorio)
 if [ -n "\$arquivo" ] && [ -x "$GANCHO" ]; then
     "$GANCHO" "\$arquivo"
 fi

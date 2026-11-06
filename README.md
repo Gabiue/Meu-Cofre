@@ -92,12 +92,27 @@ A lógica fica em módulos Python sem Qt, que recebem uma conexão SQLite e devo
 
 ## Como rodar
 
-Requer [uv](https://docs.astral.sh/uv/) e Python 3.12 ou mais novo.
+### Instalação (Linux)
+
+Requer [uv](https://docs.astral.sh/uv/) (o instalador avisa como obter, mas não instala nada sozinho). Clone e instale, ou baixe o ZIP, extraia e rode o mesmo comando:
+
+    git clone https://github.com/Gabiue/Meu-Cofre.git && cd Meu-Cofre
+    sh scripts/instalar.sh
+
+Cria o atalho no menu e o ícone, no padrão freedesktop (KDE, GNOME, XFCE, rofi). Num clone git, o atalho roda uma cópia estável da `main` em `~/.local/share/meu-cofre/estavel`, então trocar de branch na pasta do projeto não muda o app aberto; sem git (ZIP), roda a própria pasta.
+
+- **Banco:** `MEU_COFRE_DB` se definida; senão `data/meu-cofre.db` do projeto, se já existir (instalação antiga); senão `~/.local/share/meu-cofre/meu-cofre.db`. Nada é movido nem copiado.
+- **Atualizar:** `git pull` e `sh scripts/instalar.sh` de novo (num ZIP, extraia a versão nova e rode o instalador).
+- **Remover:** `sh scripts/instalar.sh --remover` apaga só o atalho e o ícone; banco e cópia estável ficam.
+
+### Direto da pasta
+
+Requer Python 3.12 ou mais novo.
 
     uv sync
     uv run meu-cofre
 
-O banco fica em `data/meu-cofre.db` (criado na primeira execução). Para usar outro arquivo, defina `MEU_COFRE_DB`.
+O banco segue a regra acima (criado na primeira execução).
 
 Para conhecer o app sem dados reais, gere um banco de demonstração (dados falsos, cobrindo todas as abas):
 
@@ -105,12 +120,6 @@ Para conhecer o app sem dados reais, gere um banco de demonstração (dados fals
     MEU_COFRE_DB=/tmp/demo.db uv run meu-cofre
 
 O script apaga e recria o arquivo indicado em `--db` e se recusa a mexer em `meu-cofre.db`.
-
-Atalho no menu do sistema (Linux):
-
-    sh scripts/instalar-atalho.sh
-
-Cria o `.desktop` e o ícone. O atalho roda uma cópia estável da `main` em `~/.local/share/meu-cofre/estavel`, então trocar de branch na pasta do projeto não muda o app aberto pelo menu. Rode o comando de novo depois de cada atualização.
 
 Para refazer os prints deste README (offscreen, sem abrir janela): `uv run python scripts/prints_readme.py`.
 
@@ -120,7 +129,7 @@ Para refazer os prints deste README (offscreen, sem abrir janela): `uv run pytho
 
 Gera o relatório do mês (padrão: o mês anterior) sem abrir janela e imprime o caminho do arquivo, `relatorios/AAAA-MM.md` ao lado do banco. Não reescreve um arquivo que já existe (use `--forcar`); `--saida -` escreve o markdown na saída padrão, pra encadear num pipe. Mês sem lançamentos não gera nada e não é erro. Ao abrir o app num mês novo, o relatório do mês passado também é gravado, com um aviso no Resumo.
 
-Pra gerar sozinho no dia 1 (ou no próximo boot, se o PC estava desligado), instale o timer do systemd (Linux, depois do `instalar-atalho.sh`):
+Pra gerar sozinho no dia 1 (ou no próximo boot, se o PC estava desligado), instale o timer do systemd (Linux, depois do `instalar.sh`):
 
     sh scripts/instalar-relatorio-automatico.sh
     sh scripts/instalar-relatorio-automatico.sh --remover

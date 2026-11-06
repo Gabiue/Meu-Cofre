@@ -165,6 +165,10 @@ def _compor_screenshot(janela: JanelaPrincipal, dialogo) -> QPixmap:
 
 
 def main() -> int:
+    if sys.argv[1:2] == ["relatorio"]:  # linha de comando: sem Qt e sem janela (timer do systemd)
+        from meu_cofre import relatorio_automatico
+
+        return relatorio_automatico.main(sys.argv[2:])
     app = QApplication(sys.argv)
     app.setApplicationName("meu-cofre")
     # Casa a janela com o meu-cofre.desktop (ícone certo no lançador e na barra) e define o ícone.

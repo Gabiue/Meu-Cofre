@@ -13,11 +13,11 @@ from PySide6.QtGui import QFontDatabase, QGuiApplication
 from PySide6.QtWidgets import QDialog, QHBoxLayout, QLabel, QPlainTextEdit, QPushButton, QVBoxLayout
 
 from meu_cofre import db, relatorio_mensal
+from meu_cofre.relatorio_automatico import PREF_CONTEXTO
 from meu_cofre.ui import tema
 from meu_cofre.ui.componentes import BotaoPrimario, BotaoSecundario
 
 LARGURA = 760
-PREF_CONTEXTO = "contexto_relatorio"
 
 
 def _rotulo(texto: str, nome: str) -> QLabel:

@@ -207,10 +207,7 @@ def gasto_essencial_mensal(conn: sqlite3.Connection, hoje: date) -> tuple[int, i
             gastos.append(relatorios.gastos_essenciais_mes(conn, ano, mes))
     if gastos:
         return _media(gastos), len(gastos)
-    r = relatorios.resumo_mes(conn, hoje.year, hoje.month, ate=hoje)
-    if r.entradas or r.saidas:
-        return relatorios.gastos_essenciais_mes(conn, hoje.year, hoje.month, ate=hoje), 1
-    return 0, 0
+    return 0, 0  # sem mês completo: alguns dias não dizem quanto custa um mês
 
 
 def reserva_sugerida(conn: sqlite3.Connection, hoje: date) -> tuple[int, int, int]:

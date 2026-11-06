@@ -119,6 +119,8 @@ def test_reserva_sugerida_so_conta_natureza_essencial(conn):
 def test_reserva_sugerida_usa_o_que_houver_e_zera_sem_historico(conn):
     assert metas.reserva_sugerida(conn, HOJE) == (0, 0, 0)
     _lancar(conn, False, 80_000, date(2026, 10, 3), "Moradia")
+    assert metas.reserva_sugerida(conn, HOJE) == (0, 0, 0)  # só o mês atual, incompleto: ainda sem dados
+    _lancar(conn, False, 80_000, date(2026, 9, 3), "Moradia")
     assert metas.reserva_sugerida(conn, HOJE) == (480_000, 80_000, 1)
 
 

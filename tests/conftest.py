@@ -27,16 +27,14 @@ def id_cat(conn, nome):
     return conn.execute("SELECT id FROM categorias WHERE nome = ?", (nome,)).fetchone()["id"]
 
 
-@pytest.hookimpl(trylast=True)
-def pytest_unconfigure(config):
-    """Sai sem a finalização do Python: com widgets ainda vivos, desmontar o Qt na saída dá segfault em algumas
-    máquinas (a CI terminava com código 139 depois de todos os testes passarem). O código de saída é o do pytest."""
+@pytest.hookimpl(hookwrapper=True, tryfirst=True)
+def pytest_sessionfinish(session, exitstatus):
+    """Sai logo depois do resumo, sem a finalização do Python: com widgets ainda vivos, desmontar o Qt na saída dá
+    segfault (a CI terminava com código 139 depois de todos os testes passarem, no Linux e no Windows). O código de
+    saída é o do pytest."""
+    yield  # o resumo dos testes (e os outros sessionfinish) já rodou aqui
     import sys
 
     sys.stdout.flush()
     sys.stderr.flush()
-    os._exit(config._exit_status if hasattr(config, "_exit_status") else 0)
-
-
-def pytest_sessionfinish(session, exitstatus):
-    session.config._exit_status = int(exitstatus)
+    os._exit(int(session.exitstatus))

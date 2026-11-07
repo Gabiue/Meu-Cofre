@@ -105,6 +105,21 @@ Cria o atalho no menu e o ícone, no padrão freedesktop (KDE, GNOME, XFCE, rofi
 - **Atualizar:** `git pull` e `sh scripts/instalar.sh` de novo (num ZIP, extraia a versão nova e rode o instalador).
 - **Remover:** `sh scripts/instalar.sh --remover` apaga só o atalho e o ícone; banco e cópia estável ficam.
 
+### Instalação (Windows)
+
+Suporte novo: os testes rodam na CI em `windows-latest`, mas ainda não foi usado num Windows de verdade. Se algo falhar, abra uma issue.
+
+Requer o [uv](https://docs.astral.sh/uv/) (`winget install astral-sh.uv`; o instalador avisa se faltar, mas não instala nada sozinho). Clone ou baixe o ZIP e extraia; no PowerShell, dentro da pasta:
+
+    powershell -ExecutionPolicy Bypass -File scripts\instalar.ps1
+
+Cria o atalho `meu-cofre` no Menu Iniciar (sem janela de console) e o ícone. O atalho roda a própria pasta do projeto, sem a cópia estável do Linux.
+
+- **Banco:** `MEU_COFRE_DB` se definida; senão `data\meu-cofre.db` do projeto, se já existir; senão `%APPDATA%\meu-cofre\meu-cofre.db`. Os relatórios ficam em `relatorios\` ao lado dele.
+- **Atualizar:** `git pull` e o instalador de novo.
+- **Relatório automático:** `powershell -ExecutionPolicy Bypass -File scripts\instalar-relatorio-automatico.ps1` cria uma tarefa agendada (dia 1, 8h; roda depois se o PC estava desligado). Se existir `%APPDATA%\meu-cofre\depois-do-relatorio.ps1`, ele é chamado com o caminho do arquivo.
+- **Remover:** `-Remover` em cada um dos dois scripts; banco e relatórios ficam.
+
 ### Direto da pasta
 
 Requer Python 3.12 ou mais novo.
@@ -148,6 +163,10 @@ Configurar o msmtp (conta e senha de app do email) é com você; o meu-cofre nã
     uv run ruff check
 
 `MEU_COFRE_SEM_REDE=1` desliga qualquer acesso à internet. Os testes usam bancos temporários e só dados falsos. A CI (GitHub Actions) roda o lint e os testes em cada pull request e nos pushes para `main` e `develop`.
+
+## Créditos
+
+A interface usa a fonte [Adwaita Sans](https://gitlab.gnome.org/GNOME/adwaita-fonts) (derivada da Inter), embutida em `app/meu_cofre/ui/fontes/` sob a licença SIL Open Font License 1.1 (ver `LICENSE-AdwaitaSans.txt`).
 
 ## Privacidade
 

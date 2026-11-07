@@ -1,6 +1,7 @@
 """Relatório automático (issue #38): comando, geração ao abrir o app e script do timer. Só bancos temporários."""
 
 import subprocess
+import sys
 from datetime import date
 from pathlib import Path
 
@@ -41,17 +42,17 @@ def test_mes_padrao_e_o_anterior_e_grava_ao_lado_do_banco(banco, capsys):
     assert _rodar([]) == 0
     esperado = banco.parent / "relatorios" / "2026-10.md"
     assert capsys.readouterr().out == f"{esperado}\n"
-    assert esperado.read_text().startswith("# Relatório financeiro: Outubro de 2026")
+    assert esperado.read_text(encoding="utf-8").startswith("# Relatório financeiro: Outubro de 2026")
 
 
 def test_mes_escolhido_e_nao_reescreve_sem_forcar(banco, capsys):
     arquivo = banco.parent / "relatorios" / "2026-10.md"
     assert _rodar(["--mes", "2026-10"]) == 0
-    arquivo.write_text("editado")
+    arquivo.write_text("editado", encoding="utf-8")
     assert _rodar(["--mes", "2026-10"]) == 0
-    assert arquivo.read_text() == "editado" and capsys.readouterr().out.count(str(arquivo)) == 2
+    assert arquivo.read_text(encoding="utf-8") == "editado" and capsys.readouterr().out.count(str(arquivo)) == 2
     assert _rodar(["--mes", "2026-10", "--forcar"]) == 0
-    assert arquivo.read_text().startswith("# Relatório")
+    assert arquivo.read_text(encoding="utf-8").startswith("# Relatório")
 
 
 @pytest.mark.parametrize("mes", ["2026-13", "10/2026", "2026-1", "abc"])
@@ -94,9 +95,9 @@ def test_abrir_o_app_gera_uma_vez_e_avisa(app, conn):
     janela = JanelaPrincipal(conn, HOJE)
     assert arquivo.exists() and not janela.pilula_relatorio.isHidden()
     assert janela.pilula_relatorio.text() == "Relatório de outubro pronto"
-    arquivo.write_text("editado")
+    arquivo.write_text("editado", encoding="utf-8")
     segunda = JanelaPrincipal(conn, HOJE)
-    assert arquivo.read_text() == "editado" and segunda.pilula_relatorio.isHidden()
+    assert arquivo.read_text(encoding="utf-8") == "editado" and segunda.pilula_relatorio.isHidden()
 
 
 def test_abrir_o_app_com_mes_anterior_vazio_nao_gera(app, conn):
@@ -104,6 +105,7 @@ def test_abrir_o_app_com_mes_anterior_vazio_nao_gera(app, conn):
     assert not relatorio_automatico.caminho_do_mes(conn, 2026, 10).exists() and janela.pilula_relatorio.isHidden()
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="script .sh: Linux")
 def test_script_instala_e_remove(tmp_path):
     assert subprocess.run(["sh", "-n", str(SCRIPT)]).returncode == 0
     env = {"PATH": "/usr/bin:/bin", "HOME": str(tmp_path), "XDG_CONFIG_HOME": str(tmp_path / "cfg"),
@@ -113,13 +115,13 @@ def test_script_instala_e_remove(tmp_path):
     (tmp_path / "estavel").mkdir()
     # uv precisa existir no PATH do script; um falso basta
     (tmp_path / "bin").mkdir()
-    (tmp_path / "bin" / "uv").write_text("#!/bin/sh\n")
+    (tmp_path / "bin" / "uv").write_text("#!/bin/sh\n", encoding="utf-8")
     (tmp_path / "bin" / "uv").chmod(0o755)
     env["PATH"] = f"{tmp_path / 'bin'}:{env['PATH']}"
     subprocess.run(["sh", str(SCRIPT)], env=env, check=True)
-    servico = (unidades / "meu-cofre-relatorio.service").read_text()
-    timer = (unidades / "meu-cofre-relatorio.timer").read_text()
-    wrapper = (unidades / "meu-cofre-relatorio.sh").read_text()
+    servico = (unidades / "meu-cofre-relatorio.service").read_text(encoding="utf-8")
+    timer = (unidades / "meu-cofre-relatorio.timer").read_text(encoding="utf-8")
+    wrapper = (unidades / "meu-cofre-relatorio.sh").read_text(encoding="utf-8")
     print(servico, timer, wrapper, sep="\n---\n")
     assert "Type=oneshot" in servico and f"WorkingDirectory={tmp_path / 'estavel'}" in servico
     assert f"ExecStart=/bin/sh {unidades}/meu-cofre-relatorio.sh" in servico

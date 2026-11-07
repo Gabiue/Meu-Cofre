@@ -3,7 +3,10 @@
 import importlib.util
 import stat
 import sys
+
 from pathlib import Path
+
+import pytest
 
 from meu_cofre import config
 
@@ -26,6 +29,7 @@ def test_args_linux_pasta_sem_icone():
     assert "PySide6.QtWebEngineCore" in args
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="AppImage é só do Linux (e o Windows não tem bit de execução)")
 def test_appdir(tmp_path):
     onedir = tmp_path / "meu-cofre"
     onedir.mkdir()

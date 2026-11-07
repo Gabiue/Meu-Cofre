@@ -26,3 +26,8 @@ venv/
 
 # Instruções internas do Claude (ficam só na máquina)
 CLAUDE.md
+
+# Executáveis (PyInstaller)
+build/
+dist/
+*.spec

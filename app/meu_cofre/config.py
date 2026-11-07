@@ -12,7 +12,7 @@ def caminho_banco() -> Path:
     if env := os.environ.get("MEU_COFRE_DB"):
         return Path(env).expanduser()
     legado = RAIZ / "data" / "meu-cofre.db"
-    if legado.exists():
+    if not getattr(sys, "frozen", False) and legado.exists():  # no executável RAIZ cai numa pasta temporária ou do usuário: não é o projeto
         return legado
     if sys.platform == "win32":
         return Path(os.environ.get("APPDATA") or Path.home() / "AppData" / "Roaming") / "meu-cofre" / "meu-cofre.db"

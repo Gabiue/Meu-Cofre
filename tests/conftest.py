@@ -39,7 +39,11 @@ def pytest_sessionfinish(session, exitstatus):
     sys.stderr.flush()
     if sys.platform == "win32":  # lá o os._exit ainda avisa as DLLs, e o Qt cai nesse aviso: encerra sem avisar
         import ctypes
+        from ctypes import wintypes
 
         k32 = ctypes.windll.kernel32
+        # sem os tipos declarados, o ctypes corta o HANDLE pra 32 bits e a chamada falha em silêncio
+        k32.GetCurrentProcess.restype = wintypes.HANDLE
+        k32.TerminateProcess.argtypes = (wintypes.HANDLE, wintypes.UINT)
         k32.TerminateProcess(k32.GetCurrentProcess(), int(session.exitstatus))
     os._exit(int(session.exitstatus))

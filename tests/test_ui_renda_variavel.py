@@ -421,7 +421,7 @@ def test_reimportar_mostra_duplicadas_e_nao_deixa_importar(app, conn, planilha):
 
 def test_arquivo_invalido_mostra_o_erro_na_janela(app, conn, tmp_path):
     ruim = tmp_path / "x.xlsx"
-    ruim.write_text("não é planilha")
+    ruim.write_text("não é planilha", encoding="utf-8")
     d = _dialogo_b3(conn)
     assert not d.carregar(ruim)
     assert not d.erro.isHidden() and d.erro.text().startswith("!  Não consegui abrir") and not d.botao_importar.isEnabled()

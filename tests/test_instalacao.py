@@ -2,6 +2,7 @@
 
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -11,6 +12,7 @@ from meu_cofre import config
 RAIZ = Path(__file__).resolve().parents[1]
 SCRIPTS = RAIZ / "scripts"
 INSTALAR = SCRIPTS / "instalar.sh"
+SO_LINUX = pytest.mark.skipif(sys.platform == "win32", reason="scripts .sh e git worktree: Linux (Windows tem os .ps1)")
 
 
 # ---- config.caminho_banco ----
@@ -20,6 +22,7 @@ def ambiente(tmp_path, monkeypatch):
     monkeypatch.delenv("MEU_COFRE_DB", raising=False)
     monkeypatch.delenv("XDG_DATA_HOME", raising=False)
     monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path / "home"))  # o Path.home() do Windows
     monkeypatch.setattr(config, "RAIZ", tmp_path / "projeto")
     return tmp_path
 
@@ -37,10 +40,19 @@ def test_legado_existente_vence_xdg(ambiente):
     assert config.caminho_banco() == ambiente / "projeto" / "data" / "meu-cofre.db"
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="no Windows o padrão é %APPDATA%")
 def test_sem_legado_usa_xdg(ambiente, monkeypatch):
     assert config.caminho_banco() == ambiente / "home" / ".local/share/meu-cofre/meu-cofre.db"
     monkeypatch.setenv("XDG_DATA_HOME", str(ambiente / "xdg"))
     assert config.caminho_banco() == ambiente / "xdg" / "meu-cofre" / "meu-cofre.db"
+
+
+def test_sem_legado_no_windows_usa_appdata(ambiente, monkeypatch):
+    monkeypatch.setattr(config.sys, "platform", "win32")
+    monkeypatch.setenv("APPDATA", str(ambiente / "roaming"))
+    assert config.caminho_banco() == ambiente / "roaming" / "meu-cofre" / "meu-cofre.db"
+    monkeypatch.delenv("APPDATA")
+    assert config.caminho_banco() == ambiente / "home" / "AppData" / "Roaming" / "meu-cofre" / "meu-cofre.db"
 
 
 # ---- scripts ----
@@ -56,8 +68,8 @@ def _esqueleto(pasta):
     (pasta / "app/meu_cofre/ui").mkdir(parents=True)
     shutil.copy(RAIZ / "app/meu_cofre/ui/icone.svg", pasta / "app/meu_cofre/ui/icone.svg")
     shutil.copytree(SCRIPTS, pasta / "scripts", ignore=shutil.ignore_patterns("__pycache__"))
-    (pasta / "pyproject.toml").write_text("[project]\nname='x'\n")
-    (pasta / "uv.lock").write_text("")
+    (pasta / "pyproject.toml").write_text("[project]\nname='x'\n", encoding="utf-8")
+    (pasta / "uv.lock").write_text("", encoding="utf-8")
     return pasta
 
 
@@ -66,7 +78,7 @@ def casa(tmp_path):
     """HOME temporário e PATH com um `uv` falso que aceita qualquer comando."""
     (tmp_path / "bin").mkdir()
     uv = tmp_path / "bin" / "uv"
-    uv.write_text("#!/bin/sh\n")
+    uv.write_text("#!/bin/sh\n", encoding="utf-8")
     uv.chmod(0o755)
     (tmp_path / "home").mkdir()
     env = {"PATH": f"{tmp_path / 'bin'}:/usr/bin:/bin", "HOME": str(tmp_path / "home"), "MEU_COFRE_SEM_CACHE": "1"}
@@ -78,7 +90,7 @@ def _instalar(projeto, env, *args):
 
 
 def _desktop(tmp_path):
-    return (tmp_path / "home/.local/share/applications/meu-cofre.desktop").read_text()
+    return (tmp_path / "home/.local/share/applications/meu-cofre.desktop").read_text(encoding="utf-8")
 
 
 def _clone_git(tmp_path):
@@ -94,11 +106,13 @@ def _clone_git(tmp_path):
     return projeto
 
 
+@SO_LINUX
 def test_sintaxe_dos_scripts():
     for nome in ("instalar.sh", "instalar-atalho.sh", "instalar-relatorio-automatico.sh"):
         assert subprocess.run(["sh", "-n", str(SCRIPTS / nome)]).returncode == 0
 
 
+@SO_LINUX
 def test_sem_uv_sai_com_erro_e_explica(tmp_path):
     env = {"PATH": "/usr/bin:/bin", "HOME": str(tmp_path)}
     if shutil.which("uv", path=env["PATH"]):
@@ -108,6 +122,7 @@ def test_sem_uv_sai_com_erro_e_explica(tmp_path):
     assert not (tmp_path / ".local").exists()
 
 
+@SO_LINUX
 def test_clone_git_usa_copia_estavel(casa):
     tmp, env = casa
     projeto = _clone_git(tmp)
@@ -121,6 +136,7 @@ def test_clone_git_usa_copia_estavel(casa):
     assert (tmp / "home/.local/share/icons/hicolor/scalable/apps/meu-cofre.svg").exists()
 
 
+@SO_LINUX
 def test_zip_sem_git_roda_a_propria_pasta(casa):
     tmp, env = casa
     projeto = _esqueleto(tmp / "zip")
@@ -135,6 +151,7 @@ def test_zip_sem_git_roda_a_propria_pasta(casa):
     assert str(tmp / "home/.local/share/meu-cofre/meu-cofre.db") in r.stdout
 
 
+@SO_LINUX
 def test_zip_dentro_de_outro_repo_nao_usa_o_repo_de_fora(casa):
     tmp, env = casa
     de_fora = _clone_git(tmp)
@@ -144,6 +161,7 @@ def test_zip_dentro_de_outro_repo_nao_usa_o_repo_de_fora(casa):
     assert f"Path={projeto}\n" in _desktop(tmp) and not (tmp / "estavel").exists()
 
 
+@SO_LINUX
 def test_exec_fixa_banco_so_com_legado_ou_variavel(casa):
     tmp, env = casa
     projeto = _esqueleto(tmp / "zip")
@@ -158,6 +176,7 @@ def test_exec_fixa_banco_so_com_legado_ou_variavel(casa):
     assert "MEU_COFRE_DB" not in _desktop(tmp)
 
 
+@SO_LINUX
 def test_remover_apaga_atalho_e_icone_e_preserva_dados(casa):
     tmp, env = casa
     projeto = _esqueleto(tmp / "zip")
@@ -172,6 +191,7 @@ def test_remover_apaga_atalho_e_icone_e_preserva_dados(casa):
     assert banco.exists()
 
 
+@SO_LINUX
 def test_apelido_antigo_repassa_ao_instalador(casa):
     tmp, env = casa
     projeto = _esqueleto(tmp / "zip")
@@ -179,11 +199,12 @@ def test_apelido_antigo_repassa_ao_instalador(casa):
     assert r.returncode == 0 and (tmp / "home/.local/share/applications/meu-cofre.desktop").exists()
 
 
+@SO_LINUX
 def test_relatorio_sem_git_roda_a_propria_pasta(casa):
     tmp, env = casa
     projeto = _esqueleto(tmp / "zip")
     env = {**env, "XDG_CONFIG_HOME": str(tmp / "cfg"), "MEU_COFRE_SEM_SYSTEMCTL": "1", "MEU_COFRE_ESTAVEL": str(tmp / "nao-existe")}
     r = subprocess.run(["sh", str(projeto / "scripts/instalar-relatorio-automatico.sh")], env=env, capture_output=True, text=True)
     assert r.returncode == 0, r.stderr
-    assert f"WorkingDirectory={projeto}" in (tmp / "cfg/systemd/user/meu-cofre-relatorio.service").read_text()
-    assert "MEU_COFRE_DB" not in (tmp / "cfg/systemd/user/meu-cofre-relatorio.sh").read_text()
+    assert f"WorkingDirectory={projeto}" in (tmp / "cfg/systemd/user/meu-cofre-relatorio.service").read_text(encoding="utf-8")
+    assert "MEU_COFRE_DB" not in (tmp / "cfg/systemd/user/meu-cofre-relatorio.sh").read_text(encoding="utf-8")

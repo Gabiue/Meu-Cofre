@@ -1,6 +1,7 @@
-"""Onde ficam os dados: MEU_COFRE_DB, o `data/` do projeto (instalação antiga) ou a pasta de dados do usuário."""
+"""Onde ficam os dados: MEU_COFRE_DB, o `data/` do projeto (instalação antiga) ou a pasta de dados do usuário (XDG; %APPDATA% no Windows)."""
 
 import os
+import sys
 from pathlib import Path
 
 RAIZ = Path(__file__).resolve().parents[2]
@@ -11,7 +12,9 @@ def caminho_banco() -> Path:
     if env := os.environ.get("MEU_COFRE_DB"):
         return Path(env).expanduser()
     legado = RAIZ / "data" / "meu-cofre.db"
-    if legado.exists():
+    if not getattr(sys, "frozen", False) and legado.exists():  # no executável RAIZ cai numa pasta temporária ou do usuário: não é o projeto
         return legado
+    if sys.platform == "win32":
+        return Path(os.environ.get("APPDATA") or Path.home() / "AppData" / "Roaming") / "meu-cofre" / "meu-cofre.db"
     dados = Path(os.environ.get("XDG_DATA_HOME") or Path.home() / ".local" / "share")
     return dados / "meu-cofre" / "meu-cofre.db"

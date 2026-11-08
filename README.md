@@ -90,6 +90,17 @@ A lógica fica em módulos Python sem Qt, que recebem uma conexão SQLite e devo
 - **Taxas e cotações em segundo plano.** A rede roda numa thread e só a gravação acontece na thread principal, então a janela nunca espera. Há um intervalo mínimo entre tentativas, a busca de taxas é incremental (só o que falta) e qualquer falha de rede vira um aviso, não um erro.
 - **Estimativa, não extrato.** Renda fixa e Tesouro são calculados pelas taxas públicas (dias úteis, feriados nacionais), e a tela marca o que é estimado. Você pode registrar o saldo real quando quiser acertar.
 
+## Baixar pronto (executáveis)
+
+Na página de [Releases](https://github.com/Gabiue/Meu-Cofre/releases) há um arquivo por sistema, sem precisar instalar Python nem uv:
+
+- **Linux:** `meu-cofre-x86_64.AppImage`. Dê permissão (`chmod +x meu-cofre-x86_64.AppImage`) e execute. Pra aparecer no menu, use o [AppImageLauncher](https://github.com/TheAssassin/AppImageLauncher), se quiser.
+- **Windows:** `meu-cofre.exe`. Como o arquivo não é assinado, o SmartScreen avisa: clique em "Mais informações" e depois em "Executar assim mesmo".
+
+Os dados ficam no mesmo lugar da instalação normal (`~/.local/share/meu-cofre/` no Linux, `%APPDATA%\meu-cofre\` no Windows); o executável nunca grava ao lado de si. O subcomando `relatorio` funciona no AppImage; o `.exe` não tem console, então a saída dele não aparece no Windows.
+
+Pra gerar localmente: `uv run --group build python scripts/build.py` (`--fumaca` abre o resultado offscreen e confere). No Linux ele monta `build/AppDir`; passe `--appimagetool CAMINHO` pra gerar o `.AppImage`.
+
 ## Como rodar
 
 ### Instalação (Linux)
@@ -104,6 +115,21 @@ Cria o atalho no menu e o ícone, no padrão freedesktop (KDE, GNOME, XFCE, rofi
 - **Banco:** `MEU_COFRE_DB` se definida; senão `data/meu-cofre.db` do projeto, se já existir (instalação antiga); senão `~/.local/share/meu-cofre/meu-cofre.db`. Nada é movido nem copiado.
 - **Atualizar:** `git pull` e `sh scripts/instalar.sh` de novo (num ZIP, extraia a versão nova e rode o instalador).
 - **Remover:** `sh scripts/instalar.sh --remover` apaga só o atalho e o ícone; banco e cópia estável ficam.
+
+### Instalação (Windows)
+
+Suporte novo: os testes rodam na CI em `windows-latest`, mas ainda não foi usado num Windows de verdade. Se algo falhar, abra uma issue.
+
+Requer o [uv](https://docs.astral.sh/uv/) (`winget install astral-sh.uv`; o instalador avisa se faltar, mas não instala nada sozinho). Clone ou baixe o ZIP e extraia; no PowerShell, dentro da pasta:
+
+    powershell -ExecutionPolicy Bypass -File scripts\instalar.ps1
+
+Cria o atalho `meu-cofre` no Menu Iniciar (sem janela de console) e o ícone. O atalho roda a própria pasta do projeto, sem a cópia estável do Linux.
+
+- **Banco:** `MEU_COFRE_DB` se definida; senão `data\meu-cofre.db` do projeto, se já existir; senão `%APPDATA%\meu-cofre\meu-cofre.db`. Os relatórios ficam em `relatorios\` ao lado dele.
+- **Atualizar:** `git pull` e o instalador de novo.
+- **Relatório automático:** `powershell -ExecutionPolicy Bypass -File scripts\instalar-relatorio-automatico.ps1` cria uma tarefa agendada (dia 1, 8h; roda depois se o PC estava desligado). Se existir `%APPDATA%\meu-cofre\depois-do-relatorio.ps1`, ele é chamado com o caminho do arquivo.
+- **Remover:** `-Remover` em cada um dos dois scripts; banco e relatórios ficam.
 
 ### Direto da pasta
 
@@ -148,6 +174,12 @@ Configurar o msmtp (conta e senha de app do email) é com você; o meu-cofre nã
     uv run ruff check
 
 `MEU_COFRE_SEM_REDE=1` desliga qualquer acesso à internet. Os testes usam bancos temporários e só dados falsos. A CI (GitHub Actions) roda o lint e os testes em cada pull request e nos pushes para `main` e `develop`.
+
+**Publicar uma versão:** crie a tag `vX.Y.Z` na `main` e envie (`git tag v0.1.0 && git push origin v0.1.0`). O workflow `release` gera o AppImage e o `.exe`, roda a fumaça nos dois e cria o Release com os arquivos. Mudanças em `scripts/build.py`, no workflow ou nas dependências também rodam o build (sem publicar) no pull request.
+
+## Créditos
+
+A interface usa a fonte [Adwaita Sans](https://gitlab.gnome.org/GNOME/adwaita-fonts) (derivada da Inter), embutida em `app/meu_cofre/ui/fontes/` sob a licença SIL Open Font License 1.1 (ver `LICENSE-AdwaitaSans.txt`).
 
 ## Privacidade
 

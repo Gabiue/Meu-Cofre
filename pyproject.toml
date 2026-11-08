@@ -1,6 +1,6 @@
 [project]
 name = "meu-cofre"
-version = "0.1.0"
+version = "0.2.0"
 description = "Ferramenta local de finanças pessoais: seus dados nunca saem do seu PC."
 readme = "README.md"
 requires-python = ">=3.12"
@@ -14,6 +14,9 @@ dependencies = [
 meu-cofre = "meu_cofre.ui.app:main"
 
 [dependency-groups]
+build = [
+    "pyinstaller>=6.22.3",
+]
 dev = [
     "pytest>=8",
     "ruff>=0.17.3",

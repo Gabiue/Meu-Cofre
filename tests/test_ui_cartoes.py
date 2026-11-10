@@ -4,6 +4,7 @@ from datetime import date
 
 import pytest
 from conftest import id_cat, id_conta
+from PySide6.QtCore import QPoint, Qt
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QLabel, QMessageBox
 
@@ -76,14 +77,13 @@ def test_sem_cartao_mostra_estado_vazio(app, conn):
     assert aba._vazio.isVisibleTo(aba) and aba._vazio.titulo.text() == "Nenhum cartão"
     assert "Contas" in aba._vazio.dica.text()
     assert not aba._cartao_destaque.isVisibleTo(aba) and not aba._cartao_lista.isVisibleTo(aba)
-    assert aba._seletor is None
 
 
 def test_cartao_sem_compras_tem_so_a_fatura_aberta(app, conn):
     _visa(conn)
     aba = _aba(conn)
     assert not aba._vazio.isVisibleTo(aba)
-    assert aba._cartao_destaque.titulo.text() == "CAIXA VISA •••• 1234"
+    assert aba._cartao_destaque.titulo.text() == "Caixa Visa •••• 1234"
     assert aba._fechada.valor.text() == "—" and not aba.botao_pagar.isVisibleTo(aba)
     assert aba._aberta.valor.text() == "R$ 0,00" and aba.pilula_aberta.text() == "fecha em 3 dias"
     assert [c.referencia for c in aba.cards()] == ["2026-11"]
@@ -94,13 +94,16 @@ def test_fatura_fechada_em_destaque_e_aberta(app, conn):
     _compra(conn, cartao, 30000, date(2026, 9, 15), "Setembro")  # fatura de outubro, vence 10/10 (venceu)
     _compra(conn, cartao, 8000, date(2026, 10, 15), "Outubro")  # fatura de novembro, aberta
     aba = _aba(conn)
-    assert aba._fechada.rotulo.text() == "FATURA DE OUTUBRO"
+    assert aba._fechada.rotulo.text() == "Fatura de outubro"
     assert aba._fechada.valor.text() == "R$ 300,00"
     assert "vence 10/10" in aba._fechada.apoio.text()
     assert aba.pilula_fechada.text().endswith("venceu há 19 dias")
     assert aba.botao_pagar.isVisibleTo(aba)
-    assert aba._aberta.rotulo.text() == "FATURA ABERTA · NOVEMBRO"
+    assert aba._aberta.rotulo.text() == "Fatura aberta · novembro"
     assert aba._aberta.valor.text() == "R$ 80,00" and "fecha 01/11" in aba._aberta.apoio.text()
+    # a fatura a pagar é o destaque: primeira e maior
+    assert aba._fechada.valor.property("heroi") and not aba._aberta.valor.property("heroi")
+    assert aba._grade_destaque._itens[0] is aba._fechada
     # aberta, fechada: nessa ordem; todas recolhidas
     assert [c.referencia for c in aba.cards()] == ["2026-11", "2026-10"]
     assert not any(c.corpo.isVisibleTo(aba) for c in aba.cards())
@@ -165,6 +168,7 @@ def test_marcar_como_paga_pelo_formulario(app, conn):
     f = faturas.faturas_do_cartao(conn, cartao, HOJE)[0]
     assert (f.situacao, f.total_centavos, f.pago_centavos, f.data_pagamento) == ("paga", 123456, 123456, HOJE)
     assert aba._fechada.valor.text() == "R$ 1.234,56" and aba.pilula_fechada.text() == "✓ paga"
+    assert aba._aberta.valor.property("heroi") and aba._grade_destaque._itens[0] is aba._aberta  # paga: a aberta sobe
     assert not aba.botao_pagar.isVisibleTo(aba)
     assert aba.link_pagas.isVisibleTo(aba)
     assert aba.card("2026-10") is None  # pagas ficam recolhidas atrás do link
@@ -251,12 +255,12 @@ def test_pagar_pelo_botao_da_lista_abre_o_formulario_em_cima(app, conn):
     _compra(conn, cartao, 30000, date(2026, 8, 15), "Agosto")
     _compra(conn, cartao, 40000, date(2026, 9, 15), "Setembro")
     aba = _aba(conn)
-    assert aba._fechada.rotulo.text() == "FATURA DE SETEMBRO"  # a de vencimento mais antigo
+    assert aba._fechada.rotulo.text() == "Fatura de setembro"  # a de vencimento mais antigo
     assert "+ 1 fatura fechada a pagar" in aba._fechada.apoio.text()
     aba._alternar("2026-10")
     aba.card("2026-10").botao_pagar.click()
     QApplication.processEvents()
-    assert aba.form.isVisibleTo(aba) and "OUTUBRO" in aba.form.titulo.text()
+    assert aba.form.isVisibleTo(aba) and "outubro" in aba.form.titulo.text()
     assert aba.form.valor.text() == "400,00"
 
 
@@ -288,21 +292,46 @@ def test_desfazer_pagamento_pede_confirmacao(app, conn):
     assert aba.card("2026-10").situacao.text().endswith("venceu há 19 dias")
 
 
-def test_seletor_de_cartao_com_dois_cartoes(app, conn):
+def test_carteira_com_dois_cartoes_puxa_o_de_tras_pra_frente(app, conn):
     visa = _visa(conn)
     inter = cadastros.criar_cartao(conn, "Inter Black", "Inter", 25, 5, "5678")
     _compra(conn, visa, 1000, date(2026, 10, 15), "da Visa")
     _compra(conn, inter, 2000, date(2026, 10, 15), "da Inter")
     aba = _aba(conn)
-    assert aba._seletor is not None and aba._seletor.isVisibleTo(aba)
-    assert aba._seletor.atual() == "Caixa Visa •••• 1234"
-    assert aba.cartao_atual == visa and not aba.card("2026-11").corpo.isVisibleTo(aba)
-    aba._seletor.clicar("Inter Black •••• 5678")
+    assert aba.carteira.isVisibleTo(aba)
+    assert aba.carteira._cartoes == [(visa, "Caixa Visa", "•••• 1234"), (inter, "Inter Black", "•••• 5678")]
+    assert aba.carteira.atual() == visa and aba.cartao_atual == visa
+    assert not aba.card("2026-11").corpo.isVisibleTo(aba)
+    aba.carteira.clicar(inter)
     QApplication.processEvents()
-    assert aba.cartao_atual == inter
-    assert aba._cartao_destaque.titulo.text() == "INTER BLACK •••• 5678"
-    assert aba._fechada.rotulo.text() == "FATURA DE NOVEMBRO"  # fecha 25, vence 5: a de 15/10 já fechou
+    assert aba.cartao_atual == inter and aba.carteira.atual() == inter
+    assert aba.carteira._anim.state() == aba.carteira._anim.State.Running  # recarregar não corta a animação
+    assert aba._cartao_destaque.titulo.text() == "Inter Black •••• 5678"
+    assert aba._fechada.rotulo.text() == "Fatura de novembro"  # fecha 25, vence 5: a de 15/10 já fechou
     assert aba._fechada.valor.text() == "R$ 20,00" and aba.pilula_fechada.text() == "! vence em 7 dias"
+
+
+def test_carteira_clique_no_de_tras_e_setas(app, conn):
+    visa = _visa(conn)
+    inter = cadastros.criar_cartao(conn, "Inter Black", "Inter", 25, 5, "5678")
+    elo = cadastros.criar_cartao(conn, "Caixa Elo", "Caixa", 1, 10, "8812")
+    aba = _aba(conn)
+    c = aba.carteira
+    assert c.atual() == visa and [x[0] for x in c._cartoes] == [visa, inter, elo]
+    # o de trás aparece à direita e acima do da frente: clicar nele o traz pra frente
+    _prof, cid, ret = c._desenho()[0]  # o mais ao fundo
+    assert cid == elo
+    QTest.mouseClick(c, Qt.MouseButton.LeftButton, pos=ret.topRight().toPoint() + QPoint(-4, 4))
+    assert c.atual() == elo and aba.cartao_atual == elo
+    c._anim.setCurrentTime(c.DURACAO_MS // 3)  # no começo: o puxado já subiu e ainda está atrás
+    meio = next(x for x in c._desenho() if x[1] == elo)
+    assert meio[2].y() < ret.y() and meio[0] > 0
+    c._anim.setCurrentTime(c.DURACAO_MS)
+    assert c._desenho()[-1][1] == elo  # terminou na frente
+    QTest.keyClick(c, Qt.Key.Key_Right)  # → volta pro começo da lista
+    assert c.atual() == visa
+    QTest.keyClick(c, Qt.Key.Key_Left)
+    assert c.atual() == elo
 
 
 def test_cartao_desativado_com_fatura_em_aberto_continua_na_aba(app, conn):

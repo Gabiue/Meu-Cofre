@@ -10,61 +10,68 @@ from pathlib import Path
 from PySide6.QtGui import QColor, QFont, QFontDatabase, QPalette
 from PySide6.QtWidgets import QApplication
 
-# --- Superfícies e texto ----------------------------------------------------------
-FUNDO = "#0d1a13"
-CARTAO = "#13241b"
-CARTAO_ELEVADO = "#183022"
-BORDA = "#1f3a2b"
-TEXTO = "#e8f0ea"
-TEXTO_SECUNDARIO = "#9fb5a8"
-TEXTO_APAGADO = "#6f8a7b"
-TEXTO_DESABILITADO = "#4a6356"
+# --- Superfícies e texto (paleta "gelo e ardósia", 10/11/2026) ---------------------
+FUNDO = "#eef2f4"
+CARTAO = "#ffffff"
+CARTAO_ELEVADO = "#f4f7f8"  # hover, diálogos
+BORDA = "#dce3e7"
+TEXTO = "#1f3038"
+TEXTO_SECUNDARIO = "#5d6b72"
+TEXTO_APAGADO = "#667479"  # >= 4.5:1 no branco
+TEXTO_DESABILITADO = "#a9b4ba"
 
-# --- Destaques de interface -------------------------------------------------------
-VERDE = "#3fb37f"
-VERDE_HOVER = "#4fc590"
-VERDE_SUAVE = "rgba(63, 179, 127, 0.18)"  # fundo de pílulas e seleção
-VERDE_SUAVE_BORDA = "rgba(63, 179, 127, 0.45)"
-DOURADO = "#e0a030"
-DOURADO_SUAVE = "rgba(224, 160, 48, 0.16)"
-DOURADO_SUAVE_BORDA = "rgba(224, 160, 48, 0.45)"
-VERMELHO = "#e36a5a"  # status "ruim"
-VERMELHO_SUAVE = "rgba(227, 106, 90, 0.16)"
-VERMELHO_SUAVE_BORDA = "rgba(227, 106, 90, 0.45)"
-TEXTO_SOBRE_VERDE = "#0d1a13"  # texto em cima do botão primário
+# --- Destaques de interface (os nomes VERDE* ficaram: é o destaque único, verde-petróleo) --
+VERDE = "#0d7480"
+VERDE_HOVER = "#0b6570"
+VERDE_PRESSIONADO = "#095862"
+VERDE_SUAVE = "rgba(13, 116, 128, 0.10)"  # fundo de pílulas e seleção
+VERDE_SUAVE_BORDA = "rgba(13, 116, 128, 0.35)"
+DOURADO = "#a16207"  # atenção e previsão
+DOURADO_SUAVE = "rgba(161, 98, 7, 0.10)"
+DOURADO_SUAVE_BORDA = "rgba(161, 98, 7, 0.40)"
+VERMELHO = "#b93a2b"  # status "ruim"
+VERMELHO_HOVER = "#a33224"
+VERMELHO_SUAVE = "rgba(185, 58, 43, 0.10)"
+VERMELHO_SUAVE_BORDA = "rgba(185, 58, 43, 0.40)"
+TEXTO_SOBRE_VERDE = "#ffffff"  # texto em cima do botão primário (e do de perigo)
 
 # --- Cores de gráfico com várias séries (ordem fixa; "Outros" sempre por último) --
-SERIES = ["#26a06a", "#9085e9", "#c98500", "#3987e5", "#d95926"]
-SERIE_OUTROS = "#6f8a7b"
+# validadas no validador do dataviz sobre o branco (faixa de luz, croma, daltonismo, contraste)
+SERIES = ["#008ca3", "#d0501f", "#3a5fd9", "#c27c00", "#c2407a"]
+SERIE_OUTROS = "#8a979d"
 
 # --- Forma e ritmo (grade de 8px) ----------------------------------------------------
 ESPACO = 8
-RAIO_CARTAO = 12
+RAIO_CARTAO = 8
 PADDING_CARTAO = 20
 
 # --- Tipografia (px) -----------------------------------------------------------------
-FAMILIAS_PREFERIDAS = ("Inter", "Adwaita Sans", "Noto Sans", "Segoe UI")
+FAMILIAS_PREFERIDAS = ("IBM Plex Sans", "Inter", "Noto Sans", "Segoe UI")
 PX_TEXTO = 14
 PX_TITULO_CARTAO = 11
 PX_RODAPE = 12
-PX_NUMERO = 30
+PX_NUMERO = 26
+PX_NUMERO_HEROI = 40  # o "Livre até o fim do mês", a resposta da tela inicial
 PX_MARCA = 22
 PX_TITULO_DIALOGO = 18
 PX_VALOR = 22
 
 
-FONTE_EMBUTIDA = Path(__file__).with_name("fontes") / "AdwaitaSans-Regular.ttf"  # variável: cobre todos os pesos (OFL)
+# um arquivo por peso: do arquivo variável o Qt só enxerga o Regular, e negrito/seminegrito somem (OFL)
+FONTES_EMBUTIDAS = [
+    Path(__file__).with_name("fontes") / f"IBMPlexSans-{peso}.ttf" for peso in ("Regular", "Medium", "SemiBold", "Bold")
+]
 
 
 @cache
 def _fonte_embutida_carregada() -> bool:
-    return QFontDatabase.addApplicationFont(str(FONTE_EMBUTIDA)) != -1  # uma vez por processo
+    return all(QFontDatabase.addApplicationFont(str(f)) != -1 for f in FONTES_EMBUTIDAS)  # uma vez por processo
 
 
 def familia_da_fonte() -> str:
     """A fonte embutida (a mesma cara e as mesmas medidas em Linux e Windows); sem ela, a primeira preferida instalada."""
     if _fonte_embutida_carregada():
-        return "Adwaita Sans"
+        return "IBM Plex Sans"
     instaladas = set(QFontDatabase.families())
     for familia in FAMILIAS_PREFERIDAS:
         if familia in instaladas:
@@ -90,17 +97,19 @@ QLabel {{ background: transparent; }}
 QToolTip {{ background: {CARTAO_ELEVADO}; color: {TEXTO}; border: 1px solid {BORDA}; padding: 4px 8px; }}
 
 /* Cabeçalho da janela */
+#Cabecalho {{ background: {CARTAO}; border-bottom: 1px solid {BORDA}; }}
 #Marca {{ font-size: {PX_MARCA}px; font-weight: 700; }}
 
 /* Cartão */
 #Cartao {{ background: {CARTAO}; border: 1px solid {BORDA}; border-radius: {RAIO_CARTAO}px; }}
-#CartaoTitulo {{ font-size: {PX_TITULO_CARTAO}px; font-weight: 600; color: {TEXTO_SECUNDARIO}; }}
+#CartaoTitulo {{ font-size: {PX_TEXTO + 2}px; font-weight: 600; color: {TEXTO}; }}
 #CartaoSubtitulo {{ font-size: {PX_RODAPE}px; color: {TEXTO_APAGADO}; }}
 
 /* Número em destaque */
-#NumeroRotulo {{ font-size: {PX_TITULO_CARTAO}px; font-weight: 600; color: {TEXTO_SECUNDARIO}; }}
-#NumeroValor {{ font-size: {PX_NUMERO}px; font-weight: 700; color: {TEXTO}; }}
-#NumeroValor[destaque="true"] {{ color: {DOURADO}; }}
+#NumeroRotulo {{ font-size: {PX_RODAPE + 1}px; font-weight: 500; color: {TEXTO_SECUNDARIO}; }}
+#NumeroValor {{ font-size: {PX_NUMERO}px; font-weight: 600; color: {TEXTO}; }}
+#NumeroValor[destaque="true"] {{ color: {VERDE}; }}
+#NumeroValor[heroi="true"] {{ font-size: {PX_NUMERO_HEROI}px; }}
 #NumeroApoio {{ font-size: {PX_RODAPE}px; color: {TEXTO_APAGADO}; }}
 
 /* Pílula */
@@ -114,31 +123,31 @@ QToolTip {{ background: {CARTAO_ELEVADO}; color: {TEXTO}; border: 1px solid {BOR
 
 /* Botões */
 QPushButton#BotaoPrimario {{ background: {VERDE}; color: {TEXTO_SOBRE_VERDE}; border: 1px solid {VERDE};
-    border-radius: 10px; padding: 0 20px; min-height: 40px; font-size: {PX_TEXTO}px; font-weight: 700; }}
+    border-radius: 6px; padding: 0 20px; min-height: 40px; font-size: {PX_TEXTO}px; font-weight: 700; }}
 QPushButton#BotaoPrimario:hover {{ background: {VERDE_HOVER}; border-color: {VERDE_HOVER}; }}
-QPushButton#BotaoPrimario:pressed {{ background: #35a072; }}
+QPushButton#BotaoPrimario:pressed {{ background: {VERDE_PRESSIONADO}; }}
 QPushButton#BotaoSecundario {{ background: transparent; color: {TEXTO}; border: 1px solid {BORDA};
-    border-radius: 10px; padding: 0 20px; min-height: 40px; font-size: {PX_TEXTO}px; font-weight: 600; }}
+    border-radius: 6px; padding: 0 20px; min-height: 40px; font-size: {PX_TEXTO}px; font-weight: 600; }}
 QPushButton#BotaoSecundario:hover {{ background: {CARTAO_ELEVADO}; border-color: {TEXTO_APAGADO}; }}
 QPushButton#BotaoSecundario:disabled {{ color: {TEXTO_DESABILITADO}; border-color: {BORDA}; background: transparent; }}
 QPushButton:focus {{ outline: none; }}
 
 /* Segmentado */
-#Segmentado {{ background: {FUNDO}; border: 1px solid {BORDA}; border-radius: 17px; }}
+#Segmentado {{ background: {FUNDO}; border: 1px solid {BORDA}; border-radius: 8px; }}
 #Segmentado:focus {{ border: 1px solid {VERDE}; }}
-#SegmentadoOpcao {{ background: transparent; color: {TEXTO_SECUNDARIO}; border: none; border-radius: 13px;
+#SegmentadoOpcao {{ background: transparent; color: {TEXTO_SECUNDARIO}; border: none; border-radius: 6px;
     padding: 0 14px; min-height: 26px; font-size: {PX_RODAPE + 1}px; font-weight: 600; }}
 #SegmentadoOpcao:hover {{ color: {TEXTO}; }}
-#SegmentadoOpcao:checked {{ background: {VERDE_SUAVE}; color: {VERDE}; }}
+#SegmentadoOpcao:checked {{ background: {CARTAO}; color: {TEXTO}; border: 1px solid {BORDA}; }}
 #SegmentadoOpcao:disabled {{ color: {TEXTO_DESABILITADO}; }}
 #SegmentadoOpcao:checked:disabled {{ background: {VERDE_SUAVE}; color: {TEXTO_DESABILITADO}; }}
 
 /* Item de lançamento */
-#ItemLancamento {{ background: transparent; border: none; border-radius: 10px; }}
+#ItemLancamento {{ background: transparent; border: none; border-radius: 6px; }}
 #ItemLancamento:hover {{ background: {CARTAO_ELEVADO}; }}
-#ItemMarcador {{ border-radius: 16px; font-size: 11px; font-weight: 700; }}
+#ItemMarcador {{ border-radius: 6px; font-size: 13px; font-weight: 600; }}
 #ItemMarcador[tipo="entrada"] {{ background: {VERDE_SUAVE}; color: {VERDE}; }}
-#ItemMarcador[tipo="saida"] {{ background: {BORDA}; color: {TEXTO_SECUNDARIO}; }}
+#ItemMarcador[tipo="saida"] {{ background: {CARTAO_ELEVADO}; border: 1px solid {BORDA}; color: {TEXTO_SECUNDARIO}; }}
 #ItemMarcador[tipo="meta"] {{ background: {BORDA}; color: {DOURADO}; font-size: 14px; }}
 #ItemMarcador[tipo="transferencia"] {{ background: {BORDA}; color: {TEXTO_SECUNDARIO}; font-size: 15px; }}
 #ItemDescricao {{ font-size: {PX_TEXTO}px; font-weight: 600; color: {TEXTO}; }}
@@ -202,8 +211,8 @@ QCalendarWidget QAbstractItemView:enabled {{ background: {CARTAO_ELEVADO}; color
     selection-background-color: {VERDE}; selection-color: {TEXTO_SOBRE_VERDE}; outline: none; }}
 QCalendarWidget QAbstractItemView:disabled {{ color: {TEXTO_APAGADO}; }}
 QPushButton#BotaoPerigo {{ background: {VERMELHO}; color: {TEXTO_SOBRE_VERDE}; border: 1px solid {VERMELHO};
-    border-radius: 10px; padding: 0 20px; min-height: 40px; font-size: {PX_TEXTO}px; font-weight: 700; }}
-QPushButton#BotaoPerigo:hover {{ background: #ec7b6c; border-color: #ec7b6c; }}
+    border-radius: 6px; padding: 0 20px; min-height: 40px; font-size: {PX_TEXTO}px; font-weight: 700; }}
+QPushButton#BotaoPerigo:hover {{ background: {VERMELHO_HOVER}; border-color: {VERMELHO_HOVER}; }}
 QPushButton#BotaoSecundario[perigo="true"] {{ color: {VERMELHO}; border-color: {VERMELHO_SUAVE_BORDA}; }}
 QPushButton#BotaoSecundario[perigo="true"]:hover {{ background: {VERMELHO_SUAVE}; border-color: {VERMELHO}; }}
 
@@ -310,7 +319,7 @@ QStatusBar::item {{ border: none; }}
 """
 
 
-def _paleta_escura() -> QPalette:
+def _paleta() -> QPalette:
     p = QPalette()
     for papel, cor in (
         (QPalette.ColorRole.Window, FUNDO),
@@ -332,9 +341,9 @@ def _paleta_escura() -> QPalette:
 
 
 def aplicar_tema(app: QApplication) -> None:
-    """Fusion + paleta escura + fonte + QSS global."""
+    """Fusion + paleta + fonte + QSS global."""
     app.setStyle("Fusion")
-    app.setPalette(_paleta_escura())
+    app.setPalette(_paleta())
     familia = familia_da_fonte()
     app.setFont(fonte_base(familia))
     app.setStyleSheet(gerar_qss(familia))

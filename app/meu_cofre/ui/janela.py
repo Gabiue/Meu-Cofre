@@ -1,6 +1,7 @@
 """Janela principal (docs/design/telas.md): abas "Início", "Assinaturas/fixos", "Cartões", "Metas" e "Investimentos".
 
-Início: painel (gráficos do mês escolhido, ou os próximos meses), resumo e recentes (sempre "agora"), em 2 colunas ou 1.
+Início: resumo (o "Livre" em destaque), painel (gráficos do mês escolhido, ou os próximos meses) e recentes (sempre
+"agora"), em 2 colunas ou 1.
 `atualizar()` gera as recorrentes do mês, recarrega tudo e pede (em segundo plano) as taxas do Banco Central; os
 diálogos chamam depois de salvar ou excluir.
 
@@ -157,7 +158,7 @@ class JanelaPrincipal(QMainWindow):
         self._conteudo.setObjectName("Conteudo")
         self._grade = QGridLayout(self._conteudo)
         m = 3 * tema.ESPACO
-        self._grade.setContentsMargins(m, tema.ESPACO, m, m)
+        self._grade.setContentsMargins(m, m, m, m)
         self._grade.setSpacing(m)
 
         self._cartao_painel = self._montar_painel()
@@ -190,9 +191,11 @@ class JanelaPrincipal(QMainWindow):
 
     def _montar_cabecalho(self) -> QWidget:
         self._faixa = QWidget()
+        self._faixa.setObjectName("Cabecalho")
+        self._faixa.setAttribute(Qt.WidgetAttribute.WA_StyledBackground)  # sem isso o QWidget não pinta o fundo do QSS
         self._linhas_cabecalho = QVBoxLayout(self._faixa)
         m = 3 * tema.ESPACO
-        self._linhas_cabecalho.setContentsMargins(m, 2 * tema.ESPACO, m, tema.ESPACO)
+        self._linhas_cabecalho.setContentsMargins(m, 2 * tema.ESPACO, m, 2 * tema.ESPACO)
         self._linhas_cabecalho.setSpacing(tema.ESPACO)
         self._filas = [QHBoxLayout() for _ in range(3)]
         for fila in self._filas:
@@ -323,10 +326,18 @@ class JanelaPrincipal(QMainWindow):
         self._devo = NumeroDestaque("Devo", "", "Cartão em aberto, com parcelas futuras")
         self._gastei = NumeroDestaque("Gastei no mês", "", "")
         self._livre = NumeroDestaque("Livre até o fim do mês", "", "Depois do cartão e do que ainda vai sair", destaque=True)
+        self._livre.valor.setProperty("heroi", True)  # a resposta da tela: vem primeiro e maior que os outros
         self._pilula_livre = Pilula("", "neutra")
         self._livre.adicionar(self._pilula_livre)
-        grade = GradeResponsiva(largura_minima_item=185, espaco=3 * tema.ESPACO)
-        for numero in (self._em_conta, self._devo, self._gastei, self._livre):
+        cartao.corpo.addWidget(self._livre)
+        linha = QFrame()
+        linha.setObjectName("Separador")
+        linha.setFixedHeight(1)
+        cartao.corpo.addSpacing(tema.ESPACO)
+        cartao.corpo.addWidget(linha)
+        cartao.corpo.addSpacing(tema.ESPACO)
+        grade = GradeResponsiva(largura_minima_item=185, espaco=3 * tema.ESPACO, colunas_permitidas=(3, 1))
+        for numero in (self._em_conta, self._gastei, self._devo):
             grade.adicionar(numero)
         cartao.corpo.addWidget(grade)
         return cartao
@@ -562,7 +573,7 @@ class JanelaPrincipal(QMainWindow):
 
     # --- Layout responsivo ---------------------------------------------------------
     def _aplicar_layout(self, duas_colunas: bool) -> None:
-        """2 colunas (painel+resumo | recentes) ou 1 coluna (painel, resumo, recentes)."""
+        """2 colunas (resumo+painel | recentes) ou 1 coluna (resumo, painel, recentes). O resumo vem primeiro: é a resposta."""
         if duas_colunas == self._duas_colunas:
             return
         self._duas_colunas = duas_colunas
@@ -573,18 +584,17 @@ class JanelaPrincipal(QMainWindow):
             self._grade.setColumnStretch(i, 0)
 
         if duas_colunas:
-            self._grade.addWidget(self._cartao_painel, 0, 0)
-            self._grade.addWidget(self._cartao_resumo, 1, 0)
+            self._grade.addWidget(self._cartao_resumo, 0, 0)
+            self._grade.addWidget(self._cartao_painel, 1, 0)
             self._grade.addWidget(self._cartao_recentes, 0, 1, 2, 1)
             self._grade.setColumnStretch(0, 2)
             self._grade.setColumnStretch(1, 1)
-            self._grade.setRowStretch(0, 1)  # painel absorve a sobra; resumo fica no tamanho natural
+            self._grade.setRowStretch(1, 1)  # painel absorve a sobra; resumo fica no tamanho natural
         else:
-            self._grade.addWidget(self._cartao_painel, 0, 0)
-            self._grade.addWidget(self._cartao_resumo, 1, 0)
+            self._grade.addWidget(self._cartao_resumo, 0, 0)
+            self._grade.addWidget(self._cartao_painel, 1, 0)
             self._grade.addWidget(self._cartao_recentes, 2, 0)
             self._grade.setColumnStretch(0, 1)
-            self._grade.setRowStretch(0, 0)
 
     def resizeEvent(self, evento) -> None:
         self._aplicar_layout(evento.size().width() >= LARGURA_DUAS_COLUNAS)

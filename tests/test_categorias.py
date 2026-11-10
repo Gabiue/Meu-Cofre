@@ -127,7 +127,7 @@ def test_todas_as_do_seed_podem_ser_ajustadas(conn):
 def test_lista_por_tipo_com_natureza(app, conn):
     d = _janela(conn)
     textos = _textos(d)
-    assert "DESPESAS" in textos and "RECEITAS" in textos and "Salário" in textos
+    assert "Despesas" in textos and "Receitas" in textos and "Salário" in textos
     assert "Transferência entre contas" not in textos  # transferência não é escolha do dono
     assert "do sistema" in "".join(textos)  # A categorizar
     assert d.isModal() and not d.botao_concluir.isDefault()

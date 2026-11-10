@@ -361,16 +361,14 @@ def test_gastei_no_mes_no_resumo(app, conn):
     assert j._gastei.apoio.text().replace(" ", " ") == "R$ 250 já saiu da conta · R$ 300 no cartão"
 
 
-def test_resumo_em_quatro_colunas_ou_duas(app, conn):
+def test_resumo_livre_em_cima_e_tres_colunas_ou_uma(app, conn):
     j = _janela(conn, (1500, 900))
     grade = j._cartao_resumo.findChild(GradeResponsiva)
-    assert grade.colunas() == 4
-    j.resize(1150, 900)  # ainda em 2 colunas na janela, mas a coluna do resumo estreita
-    QApplication.processEvents()
-    assert grade.colunas() == 2
+    assert grade.colunas() == 3  # o "Livre" fica fora da grade, em destaque
+    assert j._livre.valor.property("heroi") is True
     j.resize(700, 900)
     QApplication.processEvents()
-    assert grade.colunas() in (1, 2)
+    assert grade.colunas() in (1, 3)
 
 
 def test_recentes_mostram_o_final_do_cartao(app, conn):
@@ -583,7 +581,7 @@ def test_rosca_da_fatura_aberta_tem_grafico_com_a_serie(app, conn):
     aba = _aba(conn)
     series = aba.rosca._vista.chart().series()
     assert len(series) == 1 and series[0].count() == 3
-    assert aba._cartao_rosca.titulo.text() == "PARA ONDE FOI"
+    assert aba._cartao_rosca.titulo.text() == "Para onde foi"
     assert aba._cartao_rosca.subtitulo.text() == "Fatura de novembro · Caixa Visa •••• 1234"
     assert aba._seg_fatura is None  # só existe a aberta: sem seletor
     aba.recarregar()  # redesenhar não pode cair nem perder a série

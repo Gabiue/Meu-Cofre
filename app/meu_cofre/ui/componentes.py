@@ -67,7 +67,7 @@ class RotuloElidido(QLabel):
 class Cartao(QFrame):
     """Superfície com borda fina e cantos arredondados.
 
-    Título (CAIXA ALTA, espaçado) e subtítulo são opcionais; `acao` é um widget no canto
+    Título (em caixa normal) e subtítulo são opcionais; `acao` é um widget no canto
     direito do cabeçalho (ex.: um `Segmentado`). O conteúdo entra em `self.corpo`.
     """
 
@@ -93,10 +93,9 @@ class Cartao(QFrame):
             textos = QVBoxLayout()
             textos.setSpacing(2)
             if titulo:
-                self.titulo = QLabel(titulo.upper())
+                self.titulo = QLabel(titulo)
                 self.titulo.setObjectName("CartaoTitulo")
                 self.titulo.setWordWrap(True)
-                _espacar_letras(self.titulo, 1.2)
                 textos.addWidget(self.titulo)
             if subtitulo:
                 self.subtitulo = QLabel(subtitulo)
@@ -191,7 +190,7 @@ class BarraProgresso(QWidget):
 class NumeroDestaque(QWidget):
     """Rótulo pequeno + número grande em negrito + linha de apoio opcional.
 
-    `destaque=True` usa o dourado no número (o "Livre"). `adicionar(widget)` põe algo
+    `destaque=True` pinta o número na cor de destaque (ex.: o "Livre"). `adicionar(widget)` põe algo
     embaixo, como uma `Pilula`.
     """
 
@@ -208,10 +207,9 @@ class NumeroDestaque(QWidget):
         self._layout.setContentsMargins(0, 0, 0, 0)
         self._layout.setSpacing(6)
 
-        self.rotulo = QLabel(rotulo.upper())
+        self.rotulo = QLabel(rotulo)
         self.rotulo.setObjectName("NumeroRotulo")
         self.rotulo.setWordWrap(True)
-        _espacar_letras(self.rotulo, 1.0)
 
         self.valor = QLabel(valor)
         self.valor.setObjectName("NumeroValor")
@@ -373,7 +371,7 @@ class ItemLancamento(QFrame):
     """Linha da lista de recentes. Emite `clicado(id)` ao clicar.
 
     `valor_centavos` é positivo para entrada e negativo para saída. O número fica sempre na
-    cor do texto: quem diferencia entrada de saída é o marcador e o sinal (+ / −).
+    cor do texto: quem diferencia entrada de saída é o marcador (▲ ou a inicial da categoria) e o sinal (+ / −).
     `parcela` (ex.: "3/6") aparece apagada logo depois da descrição, que é quem encurta.
     `recorrente` põe um ↻ discreto antes da categoria (veio de uma assinatura ou gasto fixo).
     `meta` é guardar/retirar dinheiro de uma meta: marcador neutro (◎) e valor sem sinal, pra não parecer gasto.
@@ -404,7 +402,8 @@ class ItemLancamento(QFrame):
         self.setFixedHeight(60)
 
         entrada = valor_centavos > 0
-        marcador = QLabel("◎" if meta else "⇄" if transferencia else "▲" if entrada else "▼")
+        # saída mostra a inicial da categoria: um ▼ em toda linha não diz nada
+        marcador = QLabel("◎" if meta else "⇄" if transferencia else "▲" if entrada else (categoria[:1].upper() or "▼"))
         marcador.setObjectName("ItemMarcador")
         marcador.setProperty("tipo", "meta" if meta else "transferencia" if transferencia else "entrada" if entrada else "saida")
         marcador.setFixedSize(32, 32)

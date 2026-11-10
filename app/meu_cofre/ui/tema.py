@@ -40,6 +40,10 @@ TEXTO_SOBRE_VERDE = "#ffffff"  # texto em cima do botão primário (e do de peri
 SERIES = ["#008ca3", "#d0501f", "#3a5fd9", "#c27c00", "#c2407a"]
 SERIE_OUTROS = "#8a979d"
 
+# --- Cartões da carteira (aba Cartões): cor por cartão, na ordem de cadastro; texto branco >= 6,8:1 ----
+# cores do próprio app, nunca as do banco (não imitar marca)
+CORES_CARTAO = ["#1f3038", "#0d6470", "#7a4f0e", "#34408a", "#6b2f4a", "#3d4f2a"]
+
 # --- Forma e ritmo (grade de 8px) ----------------------------------------------------
 ESPACO = 8
 RAIO_CARTAO = 8

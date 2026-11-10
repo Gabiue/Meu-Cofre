@@ -264,6 +264,12 @@ class GradeResponsiva(QWidget):
     def colunas(self) -> int:
         return self._colunas
 
+    def reordenar(self, itens: list[QWidget]) -> None:
+        """Mesmos itens em outra ordem (ex.: o destaque primeiro)."""
+        if itens != self._itens:
+            self._itens = list(itens)
+            self._distribuir(max(self._colunas, 1))
+
     def _distribuir(self, colunas: int) -> None:
         for w in self._itens:
             self._grade.removeWidget(w)

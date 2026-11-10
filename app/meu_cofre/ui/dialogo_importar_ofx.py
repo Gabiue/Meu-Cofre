@@ -76,7 +76,10 @@ class LinhaDuvida(QFrame):
         self.setObjectName("AtivoCard")
         self.escolha = CampoLista()
         for c in item.candidatos:
-            self.escolha.addItem(f"{c['data']:%d/%m} · {c['descricao']} · {formatar_brl(c['valor_centavos'])}", c["id"])
+            valor = formatar_brl(c["valor_centavos"])
+            if c["valor_centavos"] != item.transacao.valor_centavos:  # o extrato manda: o valor do lançamento será acertado
+                valor += f" → {formatar_brl(item.transacao.valor_centavos)}"
+            self.escolha.addItem(f"{c['data']:%d/%m} · {c['descricao']} · {valor}", c["id"])
         self.escolha.addItem("Importar como nova", None)
         self.escolha.setCurrentIndex(self.escolha.findData(item.lancamento_id) if item.lancamento_id else self.escolha.count() - 1)
         self.escolha.currentIndexChanged.connect(self._escolheu)
@@ -90,6 +93,30 @@ class LinhaDuvida(QFrame):
 
     def _escolheu(self, _i: int) -> None:
         self.item.lancamento_id = self.escolha.currentData()
+        self.mudou.emit()
+
+
+class LinhaAntes(QFrame):
+    """Transação anterior ao primeiro lançamento da conta: já está no saldo inicial, só entra se marcada."""
+
+    mudou = Signal()
+
+    def __init__(self, item: Item, parent: QWidget | None = None):
+        super().__init__(parent)
+        self.item = item
+        self.setObjectName("AtivoCard")
+        self.marcador = Marcador("Importar mesmo assim")
+        self.marcador.toggled.connect(self._marcou)
+        coluna = QVBoxLayout(self)
+        m = tema.ESPACO + 4
+        coluna.setContentsMargins(m, tema.ESPACO, m, tema.ESPACO)
+        coluna.setSpacing(4)
+        self.descricao = RotuloElidido(_resumo(item), "ItemDescricao")
+        coluna.addWidget(self.descricao)
+        coluna.addWidget(self.marcador)
+
+    def _marcou(self, marcado: bool) -> None:
+        self.item.importar = marcado
         self.mudou.emit()
 
 
@@ -107,6 +134,7 @@ class DialogoImportarOfx(QDialog):
         self.arquivo_caminho = ""
         self.linhas_novas: list[LinhaNova] = []
         self.linhas_duvidas: list[LinhaDuvida] = []
+        self.linhas_antes: list[LinhaAntes] = []
         self._categorias: dict[str, list[tuple[str, int]]] = {
             tipo: [(c["nome"], c["id"]) for c in lancamentos.listar_categorias(conn, tipo) if c["nome"] != cadastros.CATEGORIA_SISTEMA]
             for tipo in ("receita", "despesa")
@@ -244,7 +272,7 @@ class DialogoImportarOfx(QDialog):
             if widget is not None:
                 widget.setParent(None)
                 widget.deleteLater()
-        self.linhas_novas, self.linhas_duvidas = [], []
+        self.linhas_novas, self.linhas_duvidas, self.linhas_antes = [], [], []
 
     def _grupo(self, titulo: str, detalhe: str = "") -> tuple[QWidget, QVBoxLayout]:
         caixa = QWidget()
@@ -277,7 +305,7 @@ class DialogoImportarOfx(QDialog):
         self._conteudo.addWidget(topo)
 
         if p.duvidas:
-            grupo, col = self._grupo("Dúvidas", "Mais de um lançamento seu casa com estas transações. Escolha qual é.")
+            grupo, col = self._grupo("Dúvidas", "Um lançamento seu parece casar com estas transações (mais de um, ou investimento com centavos de diferença). Escolha qual é.")
             for item in p.duvidas:
                 linha = LinhaDuvida(item)
                 linha.mudou.connect(self._atualizar_rodape)
@@ -292,6 +320,14 @@ class DialogoImportarOfx(QDialog):
                 col.addWidget(linha)
             if len(p.novas) > LINHAS_VISIVEIS:
                 col.addWidget(_rotulo(f"e mais {len(p.novas) - LINHAS_VISIVEIS} com a categoria sugerida", "ItemDetalhe"))
+            self._conteudo.addWidget(grupo)
+        if p.antes:
+            grupo, col = self._grupo("Antes do início do uso", "Antes do início do uso: já está no saldo inicial. Não são importadas, a menos que você marque.")
+            for item in p.antes:
+                linha = LinhaAntes(item)
+                linha.mudou.connect(self._atualizar_rodape)
+                self.linhas_antes.append(linha)
+                col.addWidget(linha)
             self._conteudo.addWidget(grupo)
         if p.conciliadas:
             grupo, col = self._grupo("Conciliadas com o que você lançou", "Ficam marcadas como conferidas, sem duplicar.")

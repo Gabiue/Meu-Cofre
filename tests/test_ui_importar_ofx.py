@@ -80,6 +80,8 @@ def test_categoria_sugerida_e_editavel_e_marcador_desligado_nao_acerta_saldo(app
 
 def test_duvida_com_escolha_e_conciliada(app, conn, tmp_path):
     _manual(conn, date(2026, 10, 3), 4590)  # concilia o Mercado
+    conn.execute("INSERT INTO lancamentos (conta_id, data, valor_centavos, descricao, origem) "
+                 "SELECT id, '2026-09-01', 0, 'Início', 'manual' FROM contas WHERE nome = 'Inter'")  # início do uso, antes do extrato
     a, b = _manual(conn, date(2026, 10, 8), 3000), _manual(conn, date(2026, 10, 10), 3000)  # dúvida no Café
     d = _dialogo(conn)
     d.carregar(falso.inter(tmp_path / "i.ofx"))
@@ -122,3 +124,13 @@ def test_botao_importar_extrato_na_janela_de_contas_atualiza_os_saldos(app, conn
     assert contas.botao_importar.text() == "Importar extrato" and d.botao_importar.text() == "Importar 4"
     d.confirmar()
     assert len(avisos) == 1 and contas._saldos[id_conta(conn, "Inter")].text() == "1.000,00"
+
+
+def test_linha_antes_do_inicio_vem_desmarcada_e_marcar_importa(app, conn, tmp_path):
+    _manual(conn, date(2026, 10, 2), 100)  # início do uso: o Pix de 01/10 é anterior
+    d = _dialogo(conn)
+    d.carregar(falso.inter(tmp_path / "i.ofx"))
+    assert len(d.linhas_antes) == 1 and not d.linhas_antes[0].marcador.isChecked()
+    sem = d.previa.a_gravar
+    d.linhas_antes[0].marcador.setChecked(True)
+    assert d.previa.a_gravar == sem + 1

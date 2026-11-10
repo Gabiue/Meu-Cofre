@@ -181,11 +181,13 @@ _CONTAS_DO_DIA_A_DIA = ("corrente", "dinheiro")
 
 
 def _saldo_das_contas(
-    conn: sqlite3.Connection, tipos: tuple[str, ...], ate: date | None, so_ativas: bool = True
+    conn: sqlite3.Connection, tipos: tuple[str, ...], ate: date | None, so_ativas: bool = True, sem_previstos: bool = False
 ) -> int:
     """Saldo inicial + lançamentos (até `ate`, ou de todas as datas) das contas dos `tipos`."""
     marcas = ", ".join("?" * len(tipos))
     filtro, params = ("AND l.data <= ?", [ate.isoformat()]) if ate else ("", [])
+    if sem_previstos:
+        filtro += " AND l.status = 'realizado'"
     ativa = "ativa = 1 AND " if so_ativas else ""
     ativa_ct = "ct.ativa = 1 AND " if so_ativas else ""
     return conn.execute(
@@ -203,17 +205,20 @@ def em_conta(conn: sqlite3.Connection, hoje: date) -> int:
     return _saldo_das_contas(conn, _CONTAS_DO_DIA_A_DIA, hoje)
 
 
-def _divida_do_cartao(conn: sqlite3.Connection, ate: date | None) -> int:
+def _divida_do_cartao(conn: sqlite3.Connection, ate: date | None, sem_previstos: bool = False) -> int:
     """Quanto está nos cartões (positivo). `ate=None` conta todas as datas, inclusive parcelas futuras.
 
     Cartão desativado (cancelado) com fatura em aberto continua sendo dívida, então entra na conta.
     """
-    return max(0, -_saldo_das_contas(conn, ("cartao",), ate, so_ativas=False))
+    return max(0, -_saldo_das_contas(conn, ("cartao",), ate, so_ativas=False, sem_previstos=sem_previstos))
 
 
 def devo(conn: sqlite3.Connection) -> int:
-    """Tudo que está no cartão e ainda não foi pago, parcelas futuras incluídas (centavos, positivo)."""
-    return _divida_do_cartao(conn, None)
+    """O limite usado do cartão: tudo que ainda não foi pago, parcelas futuras incluídas (centavos, positivo).
+
+    Cobrança prevista de recorrente (ex.: anuidade lançada no fechamento) só entra quando vira realizada: o banco
+    ainda não a tirou do limite. As parcelas futuras entram, porque o banco já reservou o limite delas."""
+    return _divida_do_cartao(conn, None, sem_previstos=True)
 
 
 def devo_ate(conn: sqlite3.Connection, dia: date) -> int:

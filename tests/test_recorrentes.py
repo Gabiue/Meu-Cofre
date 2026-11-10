@@ -383,7 +383,7 @@ def test_livre_desconta_previstos_de_saida_e_ignora_entrada_futura(conn):
            cat="Salário")  # entrada futura: não conta
     rec.gerar_pendentes(conn, HOJE)
     assert rel.livre_ate_fim_do_mes(conn, HOJE) == antes - 3990 - 150000
-    assert rel.devo(conn) == 3990  # a assinatura prevista já está na dívida do cartão
+    assert rel.devo(conn) == 0  # prevista ainda não usa o limite do cartão (o Livre já a desconta, acima)
     assert rel.em_conta(conn, HOJE) == 1000000  # nada saiu ainda
 
 

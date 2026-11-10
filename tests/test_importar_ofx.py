@@ -11,6 +11,8 @@ sys.path.insert(0, str(Path(__file__).parent / "fixtures"))
 import extrato_ofx_falso as falso  # noqa: E402
 
 from meu_cofre import cadastros  # noqa: E402
+from meu_cofre import investimentos as inv  # noqa: E402
+from meu_cofre import renda_variavel as rv  # noqa: E402
 from meu_cofre import importar_ofx as ofx  # noqa: E402
 from meu_cofre import lancamentos as lanc  # noqa: E402
 
@@ -35,6 +37,12 @@ def _prever(conn, caminho, conta="Inter"):
 def _manual(conn, conta, dia, valor, descricao="Lançado à mão"):
     return lanc.registrar(conn, entrada=valor > 0, valor_centavos=abs(valor), descricao=descricao, categoria_id=None,
                           metodo="pix", conta_id=id_conta(conn, conta), data=dia)[0]
+
+
+def _inicio(conn, conta="Inter"):
+    """Marca o início do uso da conta antes do extrato (lançamento de valor zero, não mexe em saldo nem concilia)."""
+    conn.execute("INSERT INTO lancamentos (conta_id, data, valor_centavos, descricao, origem) VALUES (?, '2026-09-01', 0, 'Início', 'manual')",
+                 (id_conta(conn, conta),))
 
 
 def _situacoes(previa):
@@ -142,6 +150,7 @@ def test_importar_na_outra_conta_nao_conta_como_ja_importada(conn, caixa):
 
 
 def test_concilia_com_lancamento_manual_proximo(conn, inter):
+    _inicio(conn)
     manual = _manual(conn, "Inter", date(2026, 10, 5), -4590, "Mercado")  # 2 dias depois do extrato
     p = _prever(conn, inter)
     assert _situacoes(p) == ["nova", "conciliada", "nova", "nova"] and p.itens[1].lancamento_id == manual
@@ -149,11 +158,12 @@ def test_concilia_com_lancamento_manual_proximo(conn, inter):
     assert (r["novas"], r["conciliadas"]) == (3, 1)
     linha = conn.execute("SELECT * FROM lancamentos WHERE id = ?", (manual,)).fetchone()
     assert (linha["conferido"], linha["fitid"], linha["origem"], linha["descricao"]) == (1, "480000000022", "manual", "Mercado")
-    assert conn.execute("SELECT COUNT(*) FROM lancamentos").fetchone()[0] == 4
+    assert conn.execute("SELECT COUNT(*) FROM lancamentos").fetchone()[0] == 5
     assert _situacoes(_prever(conn, inter)) == ["ja"] * 4
 
 
 def test_fora_da_janela_de_3_dias_valor_ou_conta_diferente_nao_concilia(conn, inter):
+    _inicio(conn)
     _manual(conn, "Inter", date(2026, 10, 7), -4590)  # 4 dias
     _manual(conn, "Inter", date(2026, 10, 3), -4591)  # valor
     _manual(conn, "Caixa", date(2026, 10, 3), -4590)  # conta
@@ -169,6 +179,7 @@ def test_manual_ja_conferido_ou_importado_nao_concilia(conn, inter):
 
 
 def test_um_manual_so_concilia_uma_vez(conn, caixa):
+    _inicio(conn, "Caixa")
     manual = _manual(conn, "Caixa", date(2026, 10, 2), -1000)
     p = _prever(conn, caixa, "Caixa")
     assert _situacoes(p) == ["nova", "conciliada", "nova", "nova"] and p.itens[1].lancamento_id == manual
@@ -182,6 +193,7 @@ def test_o_mais_proximo_ganha_quando_nao_ha_empate(conn, inter):
 
 
 def test_duvida_quando_ha_empate_e_o_usuario_escolhe(conn, inter):
+    _inicio(conn)
     a = _manual(conn, "Inter", date(2026, 10, 8), -3000, "A")
     b = _manual(conn, "Inter", date(2026, 10, 10), -3000, "B")
     p = _prever(conn, inter)
@@ -195,6 +207,7 @@ def test_duvida_quando_ha_empate_e_o_usuario_escolhe(conn, inter):
 
 
 def test_duvida_importada_como_nova(conn, inter):
+    _inicio(conn)
     _manual(conn, "Inter", date(2026, 10, 8), -3000)
     _manual(conn, "Inter", date(2026, 10, 10), -3000)
     p = _prever(conn, inter)
@@ -203,6 +216,7 @@ def test_duvida_importada_como_nova(conn, inter):
 
 
 def test_escolha_invalida_e_repetida(conn, inter):
+    _inicio(conn)
     _manual(conn, "Inter", date(2026, 10, 8), -3000)
     _manual(conn, "Inter", date(2026, 10, 10), -3000)
     with pytest.raises(ofx.ImportacaoErro):
@@ -252,6 +266,7 @@ def test_saldo_bate_importando_periodo_passado_com_lancamentos_posteriores(conn,
 
 
 def test_saldo_com_conciliada_sem_ajuste_e_depois_com_ajuste(conn, inter):
+    _inicio(conn)
     conta = id_conta(conn, "Inter")
     _manual(conn, "Inter", date(2026, 10, 3), -4590)
     r = ofx.confirmar(conn, _prever(conn, inter), ajustar_saldo=False)
@@ -265,3 +280,105 @@ def test_descricao_sem_aspas_do_pix():
     from meu_cofre.importar_ofx import _descricao
 
     assert _descricao("Pix enviado", 'Pix enviado: "Fulano de Tal"') == "Pix enviado: Fulano de Tal"
+
+
+# --- Investimento com centavos de diferença (#53) -----------------------------------------------------------
+
+
+def _ofx(tmp_path, linhas, saldo=None):
+    """Extrato mínimo: linhas = [(AAAAMMDD, valor, descrição)]; saldo = (valor, AAAAMMDD)."""
+    trn = "".join(f"<STMTTRN><TRNTYPE>OTHER<DTPOSTED>{d}<TRNAMT>{v / 100:.2f}<FITID>F{i}<MEMO>{m}</STMTTRN>"
+                  for i, (d, v, m) in enumerate(linhas))
+    bal = f"<LEDGERBAL><BALAMT>{saldo[0] / 100:.2f}<DTASOF>{saldo[1]}</LEDGERBAL>" if saldo else ""
+    f = tmp_path / "x.ofx"
+    f.write_text(f"<OFX><FID>077<BANKTRANLIST>{trn}</BANKTRANLIST>{bal}</OFX>", encoding="utf-8")
+    return f
+
+
+def _aporte(conn, valor, dia):
+    ativo = inv.criar(conn, HOJE, nome="Tesouro", tipo="renda_fixa", indexador="cdi", taxa=100.0)
+    inv.aportar(conn, ativo, valor, id_conta(conn, "Inter"), dia)
+    return conn.execute("SELECT id FROM lancamentos WHERE conta_id = ? AND valor_centavos < 0", (id_conta(conn, "Inter"),)).fetchone()[0]
+
+
+def _compra(conn, dia, quantidade=2, preco=11_313):
+    ativo = inv.criar(conn, HOJE, nome="HGRU", tipo="fii", ticker="HGRU11")
+    op = rv.comprar(conn, ativo, dia, quantidade, preco, 0, id_conta(conn, "Inter"))
+    return op, conn.execute("SELECT id FROM lancamentos WHERE conta_id = ? AND valor_centavos < 0", (id_conta(conn, "Inter"),)).fetchone()[0]
+
+
+def test_aporte_do_tesouro_com_centavos_de_diferenca_vira_duvida_e_confirmar_acerta_o_valor(conn, tmp_path):
+    lid = _aporte(conn, 24_728, date(2026, 11, 4))
+    p = ofx.prever(conn, ofx.ler(_ofx(tmp_path, [("20261104", -24_636, "Debito Tesouro Direto")])), id_conta(conn, "Inter"), HOJE)
+    item = p.itens[0]
+    assert item.situacao == "duvida" and item.lancamento_id == lid and [c["id"] for c in item.candidatos] == [lid]
+    r = ofx.confirmar(conn, p, ajustar_saldo=False)
+    assert (r["novas"], r["conciliadas"]) == (0, 1)
+    assert conn.execute("SELECT valor_centavos FROM movimentacoes_ativos").fetchone()[0] == 24_636
+    assert sorted(x[0] for x in conn.execute("SELECT valor_centavos FROM lancamentos")) == [-24_636, 24_636]
+    assert conn.execute("SELECT conferido FROM lancamentos WHERE id = ?", (lid,)).fetchone()[0] == 1
+
+
+def test_compra_da_b3_quatro_dias_depois_vira_duvida_e_a_diferenca_vai_pras_taxas(conn, tmp_path):
+    op, lid = _compra(conn, date(2026, 11, 5))  # 2 x 113,13 = 226,26
+    p = ofx.prever(conn, ofx.ler(_ofx(tmp_path, [("20261109", -22_632, "Debito B3: NOTA BOV")])), id_conta(conn, "Inter"), HOJE)
+    assert p.itens[0].situacao == "duvida" and p.itens[0].lancamento_id == lid
+    ofx.confirmar(conn, p, ajustar_saldo=False)
+    o = conn.execute("SELECT * FROM operacoes_rv WHERE id = ?", (op,)).fetchone()
+    assert (o["quantidade"], o["preco_centavos"], o["valor_centavos"], o["taxas_centavos"]) == (2, 11_313, 22_626, 6)
+    assert conn.execute("SELECT valor_centavos FROM lancamentos WHERE id = ?", (lid,)).fetchone()[0] == -22_632
+
+
+def test_compra_debitada_a_menos_ajusta_o_preco_e_nao_deixa_taxa_negativa(conn, tmp_path):
+    op, _ = _compra(conn, date(2026, 11, 5))
+    p = ofx.prever(conn, ofx.ler(_ofx(tmp_path, [("20261106", -22_600, "Debito B3")])), id_conta(conn, "Inter"), HOJE)
+    ofx.confirmar(conn, p, ajustar_saldo=False)
+    o = conn.execute("SELECT * FROM operacoes_rv WHERE id = ?", (op,)).fetchone()
+    assert (o["preco_centavos"], o["taxas_centavos"], o["valor_centavos"]) == (11_300, 0, 22_600)
+
+
+def test_diferenca_acima_do_limite_data_fora_da_janela_ou_nao_investimento_continua_nova(conn, tmp_path):
+    _aporte(conn, 24_728, date(2026, 11, 4))
+    _manual(conn, "Inter", date(2026, 11, 4), -10_000, "Mercado")
+    _inicio(conn)
+    conta = id_conta(conn, "Inter")
+
+    def previa(*linhas):
+        return ofx.prever(conn, ofx.ler(_ofx(tmp_path, list(linhas))), conta, HOJE)
+
+    assert _situacoes(previa(("20261104", -24_000, "Tesouro"))) == ["nova"]  # 7,28 de diferença
+    assert _situacoes(previa(("20261112", -24_636, "Tesouro"))) == ["nova"]  # 8 dias depois
+    assert _situacoes(previa(("20261103", -24_636, "Tesouro"))) == ["nova"]  # antes do lançamento
+    assert _situacoes(previa(("20261104", -10_050, "Mercado"))) == ["nova"]  # manual comum não tem tolerância
+    assert _situacoes(previa(("20261104", -24_728, "Tesouro"))) == ["conciliada"]  # valor exato segue igual
+
+
+# --- Linhas antes do início do uso (#53) --------------------------------------------------------------------
+
+
+def test_linha_anterior_ao_primeiro_lancamento_vem_desmarcada_e_nao_mexe_no_saldo_inicial(conn, tmp_path):
+    conta = id_conta(conn, "Inter")
+    cadastros.definir_saldo_inicial(conn, conta, 10_000)  # já inclui o que veio antes do início do uso
+    _manual(conn, "Inter", date(2026, 10, 5), -500, "Café")
+    f = _ofx(tmp_path, [("20261001", -3000, "Antiga"), ("20261008", -1000, "Nova")], saldo=(5500, "20261008"))
+    p = ofx.prever(conn, ofx.ler(f), conta, HOJE)
+    assert _situacoes(p) == ["antes", "nova"] and p.itens[0].destino == "ja" and p.a_gravar == 1
+    assert ofx.diferenca_saldo(conn, p) == 5500 - (10_000 - 500) + 1000
+    r = ofx.confirmar(conn, p)
+    assert r["novas"] == 1 and r["ja_importadas"] == 1
+    assert conn.execute("SELECT COUNT(*) FROM lancamentos WHERE descricao = 'Antiga'").fetchone()[0] == 0
+    assert conn.execute("SELECT saldo_inicial_centavos FROM contas WHERE id = ?", (conta,)).fetchone()[0] == 10_000 + 5500 - 8500
+
+
+def test_linha_anterior_marcada_e_importada(conn, tmp_path):
+    conta = id_conta(conn, "Inter")
+    _manual(conn, "Inter", date(2026, 10, 5), -500)
+    p = ofx.prever(conn, ofx.ler(_ofx(tmp_path, [("20261001", -3000, "Antiga")])), conta, HOJE)
+    assert p.itens[0].situacao == "antes" and p.a_gravar == 0
+    ofx.confirmar(conn, p, escolhas={0: True}, ajustar_saldo=False)
+    assert conn.execute("SELECT COUNT(*) FROM lancamentos WHERE descricao = 'Antiga'").fetchone()[0] == 1
+
+
+def test_conta_sem_lancamentos_nao_tem_inicio_do_uso(conn, tmp_path):
+    p = ofx.prever(conn, ofx.ler(_ofx(tmp_path, [("20260101", -3000, "Antiga")])), id_conta(conn, "Inter"), HOJE)
+    assert _situacoes(p) == ["nova"]

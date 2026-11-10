@@ -3,7 +3,9 @@
 1. `ler(caminho)` lê o OFX (SGML 1.x, com ou sem tags de fechamento) e devolve o `Extrato`.
 2. `prever(conn, extrato, conta_id, hoje)` classifica cada transação sem gravar nada: **nova**, **já importada**,
    **conciliada** (casa com um lançamento manual ainda não conferido: mesma conta, mesmo valor, data a até 3 dias) ou
-   **dúvida** (mais de um lançamento manual casa; o usuário escolhe).
+   **dúvida** (mais de um lançamento manual casa; o usuário escolhe; ou um aporte/compra de investimento com valor
+   quase igual e data até 7 dias antes) ou **antes** (data anterior ao primeiro lançamento da conta: já está no saldo
+   inicial, só entra se o usuário marcar).
 3. `confirmar(conn, previa)` grava tudo numa transação e, se pedido, acerta o saldo inicial da conta pra que o saldo na
    data do `LEDGERBAL` (saldo final do extrato) seja o do banco.
 
@@ -24,9 +26,11 @@ from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
-from meu_cofre import cadastros, lancamentos
+from meu_cofre import cadastros, investimentos, lancamentos, renda_variavel
 
 JANELA_DIAS = 3  # tolerância entre a data do lançamento manual e a do extrato
+# Tesouro e nota da B3 debitam valor um pouco diferente do lançado à mão, e na liquidação (dias depois)
+DIAS_INVESTIMENTO = 7
 BANCOS = {"077": "inter", "104": "caixa"}  # FID do OFX -> `contas.banco` (sem acento, minúsculo)
 SAIDAS = {"DEBIT", "PAYMENT", "FEE", "SRVCHG", "ATM", "CHECK", "DIRECTDEBIT"}  # valor positivo nesses tipos é saída
 # Pix, TED e DOC podem ser entre contas próprias: o histórico não adivinha: só uma regra do usuário categoriza (senão, "A categorizar")
@@ -65,17 +69,20 @@ class Extrato:
 @dataclass
 class Item:
     transacao: Transacao
-    situacao: str  # nova | ja | conciliada | duvida
+    situacao: str  # nova | ja | conciliada | duvida | antes
     chave: str
     categoria_id: int | None = None  # só pras novas (None = "A categorizar")
     lancamento_id: int | None = None  # conciliada: o manual; dúvida: o escolhido (None = importar como nova)
     candidatos: list[dict] = field(default_factory=list)  # dúvida: manuais que casam (id, data, descricao, valor_centavos)
+    importar: bool = False  # antes: o usuário quis importar mesmo assim
 
     @property
     def destino(self) -> str:
         """O que vai acontecer: ja | conciliada | nova (dúvida vira uma das duas, conforme a escolha)."""
         if self.situacao == "duvida":
             return "conciliada" if self.lancamento_id else "nova"
+        if self.situacao == "antes":
+            return "nova" if self.importar else "ja"
         return self.situacao
 
 
@@ -102,6 +109,10 @@ class Previa:
     @property
     def ja_importadas(self) -> list[Item]:
         return self._com("ja")
+
+    @property
+    def antes(self) -> list[Item]:
+        return self._com("antes")
 
     @property
     def duvidas(self) -> list[Item]:
@@ -280,7 +291,12 @@ def prever(conn: sqlite3.Connection, extrato: Extrato, conta_id: int, hoje: date
         )
         item.lancamento_id = next((m["id"] for m in item.candidatos if m["id"] not in usados), None)
         usados.add(item.lancamento_id)
-    for item in previa.novas:
+    _duvidas_de_investimento(conn, previa, conta_id, usados)
+    inicio = conn.execute("SELECT MIN(data) FROM lancamentos WHERE conta_id = ?", (conta_id,)).fetchone()[0]
+    for item in previa.novas:  # sem lançamentos na conta não há "início do uso"
+        if inicio and item.transacao.data < date.fromisoformat(inicio):
+            item.situacao = "antes"
+    for item in previa.novas + previa.antes:
         t = item.transacao
         tipo = "receita" if t.valor_centavos > 0 else "despesa"
         if PADRAO_TRANSFERENCIA.search(t.descricao):  # pode ser entre contas próprias: só uma regra explícita decide
@@ -288,6 +304,53 @@ def prever(conn: sqlite3.Connection, extrato: Extrato, conta_id: int, hoje: date
         else:
             item.categoria_id = lancamentos.sugerir_categoria(conn, t.descricao, tipo)
     return previa
+
+
+def _duvidas_de_investimento(conn: sqlite3.Connection, previa: Previa, conta_id: int, usados: set) -> None:
+    """Saída "nova" que casa quase (centavos, até 7 dias depois) com um aporte ou compra de ação lançado à mão vira dúvida."""
+    manuais = [
+        {"id": r["id"], "data": date.fromisoformat(r["data"]), "descricao": r["descricao"], "valor_centavos": r["valor_centavos"]}
+        for r in conn.execute(
+            """
+            SELECT l.id, l.data, l.descricao, l.valor_centavos FROM lancamentos l
+            JOIN lancamentos o ON o.transferencia_id = l.transferencia_id AND o.id <> l.id
+            JOIN contas c ON c.id = o.conta_id AND c.tipo = 'investimento'
+            WHERE l.conta_id = ? AND l.valor_centavos < 0 AND l.conferido = 0 AND l.fitid IS NULL AND l.chave_dedup IS NULL
+              AND (EXISTS (SELECT 1 FROM movimentacoes_ativos m WHERE m.transferencia_id = l.transferencia_id AND m.tipo = 'aporte')
+                   OR EXISTS (SELECT 1 FROM operacoes_rv r WHERE r.transferencia_id = l.transferencia_id AND r.tipo = 'compra'))
+            ORDER BY l.data, l.id
+            """,
+            (conta_id,),
+        )
+    ]
+    for item in previa.novas:
+        t = item.transacao
+        if t.valor_centavos >= 0:
+            continue
+        limite = max(100, round(abs(t.valor_centavos) * 0.01))
+        item.candidatos = sorted(
+            (m for m in manuais if m["id"] not in usados and 0 <= (t.data - m["data"]).days <= DIAS_INVESTIMENTO
+             and abs(m["valor_centavos"] - t.valor_centavos) <= limite),
+            key=lambda m: (abs(m["valor_centavos"] - t.valor_centavos), (t.data - m["data"]).days),
+        )
+        if item.candidatos:
+            item.situacao, item.lancamento_id = "duvida", item.candidatos[0]["id"]
+            usados.add(item.lancamento_id)
+
+
+def _acertar_valor(conn: sqlite3.Connection, lancamento_id: int, real: int) -> None:
+    """O extrato manda: leva o aporte ou a compra de ação lançados à mão pro valor debitado de verdade."""
+    l = conn.execute("SELECT transferencia_id FROM lancamentos WHERE id = ?", (lancamento_id,)).fetchone()
+    mov = conn.execute("SELECT id, data FROM movimentacoes_ativos WHERE transferencia_id = ?", (l["transferencia_id"],)).fetchone()
+    if mov:
+        investimentos.editar_movimentacao(conn, mov["id"], valor=real, data=date.fromisoformat(mov["data"]))
+        return
+    op = conn.execute("SELECT * FROM operacoes_rv WHERE transferencia_id = ?", (l["transferencia_id"],)).fetchone()
+    preco, taxas = op["preco_centavos"], real - op["valor_centavos"]  # a diferença vai pras taxas (corretagem, emolumentos)...
+    if taxas < 0:  # ...e se o extrato debitou menos que a operação, é o preço que cede
+        preco = int(real / op["quantidade"])
+        taxas = max(0, real - round(op["quantidade"] * preco))
+    renda_variavel.editar_operacao(conn, op["id"], data=date.fromisoformat(op["data"]), quantidade=op["quantidade"], preco=preco, taxas=taxas)
 
 
 def diferenca_saldo(conn: sqlite3.Connection, previa: Previa) -> int | None:
@@ -306,10 +369,14 @@ def confirmar(conn: sqlite3.Connection, previa: Previa, escolhas: dict[int, int 
               ajustar_saldo: bool = True) -> dict:
     """Grava as novas, concilia as casadas e registra a importação, tudo ou nada.
 
-    `escolhas`: {posição do item em `previa.itens`: id do lançamento manual (ou None = importar como nova)}, pras dúvidas.
+    `escolhas`: {posição do item em `previa.itens`: id do lançamento manual (ou None = importar como nova)}, pras dúvidas;
+    pras linhas "antes" do início do uso, True = importar. Conciliar com valor diferente acerta o manual pro do extrato.
     Devolve `{"novas", "conciliadas", "ja_importadas", "diferenca_saldo"}` (a diferença é 0 se não acertou o saldo)."""
     for pos, escolha in (escolhas or {}).items():
         item = previa.itens[pos]
+        if item.situacao == "antes":  # a escolha é importar (truthy) ou não
+            item.importar = bool(escolha)
+            continue
         if item.situacao != "duvida" or (escolha is not None and escolha not in {m["id"] for m in item.candidatos}):
             raise ImportacaoErro("Escolha inválida para uma transação em dúvida.")
         item.lancamento_id = escolha
@@ -320,6 +387,16 @@ def confirmar(conn: sqlite3.Connection, previa: Previa, escolhas: dict[int, int 
         if conn.execute("SELECT tipo FROM contas WHERE id = ?", (previa.conta_id,)).fetchone()["tipo"] not in ("corrente", "dinheiro"):
             raise ImportacaoErro("Só conta corrente tem saldo inicial pra acertar.")
 
+    # Antes da importação de propósito: o ajuste de saldo abaixo precisa dos valores reais. As funções do domínio
+    # gravam sozinhas; se a importação falhar depois, o manual fica com o valor do banco, só sem a marca de conferido.
+    for item in previa.itens:
+        if item.destino == "conciliada":
+            atual = conn.execute("SELECT valor_centavos FROM lancamentos WHERE id = ?", (item.lancamento_id,)).fetchone()[0]
+            if atual != item.transacao.valor_centavos:
+                try:
+                    _acertar_valor(conn, item.lancamento_id, abs(item.transacao.valor_centavos))
+                except ValueError as erro:
+                    raise ImportacaoErro(str(erro)) from erro
     novas = conciliadas = 0
     with conn:
         importacao_id = conn.execute(

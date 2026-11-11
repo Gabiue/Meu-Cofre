@@ -9,7 +9,7 @@ from PySide6.QtWidgets import QApplication, QMessageBox
 from meu_cofre import lancamentos as lanc
 from meu_cofre import metas, relatorios
 from meu_cofre.ui import tema
-from meu_cofre.ui.aba_metas import AbaMetas, texto_do_plano
+from meu_cofre.ui.aba_metas import AbaMetas, texto_do_plano, texto_do_prazo
 from meu_cofre.ui.componentes import BarraProgresso, ItemLancamento
 from meu_cofre.ui.dialogo_meta import DialogoMeta, mes_ano, reais, texto_atrasos
 from meu_cofre.ui.janela import JanelaPrincipal
@@ -68,7 +68,7 @@ def _janela(conn, tamanho=(1400, 900)):
 
 
 def _nomes(aba):
-    return [c.nome.texto() for c in aba.cartoes()]
+    return [i.nome.texto() for i in aba.itens()]
 
 
 # --- Componentes -----------------------------------------------------------------------------------
@@ -101,7 +101,7 @@ def test_item_de_meta_tem_marcador_neutro_e_valor_sem_sinal(app):
 def test_aba_vazia_mostra_estado_vazio_e_zeros(app, conn):
     aba = _aba(conn)
     assert not aba._vazio.isHidden()
-    assert aba.cartoes() == []
+    assert aba.itens() == [] and aba._detalhe is None
     assert aba._guardado.valor.text() == "R$ 0,00"
     assert aba._sobra_media.apoio.text() == "aparece depois do primeiro mês completo"
     assert aba._cartao_reserva.isHidden()  # sem gastos essenciais, não há o que sugerir
@@ -141,7 +141,9 @@ def test_lista_em_ordem_de_prioridade_com_barra_percentual_e_plano(app, conn):
     assert c.plano.texto() == "R$ 150/mês até mar/2027"  # (1500 - 600) / 6 meses
     assert c.pilula.text().endswith("cabe na sobra") and c.pilula.property("variante") == "bom"
     assert not c.botao_sobe.isEnabled() and c.botao_desce.isEnabled()
-    assert aba.cartoes()[1].botao_sobe.isEnabled() and not aba.cartoes()[1].botao_desce.isEnabled()
+    assert not c.botao_concluir.isVisibleTo(aba) and c.botao_menu.isVisibleTo(aba)  # não cumprida: concluir só no menu
+    viagem = aba.cartao_da_meta(aba.itens()[1].id_meta)
+    assert viagem.botao_sobe.isEnabled() and not viagem.botao_desce.isEnabled()
     assert c.pilula_reserva.isHidden()
 
 
@@ -151,12 +153,14 @@ def test_pilulas_de_viabilidade_parcial_e_nao_cabe(app, conn):
     _meta(conn, "Viagem", valor=600_000, modo="mensal", mensal=150_000)
     _meta(conn, "Cadeira", valor=100_000, modo="mensal", mensal=10_000)
     aba = _aba(conn)
-    reserva, viagem, cadeira = aba.cartoes()
-    assert not reserva.pilula_reserva.isHidden()
+    ids = [i.id_meta for i in aba.itens()]
+    reserva = aba.cartao_da_meta(ids[0])
+    assert not reserva.pilula_reserva.isHidden() and reserva.detalhe.isHidden()
+    viagem = aba.cartao_da_meta(ids[1])
     assert viagem.pilula.text() == "! atrasa até mai/2027" and viagem.pilula.property("variante") == "atencao"
     assert "Só sobram R$ 800" in viagem.detalhe.text() and not viagem.detalhe.isHidden()
+    cadeira = aba.cartao_da_meta(ids[2])
     assert cadeira.pilula.text().endswith("não cabe agora") and cadeira.pilula.property("variante") == "ruim"
-    assert reserva.detalhe.isHidden()
 
 
 def test_meta_cumprida_destaca_concluir(app, conn):
@@ -166,6 +170,7 @@ def test_meta_cumprida_destaca_concluir(app, conn):
     c = aba.cartao_da_meta(m)
     assert c.pilula.text().endswith("meta cumprida") and c.percentual.text() == "100%"
     assert c.botao_concluir.objectName() == "BotaoPrimario" and c.botao_guardar.objectName() == "BotaoSecundario"
+    assert c.botao_concluir.isVisibleTo(aba)  # cumprida: concluir sai do menu e fica à vista
     assert "já dá pra concluir" in c.plano.texto()
 
 
@@ -239,21 +244,24 @@ def test_retirar_nao_passa_do_guardado_e_o_erro_fica_no_formulario(app, conn):
     assert relatorios.em_conta(conn, HOJE) == 100_000 - 15_000
 
 
-def test_so_um_formulario_aberto_por_vez(app, conn):
+def test_escolher_outra_meta_troca_o_detalhe_e_fecha_o_formulario(app, conn):
     a, b = _meta(conn, "A"), _meta(conn, "B")
     aba = _aba(conn)
+    assert aba._detalhe.id_meta == a and aba.itens()[0].property("selecionada")  # a primeira já vem escolhida
     aba.abrir_form(a, "guardar")
-    aba.abrir_form(b, "guardar")
-    assert aba.cartao_da_meta(a).form.isHidden() and not aba.cartao_da_meta(b).form.isHidden()
+    assert not aba._detalhe.form.isHidden()
+    aba.itens()[1].clicado.emit(b)  # clicar na outra meta da lista
+    assert aba._detalhe.id_meta == b and aba._detalhe.form.isHidden()
+    assert aba.itens()[1].property("selecionada") and not aba.itens()[0].property("selecionada")
 
 
 def test_subir_e_descer_prioridade(app, conn):
     _meta(conn, "A")
     b = _meta(conn, "B")
     aba = _aba(conn)
-    aba.cartao_da_meta(b).botao_sobe.click()
+    aba.cartao_da_meta(b).botao_sobe.trigger()
     assert _nomes(aba) == ["B", "A"]
-    aba.cartoes()[0].botao_desce.click()
+    aba.cartao_da_meta(aba.itens()[0].id_meta).botao_desce.trigger()
     assert _nomes(aba) == ["A", "B"]
 
 
@@ -263,9 +271,9 @@ def test_concluir_arquivar_e_reativar_com_encerradas_recolhidas(app, conn):
     aba = _aba(conn)
     avisos = []
     aba.alterado.connect(avisos.append)
-    aba.cartao_da_meta(a).botao_concluir.click()
+    aba.cartao_da_meta(a).acao_concluir.trigger()  # meta não cumprida: pelo menu "⋯"
     assert "Ainda há R$ 100,00 guardados" in avisos[-1]
-    aba.cartao_da_meta(b).botao_arquivar.click()
+    aba.cartao_da_meta(b).botao_arquivar.trigger()
     assert _nomes(aba) == ["C"]  # recolhidas
     assert aba.botao_encerradas.text() == "Mostrar concluídas e arquivadas (2)"
     aba.botao_encerradas.click()
@@ -417,12 +425,12 @@ def test_aba_abre_dialogos_e_recarrega_ao_salvar(app, conn):
     assert aba.dialogo.salvar()
     QApplication.processEvents()
     assert avisos == ["Meta criada: Cadeira"] and _nomes(aba) == ["Cadeira"] and aba._vazio.isHidden()
-    meta_id = aba.cartoes()[0].id_meta
-    aba.cartoes()[0].botao_editar.click()
+    meta_id = aba.itens()[0].id_meta
+    aba.cartao_da_meta(meta_id).botao_editar.trigger()
     assert aba.dialogo.meta_id == meta_id and aba.dialogo.nome.text() == "Cadeira"
     aba.dialogo.valor.setText("2000")
     assert aba.dialogo.salvar()
-    assert aba.cartoes()[0].guardado.text() == "R$ 0,00 de R$ 2.000,00"
+    assert aba.cartao_da_meta(meta_id).guardado.text() == "R$ 0,00 de R$ 2.000,00"
 
 
 # --- Simulador --------------------------------------------------------------------------------------------
@@ -551,5 +559,44 @@ def test_aba_cabe_em_940_sem_corte_horizontal(app, conn):
     _meta(conn, "Viagem", valor=600_000, modo="mensal", mensal=150_000)
     aba = _aba(conn, (940, 1000))
     assert not aba.horizontalScrollBar().isVisible()
-    for c in aba.cartoes():
+    for c in [*aba.itens(), aba._detalhe]:
         assert c.width() <= aba.viewport().width()
+
+
+# --- Detalhe: prazo, ritmo e evolução ----------------------------------------------------------------------
+
+
+def test_linha_ideal_do_prazo_vai_de_zero_ao_alvo(app):
+    from meu_cofre.ui.aba_metas import GraficoEvolucao
+    g = GraficoEvolucao([(date(2026, 8, 1), 0)], 120_000, prazo=date(2026, 11, 1))  # 4 meses: ago a nov
+    assert [g.ideal(i) for i in range(5)] == [30_000, 60_000, 90_000, 120_000, 120_000]
+
+
+def test_texto_do_prazo_em_dias_e_meses(conn):
+    perto = metas.obter(conn, _meta(conn, "Perto", prazo=date(2026, 11, 23)), HOJE)
+    assert texto_do_prazo(perto, HOJE) == "faltam 34 dias · meta para 23/11/2026"
+    longe = metas.obter(conn, _meta(conn, "Longe", prazo=date(2027, 3, 1)), HOJE)
+    assert texto_do_prazo(longe, HOJE) == "faltam 5 meses · meta para 01/03/2027"
+    mensal = metas.obter(conn, _meta(conn, "Mensal", valor=600_000, modo="mensal", mensal=100_000), HOJE)
+    assert texto_do_prazo(mensal, HOJE) == "pronta em mar/2027"
+
+
+def test_detalhe_mostra_ritmo_e_evolucao(app, conn):
+    _historico(conn)
+    m = metas.criar(conn, date(2026, 8, 1), nome="Cadeira", valor_alvo_centavos=150_000, modo="mensal",
+                    mensal_centavos=30_000)
+    metas.guardar(conn, m, 10_000, id_conta(conn, "Inter"), date(2026, 8, 5))
+    metas.guardar(conn, m, 10_000, id_conta(conn, "Inter"), date(2026, 9, 5))
+    aba = _aba(conn)
+    c = aba.cartao_da_meta(m)
+    assert c.pilula_ritmo.text().endswith("abaixo do plano") and c.pilula_ritmo.property("variante") == "atencao"
+    assert c.ritmo.text() == "Você guardou em média R$ 100/mês · o plano pede R$ 300"
+    assert not c.grafico.isHidden() and [c.grafico.ideal(i) for i in range(3)] == [30_000, 60_000, 90_000]  # o mensal acumulado
+    assert c.percentual.text() == "13%"  # o anel mostra o percentual
+
+
+def test_meta_nova_sem_historia_nao_mostra_ritmo_nem_grafico(app, conn):
+    m = _meta(conn, "Nova")
+    c = _aba(conn).cartao_da_meta(m)
+    assert c.pilula_ritmo.isHidden() and c.ritmo.isHidden()
+    assert c.grafico.isHidden() and c.titulo_grafico.isHidden()

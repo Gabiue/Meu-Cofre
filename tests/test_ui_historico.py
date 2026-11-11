@@ -52,7 +52,7 @@ def test_historico_de_acao_edita_e_atualiza_a_aba(app, conn):
     aba.alterado.connect(avisos.append)
     cartao = aba.cartao_da_acao(ativo)
     assert cartao.lista_historico.isHidden()
-    cartao.botao_historico.click()
+    cartao.botao_historico.trigger()
     assert not cartao.lista_historico.isHidden()
     textos = _textos(cartao.lista_historico)
     assert any(t.startswith("Dividendo") for t in textos) and any("Compra · 100" in t for t in textos)
@@ -66,7 +66,7 @@ def test_historico_de_acao_edita_e_atualiza_a_aba(app, conn):
     cartao = aba.cartao_da_acao(ativo)  # a aba recarregou e o histórico continua aberto
     assert not cartao.lista_historico.isHidden()
     assert any("Compra · 50" in t for t in _textos(cartao.lista_historico))
-    cartao.botao_historico.click()
+    cartao.botao_historico.trigger()
     assert aba.cartao_da_acao(ativo).lista_historico.isHidden()
 
 
@@ -76,7 +76,7 @@ def test_excluir_pede_confirmacao_e_apaga_os_dois_lados(app, conn):
     aba = _aba(conn)
     avisos = []
     aba.alterado.connect(avisos.append)
-    aba.cartao_do_ativo(ativo).botao_historico.click()
+    aba.cartao_do_ativo(ativo).botao_historico.trigger()
     hist = aba.cartao_do_ativo(ativo).lista_historico
     hist.pedir_exclusao(hist._itens[0]["id"])
     assert conn.execute("SELECT COUNT(*) FROM lancamentos WHERE transferencia_id IS NOT NULL").fetchone()[0] == 2  # ainda não apagou
@@ -94,7 +94,7 @@ def test_erro_de_regra_aparece_no_formulario(app, conn):
     compra = rv.comprar(conn, ativo, date(2026, 3, 2), 100, 3000)
     rv.vender(conn, ativo, date(2026, 5, 2), 80, 4000)
     aba = _aba(conn)
-    aba.cartao_da_acao(ativo).botao_historico.click()
+    aba.cartao_da_acao(ativo).botao_historico.trigger()
     hist = aba.cartao_da_acao(ativo).lista_historico
     hist.abrir_edicao(compra)
     hist.form.quantidade.setText("10")
@@ -114,7 +114,7 @@ def test_caixinhas_nao_tem_historico(app, conn):
     conn.commit()
     aba = _aba(conn)
     cartao = next(c for c in aba.cartoes() if c.posicao.ativo.caixinhas)
-    assert cartao.botao_historico.isHidden()
+    assert not cartao.botao_historico.isVisible()
 
 
 def test_janela_de_contas_mostra_caixinhas_e_investimentos_so_leitura(app, conn):

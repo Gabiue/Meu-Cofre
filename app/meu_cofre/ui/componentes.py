@@ -1,7 +1,7 @@
 """Componentes reutilizáveis da interface. A aparência vem do QSS global (ver `tema.py`)."""
 
 from PySide6.QtCore import QPointF, QRectF, QSize, Qt, Signal
-from PySide6.QtGui import QColor, QPainter, QPen, QTextCharFormat
+from PySide6.QtGui import QAction, QColor, QPainter, QPen, QTextCharFormat
 from PySide6.QtWidgets import (
     QButtonGroup,
     QCheckBox,
@@ -11,10 +11,12 @@ from PySide6.QtWidgets import (
     QGridLayout,
     QHBoxLayout,
     QLabel,
+    QMenu,
     QPushButton,
     QSizePolicy,
     QStyle,
     QStyleOptionButton,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
@@ -299,6 +301,31 @@ class BotaoPrimario(QPushButton):
         super().__init__(texto, parent)
         self.setObjectName("BotaoPrimario")
         self.setCursor(Qt.CursorShape.PointingHandCursor)
+
+
+class BotaoMenu(QToolButton):
+    """O "⋯" de um cartão ou linha: as ações menos usadas num menu, pra não amontoar botões à vista.
+
+    `acao(texto, ao_clicar)` acrescenta uma ação e a devolve (QAction: `trigger()`, `setVisible`, `setEnabled`).
+    """
+
+    def __init__(self, nome_acessivel: str, dica: str = "", parent: QWidget | None = None):
+        super().__init__(parent)
+        self.setObjectName("BotaoMenu")
+        self.setText("⋯")
+        self.setToolTip(dica)
+        self.setAccessibleName(nome_acessivel)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        self.setMenu(QMenu(self))
+
+    def acao(self, texto: str, ao_clicar) -> QAction:
+        a = self.menu().addAction(texto)
+        a.triggered.connect(ao_clicar)
+        return a
+
+    def separador(self) -> None:
+        self.menu().addSeparator()
 
 
 class BotaoSecundario(QPushButton):

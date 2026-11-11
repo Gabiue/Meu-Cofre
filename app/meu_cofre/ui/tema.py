@@ -248,6 +248,15 @@ QCheckBox#Marcador::indicator:checked:disabled {{ background: {BORDA}; border-co
 #GrupoSubtotal {{ font-size: {PX_RODAPE + 1}px; font-weight: 600; color: {TEXTO_SECUNDARIO}; }}
 #LinhaRecorrente {{ background: transparent; border: none; border-radius: 10px; }}
 #LinhaRecorrente:hover {{ background: {CARTAO_ELEVADO}; }}
+QToolButton#BotaoMenu {{ background: transparent; border: 1px solid transparent; border-radius: 6px;
+    min-width: 32px; min-height: 32px; font-size: 18px; font-weight: 700; color: {TEXTO_SECUNDARIO}; }}
+QToolButton#BotaoMenu:hover {{ background: {CARTAO_ELEVADO}; border-color: {BORDA}; color: {TEXTO}; }}
+QToolButton#BotaoMenu::menu-indicator {{ image: none; width: 0; }}
+QMenu {{ background: {CARTAO}; border: 1px solid {BORDA}; border-radius: 8px; padding: 4px; }}
+QMenu::item {{ padding: 6px 24px 6px 12px; border-radius: 6px; color: {TEXTO}; }}
+QMenu::item:selected {{ background: {CARTAO_ELEVADO}; }}
+QMenu::separator {{ height: 1px; background: {BORDA}; margin: 4px 6px; }}
+#ProximaCobranca {{ background: {FUNDO}; border: 1px solid {BORDA}; border-radius: 8px; }}
 QPushButton#BotaoAcao {{ background: transparent; border: 1px solid transparent; border-radius: 8px; padding: 0 12px;
     min-height: 30px; font-size: {PX_RODAPE + 1}px; font-weight: 600; color: {TEXTO_SECUNDARIO}; }}
 QPushButton#BotaoAcao:hover {{ background: {CARTAO_ELEVADO}; border-color: {BORDA}; color: {TEXTO}; }}

@@ -287,11 +287,18 @@ QPushButton#BotaoAcao[perigo="true"]:hover {{ background: {VERMELHO_SUAVE}; bord
 
 /* Aba "Metas" */
 #FormMeta {{ background: {CARTAO_ELEVADO}; border: 1px solid {BORDA}; border-radius: 10px; }}
-#MetaCard {{ background: transparent; border: 1px solid {BORDA}; border-radius: 10px; }}
+#MetaCard {{ background: {CARTAO}; border: 1px solid {BORDA}; border-radius: {RAIO_CARTAO}px; }}
+#MetaItem {{ background: transparent; border: 1px solid {BORDA}; border-radius: 8px; }}
+#MetaItem:hover {{ background: {CARTAO_ELEVADO}; }}
+#MetaItem[selecionada="true"] {{ border: 2px solid {VERDE}; background: {VERDE_SUAVE}; }}
+#MetaAnel {{ font-size: {PX_VALOR}px; font-weight: 700; color: {TEXTO}; }}
+QPushButton#NovaMeta {{ background: transparent; border: 1px dashed {TEXTO_APAGADO}; border-radius: 8px;
+    min-height: 48px; font-size: {PX_TEXTO}px; font-weight: 600; color: {TEXTO_SECUNDARIO}; }}
+QPushButton#NovaMeta:hover {{ background: {CARTAO_ELEVADO}; color: {TEXTO}; border-color: {TEXTO_SECUNDARIO}; }}
 #MetaNome {{ font-size: {PX_TEXTO + 2}px; font-weight: 700; color: {TEXTO}; }}
 #MetaNome[encerrada="true"] {{ color: {TEXTO_SECUNDARIO}; }}
 #MetaPct {{ font-size: {PX_TEXTO}px; font-weight: 700; color: {TEXTO}; min-width: 40px; }}
-#MetaGuardado {{ font-size: {PX_TEXTO}px; font-weight: 600; color: {TEXTO}; }}
+#MetaGuardado {{ font-size: {PX_VALOR}px; font-weight: 700; color: {TEXTO}; }}
 #MetaInfo {{ font-size: {PX_RODAPE + 1}px; color: {TEXTO_SECUNDARIO}; }}
 #MetaDetalhe {{ font-size: {PX_RODAPE}px; color: {TEXTO_APAGADO}; }}
 #ReservaTexto {{ font-size: {PX_TEXTO + 1}px; font-weight: 600; color: {TEXTO}; }}

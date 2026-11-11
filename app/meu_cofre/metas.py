@@ -339,6 +339,48 @@ def guardado(conn: sqlite3.Connection, meta_id: int) -> int:
     return _guardados(conn).get(meta_id, 0)
 
 
+def _movimentos(conn: sqlite3.Connection, meta_id: int) -> list[tuple[date, int]]:
+    """(data, centavos) de cada entrada (+) e saída (−) da meta na conta Caixinhas, em ordem de data."""
+    linhas = conn.execute(
+        """
+        SELECT l.data, l.valor_centavos FROM lancamentos l JOIN contas ct ON ct.id = l.conta_id
+        WHERE l.meta_id = ? AND ct.tipo = 'investimento' ORDER BY l.data, l.id
+        """,
+        (meta_id,),
+    )
+    return [(date.fromisoformat(r["data"]), r["valor_centavos"]) for r in linhas]
+
+
+def evolucao(conn: sqlite3.Connection, meta_id: int, hoje: date) -> list[tuple[date, int]]:
+    """Quanto a meta tinha guardado no fim de cada mês, do mês em que foi criada (ou do 1º movimento, se antes)
+    até o mês de hoje: [(1º dia do mês, centavos)]. O mês de hoje vale o saldo de agora."""
+    movimentos = _movimentos(conn, meta_id)
+    criada = obter(conn, meta_id).criada_em
+    inicio = min([criada] + [d for d, _v in movimentos])
+    pontos, saldo, i = [], 0, 0
+    for indice in range(_indice(inicio), _indice(hoje) + 1):
+        mes = _mes(indice)
+        while i < len(movimentos) and _indice(movimentos[i][0]) <= indice:
+            saldo += movimentos[i][1]
+            i += 1
+        pontos.append((mes, saldo))
+    return pontos
+
+
+def ritmo_medio(conn: sqlite3.Connection, meta_id: int, hoje: date) -> int | None:
+    """Quanto entrou de fato na meta por mês (guardado − retirado), em média, nos últimos MESES_DA_SOBRA meses
+    completos desde que ela existe. None se ainda não houve mês completo (a meta é deste mês)."""
+    criada = obter(conn, meta_id).criada_em
+    meses = [m for m in _meses_anteriores(hoje, MESES_DA_SOBRA) if m >= (criada.year, criada.month)]
+    if not meses:
+        return None
+    por_mes = dict.fromkeys(meses, 0)
+    for d, v in _movimentos(conn, meta_id):
+        if (d.year, d.month) in por_mes:
+            por_mes[(d.year, d.month)] += v
+    return _media(list(por_mes.values()))
+
+
 def guardado_total(conn: sqlite3.Connection) -> int:
     """Tudo que está guardado em metas."""
     return sum(_guardados(conn).values())

@@ -647,3 +647,27 @@ def test_mes_em_que_o_uso_comecou_cedo_entra_na_media(conn):
     _lancar(conn, False, 100_000, date(2026, 10, 20), "Mercado")
     valor, meses, _ = metas.sobra_media(conn, date(2026, 11, 10))
     assert (valor, meses) == (400_000, 1)
+
+
+# --- Evolução e ritmo (detalhe da meta) ----------------------------------------------------------------------
+
+
+def test_evolucao_mes_a_mes_desde_a_criacao(conn):
+    m = metas.criar(conn, date(2026, 8, 10), nome="Cadeira", valor_alvo_centavos=150_000, modo="mensal",
+                    mensal_centavos=20_000)
+    _guardar(conn, m, 20_000, date(2026, 8, 12))
+    _guardar(conn, m, 30_000, date(2026, 10, 2))
+    metas.retirar(conn, m, 5_000, id_conta(conn, "Inter"), date(2026, 10, 15))
+    assert metas.evolucao(conn, m, HOJE) == [
+        (date(2026, 8, 1), 20_000), (date(2026, 9, 1), 20_000), (date(2026, 10, 1), 45_000)]
+
+
+def test_ritmo_medio_dos_meses_completos_desde_a_criacao(conn):
+    m = metas.criar(conn, date(2026, 8, 10), nome="Cadeira", valor_alvo_centavos=150_000, modo="mensal",
+                    mensal_centavos=20_000)
+    _guardar(conn, m, 20_000, date(2026, 8, 12))
+    _guardar(conn, m, 10_000, date(2026, 9, 3))
+    _guardar(conn, m, 99_000, date(2026, 10, 2))  # mês em andamento: fora da média
+    assert metas.ritmo_medio(conn, m, HOJE) == 15_000  # (200 + 100) / 2: julho é antes de a meta existir
+    nova = _meta(conn, "Nova")  # criada hoje: nenhum mês completo
+    assert metas.ritmo_medio(conn, nova, HOJE) is None

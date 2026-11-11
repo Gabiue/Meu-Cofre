@@ -1,7 +1,6 @@
 """Aba "Investimentos" (F8): números do topo, gráfico, lista, formulários inline, diálogo, atualização de taxas em
 segundo plano e cabeçalho responsivo. Offscreen e sem internet (as taxas do Banco Central são falsas)."""
 
-import sys
 import time
 from datetime import date, timedelta
 
@@ -166,7 +165,7 @@ def test_topo_mostra_o_progresso_do_aporte_do_mes(app, conn):
     aba = _aba(conn)
     assert aba._aporte.valor.text() == "R$ 732,55"
     assert aba._aporte.apoio.text() == "de R$ 1.000 · faltam R$ 267,45"
-    assert aba._aporte_ativos.text() == "CDB Inter R$ 732,55" and not aba._aporte_ativos.isHidden()
+    assert aba._aporte_ativos.texto() == "CDB Inter R$ 732,55" and not aba._aporte_ativos.isHidden()
     inv.aportar(conn, ativo, 26_745, id_conta(conn, "Inter"), date(2026, 10, 6))
     aba.recarregar()
     assert aba._aporte.apoio.text() == "de R$ 1.000 · meta batida ✓"
@@ -223,8 +222,13 @@ def test_lista_agrupada_por_tipo_com_caixinhas_primeiro(app, conn):
     _cenario(conn)
     aba = _aba(conn)
     assert _nomes(aba) == ["Caixinhas (metas)", "CDB Inter", "Tesouro Selic 2029"]
-    grupos = [r.text() for r in aba.findChildren(type(aba._patrimonio.rotulo)) if r.objectName() == "GrupoNome"]
-    assert grupos == ["RENDA FIXA", "TESOURO DIRETO"]
+    linhas = sorted(aba.linhas(), key=lambda x: x.y())
+    assert [x.nome.texto() for x in linhas] == ["Caixinhas (metas)", "CDB Inter", "Tesouro Selic 2029"]
+    assert all(not x.aberta for x in linhas)  # a tabela começa fechada: uma linha por investimento
+    linhas[1].alternada.emit(linhas[1].id_ativo)  # clicar abre o cartão completo embaixo
+    assert linhas[1].aberta and linhas[1].seta.text() == "▾" and not linhas[0].aberta
+    aba.recarregar()
+    assert next(x for x in aba.linhas() if x.id_ativo == linhas[1].id_ativo).aberta  # continua aberta
     cdb = aba.cartoes()[1]
     p = cdb.posicao
     assert cdb.pilula_taxa.text() == "110% do CDI" and cdb.instituicao.texto() == "Inter"
@@ -252,7 +256,7 @@ def test_caixinhas_nao_aportam_e_levam_pra_aba_metas(app, conn):
     aba = _aba(conn)
     cx = aba.cartoes()[0]
     assert cx.pilula_extra.text() == "metas" and not cx.nota.isHidden()
-    assert cx.botao_aportar.isHidden() and cx.botao_resgatar.isHidden() and cx.botao_encerrar.isHidden()
+    assert cx.botao_aportar.isHidden() and cx.botao_resgatar.isHidden() and not cx.botao_encerrar.isVisible()
     assert cx.botao_editar.text() == "Editar taxa" and not cx.botao_saldo.isHidden()
     pedidos = []
     aba.ver_metas.connect(lambda: pedidos.append(1))
@@ -344,7 +348,7 @@ def test_encerrar_com_dinheiro_abre_o_resgate_com_o_aviso(app, conn):
     cdb, _ = _cenario(conn)
     aba = _aba(conn)
     c = aba.cartao_do_ativo(cdb)
-    c.botao_encerrar.click()
+    c.botao_encerrar.trigger()
     QApplication.processEvents()
     assert c.tipo_form == "resgatar" and "Resgate tudo" in c.form.erro.text()
     assert inv.obter(conn, cdb).ativo
@@ -355,7 +359,7 @@ def test_encerrar_e_reativar(app, conn):
     aba = _aba(conn)
     avisos = []
     aba.alterado.connect(avisos.append)
-    aba.cartao_do_ativo(cdb).botao_encerrar.click()
+    aba.cartao_do_ativo(cdb).botao_encerrar.trigger()
     QApplication.processEvents()
     assert avisos == ["Investimento encerrado: CDB Inter"] and aba.cartoes() == [] and not aba._vazio.isHidden()
     assert not aba.botao_encerrados.isHidden() and aba.botao_encerrados.text() == "Mostrar encerrados (1)"
@@ -375,16 +379,28 @@ def test_resgatar_desabilitado_sem_dinheiro(app, conn):
     assert c.apoio_rendimento.text() == "sem aportes"
 
 
-@pytest.mark.xfail(sys.platform == "win32", reason="no Windows (CI offscreen) a aba não estreita abaixo de ~600 px; investigar num Windows de verdade", strict=False)
-def test_cartao_estreito_leva_editar_e_encerrar_pra_segunda_fila(app, conn):
+def test_formulario_abre_a_linha_e_cabe_em_940(app, conn):
     cdb = _novo(conn)
-    aba = _aba(conn, (500, 900))
+    aba = _aba(conn, (940, 900))
+    aba.abrir_form(cdb, "aportar")  # abrir um formulário abre a linha
     c = aba.cartao_do_ativo(cdb)
-    assert c.width() < 520 and c._estreito
-    assert c.botao_editar.y() > c.botao_aportar.y()
+    assert c.isVisibleTo(aba) and not c.form.isHidden()
+    linha = aba.linhas()[0]
+    assert all(c.isHidden() for c in linha.opcionais)  # estreita: sem Quantidade e Preço atual
     aba.resize(1400, 900)
     QApplication.processEvents()
-    assert not c._estreito and c.botao_editar.y() == pytest.approx(c.botao_aportar.y(), abs=10)
+    assert not any(c.isHidden() for c in linha.opcionais)
+    assert not aba.horizontalScrollBar().isVisible()
+
+
+def test_cartao_estreito_cabe_com_o_menu_no_topo(app, conn):
+    cdb = _novo(conn)
+    aba = _aba(conn, (940, 900))
+    aba.alternar_linha(cdb)
+    c = aba.cartao_do_ativo(cdb)
+    assert c.botao_menu.isVisibleTo(aba) and c.botao_menu.y() < c.botao_aportar.y()  # "⋯" no topo, ações embaixo
+    assert c.botao_menu.x() + c.botao_menu.width() <= c.width()
+    assert not aba.horizontalScrollBar().isVisible()
 
 
 # --- Diálogo ---------------------------------------------------------------------------------------------------

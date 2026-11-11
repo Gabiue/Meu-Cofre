@@ -313,6 +313,9 @@ QPushButton#NovaMeta:hover {{ background: {CARTAO_ELEVADO}; color: {TEXTO}; bord
 
 /* Aba "Investimentos" */
 #AtivoCard {{ background: transparent; border: 1px solid {BORDA}; border-radius: 10px; }}
+#LinhaInvestimento {{ background: transparent; border: none; border-bottom: 1px solid {BORDA}; border-radius: 0; }}
+#LinhaInvestimento #AtivoCard {{ border: none; background: {CARTAO_ELEVADO}; border-radius: 8px; }}
+#LinhaInvestimentoCabeca:hover {{ background: {CARTAO_ELEVADO}; }}
 #AtivoNome {{ font-size: {PX_TEXTO + 2}px; font-weight: 700; color: {TEXTO}; }}
 #AtivoNome[encerrado="true"] {{ color: {TEXTO_SECUNDARIO}; }}
 #AtivoInstituicao {{ font-size: {PX_RODAPE + 1}px; color: {TEXTO_APAGADO}; }}

@@ -18,6 +18,7 @@ from meu_cofre.lancamentos import formatar_brl, formatar_brl_inteiro, para_centa
 from meu_cofre.ui import tema
 from meu_cofre.ui.aba_metas import _acao, _compacto, _rotulo
 from meu_cofre.ui.componentes import (
+    BotaoMenu,
     BotaoPrimario,
     BotaoSecundario,
     CampoData,
@@ -26,7 +27,6 @@ from meu_cofre.ui.componentes import (
     Marcador,
     Pilula,
     RotuloElidido,
-    _espacar_letras,
     _repolir,
 )
 
@@ -91,7 +91,6 @@ class FormRV(QFrame):
 
         self.titulo = _rotulo("", "NumeroRotulo")
         self.titulo.setWordWrap(True)
-        _espacar_letras(self.titulo, 1.0)
         self.titulo.setContentsMargins(0, 0, 0, 4)
         self._grade.addWidget(self.titulo, 0, 0, 1, 3)
 
@@ -172,7 +171,7 @@ class FormRV(QFrame):
                 (self.data, 4, 0, 1), (self.usar_conta, 4, 1, 1), (self.conta, 4, 2, 1),
             ])
         self.usar_conta.setText(TEXTOS_CONTA[modo])
-        self.titulo.setText(titulo.upper())
+        self.titulo.setText(titulo)
         self.botao_confirmar.setText(BOTOES[modo])
         self.quantidade.setText("")
         self.quantidade.setPlaceholderText(f"até {formatar_quantidade(maximo)}" if modo == "vender" and maximo else "0")
@@ -294,8 +293,7 @@ class FormEdicao(QFrame):
         self.preco.setText(formatar_brl(item["preco"]).removeprefix("R$ ") if negocio else "")
         self.taxas.setText(formatar_brl(item["taxas"]).removeprefix("R$ ") if negocio else "")
         self.valor.setText(formatar_brl(item["valor"]).removeprefix("R$ "))
-        titulo = _rotulo(f"EDITAR · {NOMES_OPERACAO[item['tipo']].upper()}", "NumeroRotulo")
-        _espacar_letras(titulo, 1.0)
+        titulo = _rotulo(f"Editar · {NOMES_OPERACAO[item['tipo']].lower()}", "NumeroRotulo")
         titulo.setContentsMargins(0, 0, 0, 4)
         grade.addWidget(titulo, 0, 0, 1, 4)
         if negocio:
@@ -405,8 +403,7 @@ class HistoricoAtivo(QFrame):
                 widget.setParent(None)
                 widget.deleteLater()
         self.form = None
-        titulo = _rotulo("HISTÓRICO", "NumeroRotulo")
-        _espacar_letras(titulo, 1.0)
+        titulo = _rotulo("Histórico", "NumeroRotulo")
         self._caixa.addWidget(titulo)
         if not self._itens:
             self._caixa.addWidget(_rotulo("Nada registrado ainda.", "ItemDetalhe"))
@@ -544,6 +541,7 @@ class CartaoAcao(QFrame):
         coluna.addWidget(self.form)
         coluna.addWidget(self.lista_historico)
         coluna.addLayout(self._fila)
+        topo.addWidget(self.botao_menu)
 
     # --- Números ---------------------------------------------------------------------
     def _celula(self, titulo: str, valor: QWidget, apoio: QWidget | None = None) -> QWidget:
@@ -551,9 +549,7 @@ class CartaoAcao(QFrame):
         coluna = QVBoxLayout(caixa)
         coluna.setContentsMargins(0, 0, 0, 0)
         coluna.setSpacing(2)
-        rotulo = _rotulo(titulo.upper(), "NumeroRotulo")
-        _espacar_letras(rotulo, 1.0)
-        coluna.addWidget(rotulo)
+        coluna.addWidget(_rotulo(titulo, "NumeroRotulo"))
         coluna.addWidget(valor, 0, Qt.AlignmentFlag.AlignLeft)
         if apoio is not None:
             coluna.addWidget(apoio, 0, Qt.AlignmentFlag.AlignLeft)
@@ -622,29 +618,25 @@ class CartaoAcao(QFrame):
         self.botao_provento = _compacto(BotaoSecundario("Provento"))
         self.botao_provento.setToolTip("Registrar dividendo, JCP ou rendimento recebido")
         self.botao_provento.clicked.connect(lambda: self.provento.emit(self.id_ativo))
-        self.botao_editar = _acao("Editar")
-        self.botao_editar.clicked.connect(lambda: self.editar.emit(self.id_ativo))
-        self.botao_historico = _acao("Histórico")
-        self.botao_historico.setToolTip("Ver, corrigir ou excluir compras, vendas e proventos")
-        self.botao_historico.clicked.connect(lambda: self.historico.emit(self.id_ativo))
-        self.botao_encerrar = _acao("Encerrar", perigo=True)
-        self.botao_encerrar.setToolTip("Tira da lista (o histórico fica). Venda todas as cotas antes")
-        self.botao_encerrar.clicked.connect(lambda: self.encerrar.emit(self.id_ativo))
-        self.botao_reativar = _acao("Reativar")
+        self.botao_reativar = _compacto(BotaoSecundario("Reativar"))
         self.botao_reativar.clicked.connect(lambda: self.reativar.emit(self.id_ativo))
+        self.botao_menu = BotaoMenu(f"Ações de {p['ativo'].ticker}", "Histórico, editar ou encerrar")
+        self.botao_historico = self.botao_menu.acao("Histórico", lambda: self.historico.emit(self.id_ativo))
+        self.botao_historico.setToolTip("Ver, corrigir ou excluir compras, vendas e proventos")
+        self.botao_editar = self.botao_menu.acao("Editar", lambda: self.editar.emit(self.id_ativo))
+        self.botao_menu.separador()
+        self.botao_encerrar = self.botao_menu.acao("Encerrar", lambda: self.encerrar.emit(self.id_ativo))
+        self.botao_encerrar.setToolTip("Tira da lista (o histórico fica). Venda todas as cotas antes")
+        self.botao_editar.setVisible(not encerrado)
+        self.botao_encerrar.setVisible(not encerrado)
         self._fila = QHBoxLayout()
         self._fila.setSpacing(tema.ESPACO)
-        principais = [] if encerrado else [self.botao_comprar, self.botao_vender, self.botao_provento]
-        for w in (self.botao_comprar, self.botao_vender, self.botao_provento, self.botao_historico, self.botao_editar, self.botao_encerrar, self.botao_reativar):
-            w.setVisible(False)
+        principais = [self.botao_reativar] if encerrado else [self.botao_comprar, self.botao_vender, self.botao_provento]
+        for w in (self.botao_comprar, self.botao_vender, self.botao_provento, self.botao_reativar):
+            w.setVisible(w in principais)
         for w in principais:
-            w.setVisible(True)
             self._fila.addWidget(w)
         self._fila.addStretch(1)
-        discretas = [self.botao_historico] + ([self.botao_reativar] if encerrado else [self.botao_editar, self.botao_encerrar])
-        for w in discretas:
-            w.setVisible(True)
-            self._fila.addWidget(w)
 
     def abrir_form(self, modo: str, hoje: date, contas: list[tuple[int, str]]) -> None:
         """`modo`: "comprar", "vender" ou "provento"."""

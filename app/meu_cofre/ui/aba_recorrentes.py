@@ -21,11 +21,9 @@ from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
     QLabel,
-    QMenu,
     QPushButton,
     QScrollArea,
     QSizePolicy,
-    QToolButton,
     QVBoxLayout,
     QWidget,
 )
@@ -35,6 +33,7 @@ from meu_cofre.relatorios import top_com_outros
 from meu_cofre.lancamentos import METODOS, formatar_brl, formatar_brl_inteiro
 from meu_cofre.ui import tema
 from meu_cofre.ui.componentes import (
+    BotaoMenu,
     Cartao,
     GradeResponsiva,
     NumeroDestaque,
@@ -241,22 +240,14 @@ class LinhaRecorrente(QFrame):
         acoes.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Fixed)
         caixa = QHBoxLayout(acoes)
         caixa.setContentsMargins(0, 0, 0, 0)
-        self.botao_menu = QToolButton()  # as três ações num menu: 3 botões por linha amontoavam a lista
-        self.botao_menu.setObjectName("BotaoMenu")
-        self.botao_menu.setText("⋯")
-        self.botao_menu.setToolTip("Editar, pausar ou encerrar")
-        self.botao_menu.setAccessibleName(f"Ações de {r.descricao}")
-        self.botao_menu.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.botao_menu.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
-        menu = QMenu(self.botao_menu)
-        self.botao_editar = menu.addAction("Editar")
-        self.botao_editar.triggered.connect(lambda: self.editar.emit(self.id_recorrente))
-        self.botao_pausa = menu.addAction("Retomar" if r.pausada else "Pausar")
-        self.botao_pausa.triggered.connect(lambda: self.alternar_pausa.emit(self.id_recorrente))
-        menu.addSeparator()
-        self.botao_encerrar = menu.addAction("Encerrar…")
-        self.botao_encerrar.triggered.connect(self.pedir_encerramento)
-        self.botao_menu.setMenu(menu)
+        # as três ações num menu: 3 botões por linha amontoavam a lista
+        self.botao_menu = BotaoMenu(f"Ações de {r.descricao}", "Editar, pausar ou encerrar")
+        self.botao_editar = self.botao_menu.acao("Editar", lambda: self.editar.emit(self.id_recorrente))
+        self.botao_pausa = self.botao_menu.acao(
+            "Retomar" if r.pausada else "Pausar", lambda: self.alternar_pausa.emit(self.id_recorrente)
+        )
+        self.botao_menu.separador()
+        self.botao_encerrar = self.botao_menu.acao("Encerrar…", self.pedir_encerramento)
         caixa.addWidget(self.botao_menu)
 
         self._confirmar = confirmar = QWidget()

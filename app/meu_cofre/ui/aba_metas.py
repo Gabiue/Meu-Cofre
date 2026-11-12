@@ -16,8 +16,6 @@ from PySide6.QtCore import QDate, QPointF, QRectF, Qt, Signal
 from PySide6.QtGui import QColor, QFont, QPainter, QPen
 from PySide6.QtWidgets import (
     QBoxLayout,
-    QMenu,
-    QToolButton,
     QFrame,
     QGridLayout,
     QHBoxLayout,
@@ -35,6 +33,7 @@ from meu_cofre.lancamentos import formatar_brl, para_centavos
 from meu_cofre.metas import Meta
 from meu_cofre.ui import tema
 from meu_cofre.ui.componentes import (
+    BotaoMenu,
     BarraProgresso,
     BotaoPrimario,
     BotaoSecundario,
@@ -475,30 +474,17 @@ class CartaoMeta(QFrame):
         coluna.addWidget(self.titulo_grafico)
         coluna.addWidget(self.grafico)
 
-    def _montar_menu(self, posicao: int, total: int, encerrada: bool) -> QToolButton:
+    def _montar_menu(self, posicao: int, total: int, encerrada: bool) -> BotaoMenu:
         """Editar, prioridade, Concluir e Arquivar num menu "⋯": à vista ficam só Guardar e Retirar."""
-        self.botao_menu = QToolButton()
-        self.botao_menu.setObjectName("BotaoMenu")
-        self.botao_menu.setText("⋯")
-        self.botao_menu.setToolTip("Editar, mudar a prioridade, concluir ou arquivar")
-        self.botao_menu.setAccessibleName(f"Ações de {self.meta.nome}")
-        self.botao_menu.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.botao_menu.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
-        menu = QMenu(self.botao_menu)
-        self.botao_editar = menu.addAction("Editar")
-        self.botao_editar.triggered.connect(lambda: self.editar.emit(self.id_meta))
-        self.botao_sobe = menu.addAction("Mais prioridade")
+        self.botao_menu = BotaoMenu(f"Ações de {self.meta.nome}", "Editar, mudar a prioridade, concluir ou arquivar")
+        self.botao_editar = self.botao_menu.acao("Editar", lambda: self.editar.emit(self.id_meta))
+        self.botao_sobe = self.botao_menu.acao("Mais prioridade", lambda: self.mover.emit(self.id_meta, -1))
         self.botao_sobe.setEnabled(posicao > 0)
-        self.botao_sobe.triggered.connect(lambda: self.mover.emit(self.id_meta, -1))
-        self.botao_desce = menu.addAction("Menos prioridade")
+        self.botao_desce = self.botao_menu.acao("Menos prioridade", lambda: self.mover.emit(self.id_meta, +1))
         self.botao_desce.setEnabled(posicao < total - 1)
-        self.botao_desce.triggered.connect(lambda: self.mover.emit(self.id_meta, +1))
-        menu.addSeparator()
-        self.acao_concluir = menu.addAction("Concluir")
-        self.acao_concluir.triggered.connect(lambda: self.concluir.emit(self.id_meta))
-        self.botao_arquivar = menu.addAction("Arquivar")
-        self.botao_arquivar.triggered.connect(lambda: self.arquivar.emit(self.id_meta))
-        self.botao_menu.setMenu(menu)
+        self.botao_menu.separador()
+        self.acao_concluir = self.botao_menu.acao("Concluir", lambda: self.concluir.emit(self.id_meta))
+        self.botao_arquivar = self.botao_menu.acao("Arquivar", lambda: self.arquivar.emit(self.id_meta))
         self.botao_menu.setVisible(not encerrada)
         return self.botao_menu
 

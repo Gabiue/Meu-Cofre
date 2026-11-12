@@ -34,6 +34,9 @@ from meu_cofre.lancamentos import METODOS, formatar_brl, formatar_brl_inteiro
 from meu_cofre.ui import logos, tema
 from meu_cofre.ui.componentes import (
     BotaoMenu,
+    BotaoPrimario,
+    BotaoSecundario,
+    Marcador,
     Cartao,
     GradeResponsiva,
     NumeroDestaque,
@@ -156,14 +159,18 @@ class ProximosPagamentos(QWidget):
 
 
 class LinhaRecorrente(QFrame):
-    """Uma assinatura ou fixo. Emite os pedidos de ação com o id; o "Encerrar" pede confirmação aqui mesmo."""
+    """Uma assinatura ou fixo. Emite os pedidos de ação com o id; o "Encerrar" pede confirmação aqui mesmo.
 
+    Na simulação "E se eu cancelasse?", saída ativa e não pausada ganha uma caixinha (`simular`); marcar emite `marcada`.
+    """
+
+    marcada = Signal(int, bool)
     editar = Signal(int)
     alternar_pausa = Signal(int)
     encerrar = Signal(int)
     reativar = Signal(int)
 
-    def __init__(self, r, parent: QWidget | None = None):
+    def __init__(self, r, simulando: bool = False, marcada: bool = False, parent: QWidget | None = None):
         super().__init__(parent)
         self.id_recorrente = int(r.id)
         self.setObjectName("LinhaRecorrente")
@@ -214,6 +221,12 @@ class LinhaRecorrente(QFrame):
         self._corpo = QHBoxLayout(self)
         self._corpo.setContentsMargins(tema.ESPACO, tema.ESPACO, tema.ESPACO, tema.ESPACO)
         self._corpo.setSpacing(12)
+        self.simular = Marcador("")
+        self.simular.setAccessibleName(f"Simular o cancelamento de {r.descricao}")
+        self.simular.setChecked(marcada)
+        self.simular.toggled.connect(lambda v: self.marcada.emit(self.id_recorrente, v))
+        self.simular.setVisible(simulando and r.ativa and not r.pausada and r.valor_centavos < 0)
+        self._corpo.addWidget(self.simular, 0, Qt.AlignmentFlag.AlignVCenter)
         self._corpo.addWidget(marcador, 0, Qt.AlignmentFlag.AlignVCenter)
         self._corpo.addLayout(textos, 1)
         self._corpo.addLayout(direita)
@@ -292,12 +305,16 @@ class AbaRecorrentes(QScrollArea):
     """Conteúdo da aba. `hoje` é uma função (a janela principal pode fixar a data nos testes)."""
 
     alterado = Signal(str)
+    criar_meta = Signal(str, int, int)  # nome, valor (o ano de economia), mensal: a simulação vira meta na aba Metas
 
     def __init__(self, conn: sqlite3.Connection, hoje: Callable[[], date] = date.today, parent: QWidget | None = None):
         super().__init__(parent)
         self.conn = conn
         self._hoje = hoje
         self._mostrar_encerradas = False
+        self._simulando = False
+        self._cancelar: set[int] = set()  # o que está marcado na simulação
+        self._economia: dict = {"nomes": []}
         self.dialogo: DialogoRecorrente | None = None
 
         self.setWidgetResizable(True)
@@ -328,7 +345,13 @@ class AbaRecorrentes(QScrollArea):
     # --- Montagem --------------------------------------------------------------------
     def _montar_numeros(self) -> GradeResponsiva:
         self._mensal = NumeroDestaque("Gasto mensal", "", "", destaque=True)
-        self._anual = NumeroDestaque("Gasto anual", "", "12 meses disso")
+        self._anual = NumeroDestaque("Gasto anual", "", "")
+        self.botao_simular = QPushButton("E se eu cancelasse?")
+        self.botao_simular.setObjectName("BotaoLink")
+        self.botao_simular.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.botao_simular.setToolTip("Marque na lista o que cancelaria e veja quanto sobra por mês e por ano")
+        self.botao_simular.clicked.connect(lambda: self.simular(not self._simulando))
+        self._anual.adicionar(self.botao_simular)
         self._proximo = NumeroDestaque("Próximo pagamento", "", "")
         self._ativas = NumeroDestaque("Ativas", "", "")
         grade = GradeResponsiva(largura_minima_item=220, espaco=3 * tema.ESPACO, colunas_permitidas=(4, 2, 1))
@@ -357,6 +380,7 @@ class AbaRecorrentes(QScrollArea):
         self._cartao_lista = Cartao("Assinaturas e fixos", "Agrupadas por onde cobram", acao=self.filtro)
         self._lista = QVBoxLayout()
         self._lista.setSpacing(0)
+        self._cartao_lista.corpo.addWidget(self._montar_simulacao())
         self._cartao_lista.corpo.addLayout(self._lista)
         self._vazio = EstadoVazio("lista")
         self._vazio.setMinimumHeight(200)
@@ -368,6 +392,70 @@ class AbaRecorrentes(QScrollArea):
         self.botao_encerradas.clicked.connect(lambda: self.mostrar_encerradas(not self._mostrar_encerradas))
         self._cartao_lista.corpo.addWidget(self.botao_encerradas, 0, Qt.AlignmentFlag.AlignLeft)
         return self._cartao_lista
+
+    def _montar_simulacao(self) -> QFrame:
+        """A barra da simulação: quanto sobraria com o que está marcado, e o botão que transforma isso numa meta."""
+        self.barra_simulacao = QFrame()
+        self.barra_simulacao.setObjectName("FormPagamento")
+        linha = QHBoxLayout(self.barra_simulacao)
+        linha.setContentsMargins(2 * tema.ESPACO, tema.ESPACO + 4, 2 * tema.ESPACO, tema.ESPACO + 4)
+        linha.setSpacing(2 * tema.ESPACO)
+        textos = QVBoxLayout()
+        textos.setSpacing(2)
+        # linhas que não quebram (quebrada, a linha era cortada dentro do layout): quem sai, e quanto sobra
+        self.texto_simulacao = RotuloElidido("", "ConfirmaTexto")
+        self.valor_simulacao = RotuloElidido("", "PreviaDestaque")
+        self.apoio_simulacao = RotuloElidido("", "ItemDetalhe")
+        for w in (self.texto_simulacao, self.valor_simulacao, self.apoio_simulacao):
+            textos.addWidget(w)
+        linha.addLayout(textos, 1)
+        self.botao_meta = BotaoPrimario("Guardar numa meta")
+        self.botao_meta.setProperty("compacto", True)
+        self.botao_meta.setToolTip("Abre uma meta nova na aba Metas com essa economia por mês")
+        self.botao_meta.clicked.connect(self._guardar_economia)
+        self.botao_sair_simulacao = BotaoSecundario("Sair da simulação")
+        self.botao_sair_simulacao.setProperty("compacto", True)
+        self.botao_sair_simulacao.clicked.connect(lambda: self.simular(False))
+        linha.addWidget(self.botao_meta, 0, Qt.AlignmentFlag.AlignVCenter)
+        linha.addWidget(self.botao_sair_simulacao, 0, Qt.AlignmentFlag.AlignVCenter)
+        self.barra_simulacao.setVisible(False)
+        return self.barra_simulacao
+
+    # --- Simulação "E se eu cancelasse?" ---------------------------------------------------
+    def simular(self, ligar: bool) -> None:
+        """Liga/desliga a simulação. Desligar limpa as marcas: simular nunca muda os dados."""
+        self._simulando = ligar
+        self._cancelar.clear()
+        self.recarregar()
+
+    def _marcar(self, recorrente_id: int, marcada: bool) -> None:
+        (self._cancelar.add if marcada else self._cancelar.discard)(recorrente_id)
+        self._carregar_simulacao()
+
+    def _carregar_simulacao(self) -> None:
+        self.barra_simulacao.setVisible(self._simulando)
+        self.botao_simular.setVisible(not self._simulando)  # na simulação, quem sai dela é o botão da barra
+        if not self._simulando:
+            return
+        e = recorrentes.economia(self.conn, self._hoje(), self._cancelar)
+        self._economia = e
+        if not e["nomes"]:
+            self.texto_simulacao.setTexto("Marque o que você cancelaria")
+            self.valor_simulacao.setTexto("pra ver quanto sobra")
+        else:
+            self.texto_simulacao.setTexto(f"Cancelando {_juntar(e['nomes'])}")
+            self.valor_simulacao.setTexto(f"sobram {formatar_brl(e['mensal'])}/mês · {formatar_brl(e['anual'])}/ano")
+        pct = e["pct_entradas"]
+        self.apoio_simulacao.setTexto(
+            (f"{pct:.1f}% das entradas fixas · ".replace(".", ",") if pct is not None and e["nomes"] else "")
+            + "simulação: nada é cancelado de verdade"
+        )
+        self.botao_meta.setEnabled(bool(e["nomes"]))
+
+    def _guardar_economia(self) -> None:
+        e = self._economia
+        if e["nomes"]:
+            self.criar_meta.emit(f"Economia: {_juntar(e['nomes'], 2)}", e["anual"], e["mensal"])
 
     # --- Dados ------------------------------------------------------------------------
     @property
@@ -393,6 +481,7 @@ class AbaRecorrentes(QScrollArea):
             existe_alguma = not recorrentes.listar(self.conn, hoje, "ambos").empty
             self._vazio.definir(*(VAZIO[filtro] if existe_alguma else VAZIO["ambos"]))
         self._vazio.setVisible(vazio)
+        self._carregar_simulacao()
         self.botao_encerradas.setVisible(not encerradas.empty)
         self.botao_encerradas.setText(
             "Esconder encerradas" if self._mostrar_encerradas else f"Mostrar encerradas ({len(encerradas)})"
@@ -408,7 +497,11 @@ class AbaRecorrentes(QScrollArea):
         n_cobradas, _v = r["este_mes_cobradas"]
         n_ativas = int((~saidas["pausada"]).sum())
         self._mensal.definir(formatar_brl(r["saidas_por_mes"]), f"{_contagem(n_cobradas, 'já cobrada', 'já cobradas')} este mês")
-        self._anual.definir(formatar_brl(r["saidas_por_ano"]))
+        entradas = recorrentes.resumo(self.conn, hoje, "ambos")["entradas_por_mes"]  # a renda fixa não depende do filtro
+        self._anual.definir(
+            formatar_brl(r["saidas_por_ano"]),
+            f"{r['saidas_por_mes'] / entradas * 100:.0f}% das entradas fixas" if entradas else "12 meses disso",
+        )
         proximas = proximas_cobrancas(df, hoje, 5)
         if proximas:
             quando, nome, centavos = proximas[0]
@@ -458,7 +551,8 @@ class AbaRecorrentes(QScrollArea):
         coluna.addWidget(separador)
 
         for r in grupo.itertuples():
-            linha = LinhaRecorrente(r)
+            linha = LinhaRecorrente(r, self._simulando, int(r.id) in self._cancelar)
+            linha.marcada.connect(self._marcar)
             linha.editar.connect(self.editar)
             linha.alternar_pausa.connect(self.alternar_pausa)
             linha.encerrar.connect(self.encerrar)
@@ -523,6 +617,13 @@ class AbaRecorrentes(QScrollArea):
         if self._corpo.direction() != direcao:
             self._corpo.setDirection(direcao)
         super().resizeEvent(evento)
+
+
+def _juntar(nomes: list[str], maximo: int = 3) -> str:
+    """"Netflix", "Netflix e Spotify", "Netflix, Spotify e Max"; passando de `maximo`, "... e mais 2"."""
+    if len(nomes) > maximo:
+        return f"{', '.join(nomes[:maximo])} e mais {len(nomes) - maximo}"
+    return nomes[0] if len(nomes) == 1 else f"{', '.join(nomes[:-1])} e {nomes[-1]}"
 
 
 def _contagem(n: int, singular: str, plural: str) -> str:

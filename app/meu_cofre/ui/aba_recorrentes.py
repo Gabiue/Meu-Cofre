@@ -31,7 +31,7 @@ from PySide6.QtWidgets import (
 from meu_cofre import recorrentes
 from meu_cofre.relatorios import top_com_outros
 from meu_cofre.lancamentos import METODOS, formatar_brl, formatar_brl_inteiro
-from meu_cofre.ui import tema
+from meu_cofre.ui import logos, tema
 from meu_cofre.ui.componentes import (
     BotaoMenu,
     Cartao,
@@ -169,11 +169,14 @@ class LinhaRecorrente(QFrame):
         self.setObjectName("LinhaRecorrente")
         apagada = bool(r.pausada) or not r.ativa
 
-        marcador = QLabel(r.descricao[:1].upper())
+        self.marcador = marcador = QLabel(r.descricao[:1].upper())
         marcador.setObjectName("ItemMarcador")
         marcador.setProperty("tipo", "entrada" if r.valor_centavos > 0 else "saida")
         marcador.setFixedSize(32, 32)
         marcador.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        if (icone := logos.icone_para(r.descricao)) is not None:  # logo da marca ou ícone da conta; sem par, a inicial
+            marcador.setPixmap(logos.pixmap_do_icone(*icone, 18))
+            marcador.setProperty("tipo", "logo")
         self.nome = RotuloElidido(r.descricao, "RecorrenteNome")
         self.nome.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)  # a pílula fica colada no nome
         self.nome.setProperty("apagada", apagada)

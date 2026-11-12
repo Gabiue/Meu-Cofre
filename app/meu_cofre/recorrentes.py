@@ -443,3 +443,22 @@ def resumo(conn: sqlite3.Connection, hoje: date, filtro: str = "ambos") -> dict:
         "este_mes_cobradas": (len(cobradas), int(-cobradas["valor_centavos"].sum())),
         "este_mes_a_cobrar": (len(a_cobrar), int(-a_cobrar["valor_centavos"].sum())),
     }
+
+
+def economia(conn: sqlite3.Connection, hoje: date, ids: set[int] | list[int]) -> dict:
+    """Quanto sobraria cancelando as recorrentes `ids` (simulação: não grava nada).
+
+    Só contam as saídas ativas e não pausadas (entrada, pausada ou encerrada já não sai do bolso).
+    Chaves: nomes (as descrições contadas, na ordem da lista), mensal e anual (centavos, positivos) e pct_entradas
+    (o mensal sobre as entradas fixas, de 0 a 100; None sem entrada fixa).
+    """
+    df = listar(conn, hoje, "ambos")
+    contadas = df[df["id"].isin(list(ids)) & (df["valor_centavos"] < 0) & ~df["pausada"]]
+    mensal = int(-contadas["valor_centavos"].sum())
+    entradas = resumo(conn, hoje, "ambos")["entradas_por_mes"]
+    return {
+        "nomes": list(contadas["descricao"]),
+        "mensal": mensal,
+        "anual": mensal * 12,
+        "pct_entradas": mensal / entradas * 100 if entradas else None,
+    }

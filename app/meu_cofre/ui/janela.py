@@ -173,6 +173,7 @@ class JanelaPrincipal(QMainWindow):
 
         self.aba_recorrentes = AbaRecorrentes(self.conn, self._hoje)
         self.aba_recorrentes.alterado.connect(self._lancamento_gravado)
+        self.aba_recorrentes.criar_meta.connect(self._meta_da_economia)
         self.aba_cartoes = AbaCartoes(self.conn, self._hoje)
         self.aba_cartoes.alterado.connect(self._lancamento_gravado)
         self.aba_metas = AbaMetas(self.conn, self._hoje)
@@ -519,6 +520,11 @@ class JanelaPrincipal(QMainWindow):
         self.dialogo = dialogo
         dialogo.open()
         return dialogo
+
+    def _meta_da_economia(self, nome: str, valor_centavos: int, mensal_centavos: int) -> None:
+        """"Guardar numa meta" da simulação de Assinaturas: vai pra aba Metas com a meta nova já preenchida."""
+        self.mostrar_aba("metas")
+        self.aba_metas.nova_meta(nome=nome, valor_centavos=valor_centavos, mensal_centavos=mensal_centavos)
 
     def abrir_contas(self) -> DialogoContas:
         """Botão "Contas": abre a janela de contas e cartões; cada mudança recarrega esta tela."""

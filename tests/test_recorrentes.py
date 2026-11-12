@@ -363,6 +363,19 @@ def test_resumo(conn, varias):
     assert rec.resumo(conn, HOJE, "fixos")["saidas_por_mes"] == 150000
 
 
+def test_economia_so_conta_saida_ativa(conn, varias):
+    e = rec.economia(conn, HOJE, {varias["video"], varias["musica"], varias["pausada"], varias["salario"], varias["velha"]})
+    assert e["nomes"] == ["Música", "Vídeo"]  # a pausada, a entrada e a encerrada não entram
+    assert (e["mensal"], e["anual"]) == (3990 + 2190, 12 * (3990 + 2190))
+    assert e["pct_entradas"] == pytest.approx((3990 + 2190) / 520000 * 100)
+
+
+def test_economia_vazia_e_sem_entrada_fixa(conn):
+    rid = _criar(conn)
+    assert rec.economia(conn, HOJE, set())["mensal"] == 0
+    assert rec.economia(conn, HOJE, {rid})["pct_entradas"] is None  # sem salário fixo, sem percentual
+
+
 def test_resumo_vazio(conn):
     assert rec.resumo(conn, HOJE) == {
         "saidas_por_mes": 0, "saidas_por_ano": 0, "entradas_por_mes": 0,

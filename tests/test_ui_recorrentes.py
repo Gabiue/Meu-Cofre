@@ -501,3 +501,53 @@ def test_reativar_encerrada_pela_lista(app, conn, varias):
     assert avisos == ["Reativado: Vídeo. Volta a cobrar a partir deste mês."]
     ativo = next(l for l in aba.linhas() if l.nome.texto() == "Vídeo")
     assert not ativo.botao_reativar.isVisibleTo(aba) and ativo._acoes.isVisibleTo(aba)
+
+
+# --- Simulador "E se eu cancelasse?" (#62) ------------------------------------------------------
+
+
+def test_gasto_anual_mostra_o_percentual_das_entradas_fixas(app, conn, varias):
+    aba = _aba(conn)
+    assert aba._anual.apoio.text() == "30% das entradas fixas"  # 1561,80 de 5200,00
+
+
+def test_simulacao_marca_soma_e_nao_muda_nada(app, conn, varias):
+    rec.pausar(conn, next(i for i, n in _ids(conn).items() if n == "Música"), HOJE)
+    aba = _aba(conn)
+    assert aba.barra_simulacao.isHidden() and all(l.simular.isHidden() for l in aba.linhas())
+    aba.botao_simular.click()
+    linhas = {l.nome.texto(): l for l in aba.linhas()}
+    assert not aba.barra_simulacao.isHidden() and not aba.botao_meta.isEnabled()
+    assert not linhas["Vídeo"].simular.isHidden() and not linhas["Aluguel"].simular.isHidden()
+    assert linhas["Música"].simular.isHidden() and linhas["Salário"].simular.isHidden()  # pausada e entrada: fora
+    linhas["Vídeo"].simular.setChecked(True)
+    linhas["Aluguel"].simular.setChecked(True)
+    assert aba.texto_simulacao.texto() == "Cancelando Vídeo e Aluguel"
+    assert aba.valor_simulacao.texto() == "sobram R$ 1.539,90/mês · R$ 18.478,80/ano"
+    assert aba.apoio_simulacao.texto().startswith("29,6% das entradas fixas")
+    assert aba.botao_simular.isHidden()  # na simulação, sai-se pelo botão da barra
+    pedidos = []
+    aba.criar_meta.connect(lambda *a: pedidos.append(a))
+    aba.botao_meta.click()
+    assert pedidos == [("Economia: Vídeo e Aluguel", 1_847_880, 153_990)]  # na ordem da lista
+    aba.recarregar()  # recarregar (ex.: depois de salvar algo) mantém as marcas
+    assert {l.nome.texto() for l in aba.linhas() if l.simular.isChecked()} == {"Aluguel", "Vídeo"}
+    aba.botao_sair_simulacao.click()
+    assert aba.barra_simulacao.isHidden() and not any(l.simular.isChecked() for l in aba.linhas())
+    assert len(rec.listar(conn, HOJE)) == 4  # nada foi encerrado
+
+
+def _ids(conn):
+    return {int(r.id): r.descricao for r in rec.listar(conn, HOJE).itertuples()}
+
+
+def test_guardar_economia_abre_a_meta_preenchida_na_aba_metas(app, conn, varias):
+    j = _janela(conn)
+    j.mostrar_aba("recorrentes")
+    a = j.aba_recorrentes
+    a.simular(True)
+    next(l for l in a.linhas() if l.nome.texto() == "Vídeo").simular.setChecked(True)
+    a.botao_meta.click()
+    d = j.aba_metas.dialogo
+    assert j.aba_atual == "metas" and d is not None and d.meta_id is None
+    assert d.nome.text() == "Economia: Vídeo" and d.valor.text() == "478,80"

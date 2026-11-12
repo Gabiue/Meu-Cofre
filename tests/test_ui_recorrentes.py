@@ -98,6 +98,8 @@ def test_aba_numeros_e_grupos(app, conn, varias):
     assert linhas["Vídeo"].quando.texto() == "todo dia 7 · Assinaturas"
     assert linhas["Aluguel"].quando.texto() == "todo dia 25 · Boleto · Moradia"
     assert linhas["Vídeo"].toolTip() == "desde set/2026 · R$ 80 até hoje"  # 2 cobranças de 39,90
+    assert linhas["Aluguel"].marcador.property("tipo") == "logo" and not linhas["Aluguel"].marcador.pixmap().isNull()
+    assert linhas["Vídeo"].marcador.text() == "V"  # sem par: a inicial
 
 
 def test_aba_filtros(app, conn, varias):

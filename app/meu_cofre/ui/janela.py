@@ -1,6 +1,7 @@
 """Janela principal (docs/design/telas.md): abas "Início", "Assinaturas/fixos", "Cartões", "Metas" e "Investimentos".
 
-Início: painel (gráficos do mês escolhido, ou os próximos meses), resumo e recentes (sempre "agora"), em 2 colunas ou 1.
+Início: resumo (o "Livre" em destaque), painel (gráficos do mês escolhido, ou os próximos meses) e recentes (sempre
+"agora"), em 2 colunas ou 1.
 `atualizar()` gera as recorrentes do mês, recarrega tudo e pede (em segundo plano) as taxas do Banco Central; os
 diálogos chamam depois de salvar ou excluir.
 
@@ -14,8 +15,9 @@ from datetime import date
 
 import pandas as pd
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QKeySequence, QShortcut
+from PySide6.QtGui import QActionGroup, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
+    QApplication,
     QFrame,
     QGridLayout,
     QHBoxLayout,
@@ -28,10 +30,11 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from meu_cofre import lancamentos, recorrentes, relatorio_automatico, relatorio_mensal, relatorios
+from meu_cofre import db, lancamentos, recorrentes, relatorio_automatico, relatorio_mensal, relatorios
 from meu_cofre.lancamentos import formatar_brl, formatar_brl_inteiro, nome_com_final
-from meu_cofre.ui import tema
+from meu_cofre.ui import logos, tema
 from meu_cofre.ui.componentes import (
+    BotaoMenu,
     BotaoPrimario,
     BotaoSecundario,
     Cartao,
@@ -157,7 +160,7 @@ class JanelaPrincipal(QMainWindow):
         self._conteudo.setObjectName("Conteudo")
         self._grade = QGridLayout(self._conteudo)
         m = 3 * tema.ESPACO
-        self._grade.setContentsMargins(m, tema.ESPACO, m, m)
+        self._grade.setContentsMargins(m, m, m, m)
         self._grade.setSpacing(m)
 
         self._cartao_painel = self._montar_painel()
@@ -172,6 +175,7 @@ class JanelaPrincipal(QMainWindow):
 
         self.aba_recorrentes = AbaRecorrentes(self.conn, self._hoje)
         self.aba_recorrentes.alterado.connect(self._lancamento_gravado)
+        self.aba_recorrentes.criar_meta.connect(self._meta_da_economia)
         self.aba_cartoes = AbaCartoes(self.conn, self._hoje)
         self.aba_cartoes.alterado.connect(self._lancamento_gravado)
         self.aba_metas = AbaMetas(self.conn, self._hoje)
@@ -190,9 +194,11 @@ class JanelaPrincipal(QMainWindow):
 
     def _montar_cabecalho(self) -> QWidget:
         self._faixa = QWidget()
+        self._faixa.setObjectName("Cabecalho")
+        self._faixa.setAttribute(Qt.WidgetAttribute.WA_StyledBackground)  # sem isso o QWidget não pinta o fundo do QSS
         self._linhas_cabecalho = QVBoxLayout(self._faixa)
         m = 3 * tema.ESPACO
-        self._linhas_cabecalho.setContentsMargins(m, 2 * tema.ESPACO, m, tema.ESPACO)
+        self._linhas_cabecalho.setContentsMargins(m, 2 * tema.ESPACO, m, 2 * tema.ESPACO)
         self._linhas_cabecalho.setSpacing(tema.ESPACO)
         self._filas = [QHBoxLayout() for _ in range(3)]
         for fila in self._filas:
@@ -214,6 +220,16 @@ class JanelaPrincipal(QMainWindow):
         self.rotulo_mes.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._navegacao_mes = (self.botao_mes_anterior, self.rotulo_mes, self.botao_mes_seguinte)
 
+        self.botao_tema = BotaoMenu("Tema", "Tema: seguir o sistema, claro ou escuro")
+        self.botao_tema.setText("◐")
+        grupo = QActionGroup(self.botao_tema)
+        self.acoes_tema = {}
+        for modo, rotulo in (("sistema", "Seguir o sistema"), ("claro", "Claro"), ("escuro", "Escuro")):
+            acao = self.botao_tema.acao(rotulo, lambda _=False, m=modo: self.escolher_tema(m))
+            acao.setCheckable(True)
+            grupo.addAction(acao)
+            self.acoes_tema[modo] = acao
+        self.acoes_tema[db.ler_preferencia(self.conn, "tema", "sistema")].setChecked(True)
         self.botao_contas = BotaoSecundario("Contas")
         self.botao_contas.setToolTip("Contas e cartões")
         self.botao_contas.clicked.connect(self.abrir_contas)
@@ -245,11 +261,11 @@ class JanelaPrincipal(QMainWindow):
             a.addSpacing(tema.ESPACO)
             pôr(a, *self._navegacao_mes)
             a.addStretch(1)
-            pôr(a, self.botao_contas, self.botao_categorias, self.botao_novo)
+            pôr(a, self.botao_tema, self.botao_contas, self.botao_categorias, self.botao_novo)
             return
         pôr(a, self.marca)
         a.addStretch(1)
-        pôr(a, self.botao_contas, self.botao_categorias, self.botao_novo)
+        pôr(a, self.botao_tema, self.botao_contas, self.botao_categorias, self.botao_novo)
         pôr(b, self.abas)
         if arranjo == 2:
             b.addSpacing(tema.ESPACO)
@@ -323,10 +339,18 @@ class JanelaPrincipal(QMainWindow):
         self._devo = NumeroDestaque("Devo", "", "Cartão em aberto, com parcelas futuras")
         self._gastei = NumeroDestaque("Gastei no mês", "", "")
         self._livre = NumeroDestaque("Livre até o fim do mês", "", "Depois do cartão e do que ainda vai sair", destaque=True)
+        self._livre.valor.setProperty("heroi", True)  # a resposta da tela: vem primeiro e maior que os outros
         self._pilula_livre = Pilula("", "neutra")
         self._livre.adicionar(self._pilula_livre)
-        grade = GradeResponsiva(largura_minima_item=185, espaco=3 * tema.ESPACO)
-        for numero in (self._em_conta, self._devo, self._gastei, self._livre):
+        cartao.corpo.addWidget(self._livre)
+        linha = QFrame()
+        linha.setObjectName("Separador")
+        linha.setFixedHeight(1)
+        cartao.corpo.addSpacing(tema.ESPACO)
+        cartao.corpo.addWidget(linha)
+        cartao.corpo.addSpacing(tema.ESPACO)
+        grade = GradeResponsiva(largura_minima_item=185, espaco=3 * tema.ESPACO, colunas_permitidas=(3, 1))
+        for numero in (self._em_conta, self._gastei, self._devo):
             grade.adicionar(numero)
         cartao.corpo.addWidget(grade)
         return cartao
@@ -509,6 +533,21 @@ class JanelaPrincipal(QMainWindow):
         dialogo.open()
         return dialogo
 
+    def escolher_tema(self, modo: str) -> None:
+        """Grava o tema e troca na hora: o QSS e a paleta mudam, e recarregar refaz gráficos e ícones na cor nova."""
+        db.gravar_preferencia(self.conn, "tema", modo)
+        tema.aplicar_tema(QApplication.instance(), modo)
+        logos.pixmap_do_icone.cache_clear()  # os ícones sem cor de marca usam a cor do texto
+        self.acoes_tema[modo].setChecked(True)
+        self.atualizar()
+        for w in self.findChildren(QWidget):  # quem pinta à mão relê as cores do tema
+            w.update()
+
+    def _meta_da_economia(self, nome: str, valor_centavos: int, mensal_centavos: int) -> None:
+        """"Guardar numa meta" da simulação de Assinaturas: vai pra aba Metas com a meta nova já preenchida."""
+        self.mostrar_aba("metas")
+        self.aba_metas.nova_meta(nome=nome, valor_centavos=valor_centavos, mensal_centavos=mensal_centavos)
+
     def abrir_contas(self) -> DialogoContas:
         """Botão "Contas": abre a janela de contas e cartões; cada mudança recarrega esta tela."""
         dialogo = DialogoContas(self.conn, parent=self, hoje=self._hoje())
@@ -562,7 +601,7 @@ class JanelaPrincipal(QMainWindow):
 
     # --- Layout responsivo ---------------------------------------------------------
     def _aplicar_layout(self, duas_colunas: bool) -> None:
-        """2 colunas (painel+resumo | recentes) ou 1 coluna (painel, resumo, recentes)."""
+        """2 colunas (resumo+painel | recentes) ou 1 coluna (resumo, painel, recentes). O resumo vem primeiro: é a resposta."""
         if duas_colunas == self._duas_colunas:
             return
         self._duas_colunas = duas_colunas
@@ -573,18 +612,17 @@ class JanelaPrincipal(QMainWindow):
             self._grade.setColumnStretch(i, 0)
 
         if duas_colunas:
-            self._grade.addWidget(self._cartao_painel, 0, 0)
-            self._grade.addWidget(self._cartao_resumo, 1, 0)
+            self._grade.addWidget(self._cartao_resumo, 0, 0)
+            self._grade.addWidget(self._cartao_painel, 1, 0)
             self._grade.addWidget(self._cartao_recentes, 0, 1, 2, 1)
             self._grade.setColumnStretch(0, 2)
             self._grade.setColumnStretch(1, 1)
-            self._grade.setRowStretch(0, 1)  # painel absorve a sobra; resumo fica no tamanho natural
+            self._grade.setRowStretch(1, 1)  # painel absorve a sobra; resumo fica no tamanho natural
         else:
-            self._grade.addWidget(self._cartao_painel, 0, 0)
-            self._grade.addWidget(self._cartao_resumo, 1, 0)
+            self._grade.addWidget(self._cartao_resumo, 0, 0)
+            self._grade.addWidget(self._cartao_painel, 1, 0)
             self._grade.addWidget(self._cartao_recentes, 2, 0)
             self._grade.setColumnStretch(0, 1)
-            self._grade.setRowStretch(0, 0)
 
     def resizeEvent(self, evento) -> None:
         self._aplicar_layout(evento.size().width() >= LARGURA_DUAS_COLUNAS)

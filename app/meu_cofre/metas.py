@@ -23,6 +23,7 @@ import sqlite3
 import uuid
 from dataclasses import dataclass, field
 from datetime import date
+from pathlib import Path
 
 from meu_cofre import relatorios
 from meu_cofre.lancamentos import dividir_em_parcelas, formatar_brl
@@ -257,6 +258,8 @@ class Meta:
     concluida_em: date | None
     arquivada: bool
     guardado: int
+    descricao: str = ""
+    imagem: str | None = None  # nome do arquivo em `pasta_imagens`
     viabilidade: Viabilidade | None = field(default=None)  # só nas metas ativas
 
     @property
@@ -310,6 +313,8 @@ def _meta_da_linha(r: sqlite3.Row, guardado: int) -> Meta:
         concluida_em=_data(r["concluida_em"]),
         arquivada=bool(r["arquivada"]),
         guardado=guardado,
+        descricao=r["descricao"] or "",
+        imagem=r["imagem"],
     )
 
 
@@ -337,6 +342,48 @@ def obter(conn: sqlite3.Connection, meta_id: int, hoje: date | None = None) -> M
 def guardado(conn: sqlite3.Connection, meta_id: int) -> int:
     """Quanto a meta tem guardado hoje (centavos)."""
     return _guardados(conn).get(meta_id, 0)
+
+
+def _movimentos(conn: sqlite3.Connection, meta_id: int) -> list[tuple[date, int]]:
+    """(data, centavos) de cada entrada (+) e saída (−) da meta na conta Caixinhas, em ordem de data."""
+    linhas = conn.execute(
+        """
+        SELECT l.data, l.valor_centavos FROM lancamentos l JOIN contas ct ON ct.id = l.conta_id
+        WHERE l.meta_id = ? AND ct.tipo = 'investimento' ORDER BY l.data, l.id
+        """,
+        (meta_id,),
+    )
+    return [(date.fromisoformat(r["data"]), r["valor_centavos"]) for r in linhas]
+
+
+def evolucao(conn: sqlite3.Connection, meta_id: int, hoje: date) -> list[tuple[date, int]]:
+    """Quanto a meta tinha guardado no fim de cada mês, do mês em que foi criada (ou do 1º movimento, se antes)
+    até o mês de hoje: [(1º dia do mês, centavos)]. O mês de hoje vale o saldo de agora."""
+    movimentos = _movimentos(conn, meta_id)
+    criada = obter(conn, meta_id).criada_em
+    inicio = min([criada] + [d for d, _v in movimentos])
+    pontos, saldo, i = [], 0, 0
+    for indice in range(_indice(inicio), _indice(hoje) + 1):
+        mes = _mes(indice)
+        while i < len(movimentos) and _indice(movimentos[i][0]) <= indice:
+            saldo += movimentos[i][1]
+            i += 1
+        pontos.append((mes, saldo))
+    return pontos
+
+
+def ritmo_medio(conn: sqlite3.Connection, meta_id: int, hoje: date) -> int | None:
+    """Quanto entrou de fato na meta por mês (guardado − retirado), em média, nos últimos MESES_DA_SOBRA meses
+    completos desde que ela existe. None se ainda não houve mês completo (a meta é deste mês)."""
+    criada = obter(conn, meta_id).criada_em
+    meses = [m for m in _meses_anteriores(hoje, MESES_DA_SOBRA) if m >= (criada.year, criada.month)]
+    if not meses:
+        return None
+    por_mes = dict.fromkeys(meses, 0)
+    for d, v in _movimentos(conn, meta_id):
+        if (d.year, d.month) in por_mes:
+            por_mes[(d.year, d.month)] += v
+    return _media(list(por_mes.values()))
 
 
 def guardado_total(conn: sqlite3.Connection) -> int:
@@ -436,9 +483,11 @@ def criar(
     prazo: date | None = None,
     mensal_centavos: int | None = None,
     reserva: bool = False,
+    descricao: str = "",
 ) -> int:
     """Cria a meta e devolve o id. Entra no fim da fila de prioridade; a reserva de emergência, no topo."""
     nome, prazo, mensal_centavos = _validar(hoje, nome, valor_alvo_centavos, modo, prazo, mensal_centavos)
+    descricao = _validar_descricao(descricao)
     _checar_reserva(conn, reserva)
     with conn:
         if reserva:
@@ -448,12 +497,13 @@ def criar(
             prioridade = conn.execute("SELECT COALESCE(MAX(prioridade) + 1, 0) FROM metas").fetchone()[0]
         return conn.execute(
             """
-            INSERT INTO metas (nome, valor_alvo_centavos, modo, prazo, mensal_centavos, prioridade, reserva, criada_em)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO metas (nome, valor_alvo_centavos, modo, prazo, mensal_centavos, prioridade, reserva, criada_em,
+                               descricao)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 nome, valor_alvo_centavos, modo, prazo.isoformat() if prazo else None, mensal_centavos,
-                prioridade, int(reserva), hoje.isoformat(),
+                prioridade, int(reserva), hoje.isoformat(), descricao or None,
             ),
         ).lastrowid
 
@@ -469,9 +519,11 @@ def editar(
     prazo: date | None = None,
     mensal_centavos: int | None = None,
     reserva: bool = False,
+    descricao: str = "",
 ) -> None:
     """Troca os dados da meta (o guardado não muda). Marcar como reserva leva a meta pro topo da fila."""
     atual = obter(conn, meta_id)
+    descricao = _validar_descricao(descricao)
     nome, prazo, mensal_centavos = _validar(
         hoje, nome, valor_alvo_centavos, modo, prazo, mensal_centavos, prazo_atual=atual.prazo
     )
@@ -479,13 +531,61 @@ def editar(
     with conn:
         conn.execute(
             """
-            UPDATE metas SET nome = ?, valor_alvo_centavos = ?, modo = ?, prazo = ?, mensal_centavos = ?, reserva = ?
+            UPDATE metas SET nome = ?, valor_alvo_centavos = ?, modo = ?, prazo = ?, mensal_centavos = ?, reserva = ?,
+                descricao = ?
             WHERE id = ?
             """,
-            (nome, valor_alvo_centavos, modo, prazo.isoformat() if prazo else None, mensal_centavos, int(reserva), meta_id),
+            (
+                nome, valor_alvo_centavos, modo, prazo.isoformat() if prazo else None, mensal_centavos, int(reserva),
+                descricao or None, meta_id,
+            ),
         )
     if reserva and not atual.reserva and atual.estado == "ativa":
         _renumerar(conn, [meta_id] + [m.id for m in _ativas(conn) if m.id != meta_id])
+
+
+DESCRICAO_MAX = 120
+PASTA_IMAGENS = "imagens-metas"
+
+
+def _validar_descricao(descricao: str) -> str:
+    descricao = " ".join((descricao or "").split())
+    if len(descricao) > DESCRICAO_MAX:
+        raise ValueError(f"A descrição tem {len(descricao)} caracteres; o máximo é {DESCRICAO_MAX}.")
+    return descricao
+
+
+def pasta_imagens(conn: sqlite3.Connection) -> Path | None:
+    """A pasta das fotos das metas, ao lado do arquivo do banco (nada sai do PC). None com banco em memória."""
+    arquivo = conn.execute("PRAGMA database_list").fetchone()["file"]
+    return Path(arquivo).with_name(PASTA_IMAGENS) if arquivo else None
+
+
+def caminho_imagem(conn: sqlite3.Connection, m: Meta) -> Path | None:
+    """O arquivo da foto da meta, se ela tem uma e o arquivo existe."""
+    pasta = pasta_imagens(conn)
+    if not m.imagem or pasta is None:
+        return None
+    caminho = pasta / m.imagem
+    return caminho if caminho.is_file() else None
+
+
+def trocar_imagem(conn: sqlite3.Connection, meta_id: int, png: bytes | None) -> None:
+    """Põe (`png`, já reduzida por quem chama) ou tira (None) a foto da meta. A antiga é apagada só depois que o
+    banco aponta pra nova: se algo falhar no meio, a meta nunca fica apontando pra arquivo que não existe."""
+    antiga = obter(conn, meta_id).imagem
+    pasta = pasta_imagens(conn)
+    if pasta is None:
+        raise ValueError("Foto de meta precisa de um banco em arquivo.")
+    nova = None
+    if png:
+        pasta.mkdir(exist_ok=True)
+        nova = f"meta-{meta_id}-{uuid.uuid4().hex[:8]}.png"
+        (pasta / nova).write_bytes(png)
+    with conn:
+        conn.execute("UPDATE metas SET imagem = ? WHERE id = ?", (nova, meta_id))
+    if antiga:
+        (pasta / antiga).unlink(missing_ok=True)
 
 
 def _renumerar(conn: sqlite3.Connection, ids_em_ordem: list[int]) -> None:

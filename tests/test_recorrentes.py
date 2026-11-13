@@ -363,6 +363,19 @@ def test_resumo(conn, varias):
     assert rec.resumo(conn, HOJE, "fixos")["saidas_por_mes"] == 150000
 
 
+def test_economia_so_conta_saida_ativa(conn, varias):
+    e = rec.economia(conn, HOJE, {varias["video"], varias["musica"], varias["pausada"], varias["salario"], varias["velha"]})
+    assert e["nomes"] == ["Música", "Vídeo"]  # a pausada, a entrada e a encerrada não entram
+    assert (e["mensal"], e["anual"]) == (3990 + 2190, 12 * (3990 + 2190))
+    assert e["pct_entradas"] == pytest.approx((3990 + 2190) / 520000 * 100)
+
+
+def test_economia_vazia_e_sem_entrada_fixa(conn):
+    rid = _criar(conn)
+    assert rec.economia(conn, HOJE, set())["mensal"] == 0
+    assert rec.economia(conn, HOJE, {rid})["pct_entradas"] is None  # sem salário fixo, sem percentual
+
+
 def test_resumo_vazio(conn):
     assert rec.resumo(conn, HOJE) == {
         "saidas_por_mes": 0, "saidas_por_ano": 0, "entradas_por_mes": 0,
@@ -383,7 +396,7 @@ def test_livre_desconta_previstos_de_saida_e_ignora_entrada_futura(conn):
            cat="Salário")  # entrada futura: não conta
     rec.gerar_pendentes(conn, HOJE)
     assert rel.livre_ate_fim_do_mes(conn, HOJE) == antes - 3990 - 150000
-    assert rel.devo(conn) == 3990  # a assinatura prevista já está na dívida do cartão
+    assert rel.devo(conn) == 0  # prevista ainda não usa o limite do cartão (o Livre já a desconta, acima)
     assert rel.em_conta(conn, HOJE) == 1000000  # nada saiu ainda
 
 

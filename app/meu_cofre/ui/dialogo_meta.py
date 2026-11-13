@@ -9,14 +9,17 @@ Quem abre escuta `gravado(mensagem)` para atualizar a tela.
 import sqlite3
 from datetime import date
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import QBuffer, QByteArray, QIODevice, QRectF, Qt, Signal
+from PySide6.QtGui import QImage, QPainter, QPainterPath, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
     QDialog,
+    QFileDialog,
     QFrame,
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QPushButton,
     QScrollArea,
     QVBoxLayout,
     QWidget,
@@ -89,6 +92,41 @@ def _rotulo(texto: str, nome: str) -> QLabel:
     rotulo = QLabel(texto)
     rotulo.setObjectName(nome)
     return rotulo
+
+
+LADO_DA_FOTO = 480  # a foto guardada: quadrada e pequena (cabe folgada no detalhe da meta)
+
+
+def preparar_foto(caminho: str) -> bytes | None:
+    """A imagem recortada no quadrado do meio e reduzida a LADO_DA_FOTO, em PNG; None se não abrir."""
+    img = QImage(caminho)
+    if img.isNull():
+        return None
+    lado = min(img.width(), img.height())
+    img = img.copy((img.width() - lado) // 2, (img.height() - lado) // 2, lado, lado)
+    img = img.scaled(LADO_DA_FOTO, LADO_DA_FOTO, Qt.AspectRatioMode.IgnoreAspectRatio, Qt.TransformationMode.SmoothTransformation)
+    dados = QByteArray()
+    buffer = QBuffer(dados)
+    buffer.open(QIODevice.OpenModeFlag.WriteOnly)
+    img.save(buffer, "PNG")
+    return bytes(dados)
+
+
+def foto_arredondada(foto: QPixmap, lado: int, raio: int = 10) -> QPixmap:
+    """A foto no tamanho `lado` (preenchendo o quadrado) com os cantos arredondados."""
+    escala = 2
+    px = QPixmap(lado * escala, lado * escala)
+    px.fill(Qt.GlobalColor.transparent)
+    p = QPainter(px)
+    p.setRenderHint(QPainter.RenderHint.Antialiasing)
+    caminho = QPainterPath()
+    caminho.addRoundedRect(QRectF(px.rect()), raio * escala, raio * escala)
+    p.setClipPath(caminho)
+    p.drawPixmap(px.rect(), foto.scaled(px.size(), Qt.AspectRatioMode.KeepAspectRatioByExpanding,
+                                        Qt.TransformationMode.SmoothTransformation))
+    p.end()
+    px.setDevicePixelRatio(escala)
+    return px
 
 
 def _rotulo_erro() -> QLabel:
@@ -179,6 +217,17 @@ class DialogoMeta(QDialog):
         self.erro_nome = _rotulo_erro()
         form.addWidget(self.erro_nome)
 
+        form.addWidget(_rotulo("Por quê (opcional)", "CampoRotulo"))
+        form.addSpacing(4)
+        self.descricao = QLineEdit()
+        self.descricao.setPlaceholderText("Ex.: melhorar o setup pra estudar")
+        self.descricao.setMaxLength(metas.DESCRICAO_MAX)
+        form.addWidget(self.descricao)
+        form.addSpacing(tema.ESPACO + 4)
+        form.addWidget(self._montar_foto())
+        self.erro_foto = _rotulo_erro()
+        form.addWidget(self.erro_foto)
+
         form.addWidget(_rotulo("Quanto você quer juntar (R$)", "CampoRotulo"))
         form.addSpacing(4)
         self.valor = QLineEdit()
@@ -246,7 +295,7 @@ class DialogoMeta(QDialog):
         p = 2 * tema.ESPACO
         caixa.setContentsMargins(p, p, p, p)
         caixa.setSpacing(6)
-        caixa.addWidget(_rotulo("PRÉVIA", "NumeroRotulo"))
+        caixa.addWidget(_rotulo("Prévia", "NumeroRotulo"))
         self.previa_destaque = _rotulo("", "PreviaDestaque")
         self.previa_destaque.setWordWrap(True)
         caixa.addWidget(self.previa_destaque)
@@ -295,8 +344,69 @@ class DialogoMeta(QDialog):
         self.botao_cancelar.clicked.connect(self.reject)
         self.botao_salvar.clicked.connect(self.salvar)
 
+    def _montar_foto(self) -> QWidget:
+        """Foto da meta (opcional): miniatura, "Escolher foto..." e "Tirar foto". Só grava ao salvar."""
+        caixa = QWidget()
+        linha = QHBoxLayout(caixa)
+        linha.setContentsMargins(0, 0, 0, 0)
+        linha.setSpacing(2 * tema.ESPACO)
+        self.miniatura = QLabel()
+        self.miniatura.setObjectName("FotoMeta")
+        self.miniatura.setFixedSize(64, 64)
+        self.miniatura.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.botao_foto = BotaoSecundario("Escolher foto…")
+        self.botao_foto.setProperty("compacto", True)
+        self.botao_foto.setAutoDefault(False)
+        self.botao_foto.clicked.connect(lambda: self.escolher_foto())
+        self.botao_tirar_foto = QPushButton("Tirar foto")
+        self.botao_tirar_foto.setObjectName("BotaoLink")
+        self.botao_tirar_foto.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.botao_tirar_foto.clicked.connect(self.tirar_foto)
+        linha.addWidget(self.miniatura)
+        linha.addWidget(self.botao_foto)
+        linha.addWidget(self.botao_tirar_foto)
+        linha.addStretch(1)
+        self._foto_alterada = False
+        self._foto: bytes | None = None
+        return caixa
+
+    def escolher_foto(self, caminho: str | None = None) -> None:
+        """Abre o seletor de arquivo (ou usa `caminho`, nos testes) e prepara a foto: recorte quadrado, reduzida."""
+        if caminho is None:
+            caminho, _filtro = QFileDialog.getOpenFileName(self, "Foto da meta", "", "Imagens (*.png *.jpg *.jpeg *.webp *.bmp)")
+            if not caminho:
+                return
+        png = preparar_foto(caminho)
+        if png is None:
+            self.erro_foto.setText("!  Não deu pra abrir essa imagem.")
+            return
+        self.erro_foto.setText("")
+        self._foto, self._foto_alterada = png, True
+        self._mostrar_miniatura()
+
+    def tirar_foto(self) -> None:
+        self._foto, self._foto_alterada = None, True
+        self._mostrar_miniatura()
+
+    def _mostrar_miniatura(self) -> None:
+        if self._foto:
+            px = QPixmap()
+            px.loadFromData(self._foto)
+            self.miniatura.setPixmap(foto_arredondada(px, 64))
+            self.miniatura.setText("")
+        else:
+            self.miniatura.setPixmap(QPixmap())
+            self.miniatura.setText("sem foto")
+        self.botao_tirar_foto.setVisible(bool(self._foto))
+        self.botao_foto.setText("Trocar foto…" if self._foto else "Escolher foto…")
+
     def _preencher(self, nome: str, valor_centavos: int | None, mensal_centavos: int | None, reserva: bool) -> None:
         m = self._original
+        if m is not None:
+            self.descricao.setText(m.descricao)
+            caminho = metas.caminho_imagem(self.conn, m)
+            self._foto = caminho.read_bytes() if caminho else None
+        self._mostrar_miniatura()
         if m is not None:
             nome, valor_centavos, mensal_centavos, reserva = m.nome, m.valor_alvo_centavos, m.mensal_centavos, m.reserva
         self.nome.setText(nome)
@@ -478,12 +588,16 @@ class DialogoMeta(QDialog):
         if campos is None:
             return False
         try:
+            descricao = self.descricao.text()
             if self.meta_id is None:
-                metas.criar(self.conn, self._hoje, **campos)
+                meta_id = metas.criar(self.conn, self._hoje, **campos, descricao=descricao)
                 mensagem = f"Meta criada: {campos['nome']}"
             else:
-                metas.editar(self.conn, self._hoje, self.meta_id, **campos)
+                meta_id = self.meta_id
+                metas.editar(self.conn, self._hoje, meta_id, **campos, descricao=descricao)
                 mensagem = f"Meta salva: {campos['nome']}"
+            if self._foto_alterada:
+                metas.trocar_imagem(self.conn, meta_id, self._foto)
         except ValueError as erro:  # regra de negócio que a tela não previu (ex.: já existe uma reserva)
             self._mostrar_erro(self.erro_valor, self.valor, str(erro))
             return False

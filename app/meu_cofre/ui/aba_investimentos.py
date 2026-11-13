@@ -12,11 +12,14 @@ import sqlite3
 from collections.abc import Callable
 from datetime import date
 
+import pandas as pd
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
+    QBoxLayout,
     QFrame,
     QGridLayout,
     QHBoxLayout,
+    QLabel,
     QPushButton,
     QScrollArea,
     QSizePolicy,
@@ -27,28 +30,31 @@ from PySide6.QtWidgets import (
 from meu_cofre import cadastros, cotacoes, indicadores, investimentos, renda_variavel
 from meu_cofre.investimentos import NOMES_TIPO, Posicao
 from meu_cofre.lancamentos import formatar_brl, formatar_brl_inteiro
+from meu_cofre.relatorios import top_com_outros
 from meu_cofre.ui import tema
-from meu_cofre.ui.aba_metas import FormMovimento, _acao, _compacto, _rotulo
+from meu_cofre.ui.aba_metas import FormMovimento, _compacto, _rotulo
 from meu_cofre.ui.componentes import (
     BotaoPrimario,
     BotaoSecundario,
+    BotaoMenu,
     Cartao,
     GradeResponsiva,
     NumeroDestaque,
     Pilula,
     RotuloElidido,
-    _espacar_letras,
 )
-from meu_cofre.ui.cartao_acao import CartaoAcao, HistoricoAtivo
+from meu_cofre.ui.cartao_acao import CartaoAcao, HistoricoAtivo, formatar_pct, formatar_quantidade
 from meu_cofre.ui.dialogo_ativo import DialogoAtivo
 from meu_cofre.ui.dialogo_cotacoes import DialogoCotacoes
 from meu_cofre.ui.dialogo_importar_b3 import DialogoImportarB3
 from meu_cofre.ui.dialogo_meta import reais
 from meu_cofre.ui.dialogo_meta_aporte import DialogoMetaAporte
-from meu_cofre.ui.graficos import EstadoVazio, PainelPatrimonio, PainelProventos
+from meu_cofre.ui.graficos import EstadoVazio, PainelPatrimonio, PainelProventos, PainelRosca
 
 LARGURA_MINIMA_NUMERO = 230  # cabe "R$ 123.456,78" em 30 px
-LARGURA_CARTAO_ESTREITO = 520  # abaixo disso, Editar e Encerrar descem pra uma segunda fila
+LARGURA_LADO_A_LADO = 1100  # abaixo disso, a composição desce pra baixo da evolução
+LARGURA_COLUNAS_COMPLETAS = 1000  # abaixo disso, a tabela esconde Quantidade e Preço atual
+LARGURA_ROSCA_LADO_A_LADO = 640  # ao lado do gráfico a legenda fica embaixo; sozinha, ao lado
 ORDEM_DOS_GRUPOS = ("renda_fixa", "tesouro", "acao", "fii")
 
 
@@ -195,7 +201,6 @@ class CartaoAtivo(QFrame):
         a = p.ativo
         self.id_ativo = a.id
         self._tipo_form: str | None = None
-        self._estreito: bool | None = None
         self.setObjectName("AtivoCard")
         encerrado = not a.ativo
 
@@ -216,6 +221,7 @@ class CartaoAtivo(QFrame):
             topo.addWidget(w)
         topo.addStretch(1)
         topo.addWidget(self.vencimento)
+        self._topo = topo  # o "⋯" entra no fim, em _montar_acoes
 
         self.aplicado = _rotulo(formatar_brl(p.aplicado), "AtivoValor")
         aproximado = "≈ " if p.estimado else ""
@@ -233,9 +239,7 @@ class CartaoAtivo(QFrame):
         for coluna, (titulo, valor, apoio) in enumerate(
             (("Aplicado", self.aplicado, None), ("Valor atual", self.valor_atual, self.apoio_valor), ("Rendimento", self.rendimento, self.apoio_rendimento))
         ):
-            rotulo = _rotulo(titulo.upper(), "NumeroRotulo")
-            _espacar_letras(rotulo, 1.0)
-            valores.addWidget(rotulo, 0, coluna)
+            valores.addWidget(_rotulo(titulo, "NumeroRotulo"), 0, coluna)
             valores.addWidget(valor, 1, coluna)
             if apoio is not None:
                 valores.addWidget(apoio, 2, coluna)
@@ -264,7 +268,6 @@ class CartaoAtivo(QFrame):
         coluna.addWidget(self.form)
         coluna.addWidget(self.lista_historico)
         coluna.addLayout(self._fila_principal)
-        coluna.addLayout(self._fila_extra)
 
     def _montar_acoes(self, p: Posicao) -> None:
         a = p.ativo
@@ -280,62 +283,33 @@ class CartaoAtivo(QFrame):
         self.botao_saldo.clicked.connect(lambda: self.atualizar_saldo.emit(self.id_ativo))
         self.botao_metas = _compacto(BotaoSecundario("Ver metas"))
         self.botao_metas.clicked.connect(self.ver_metas.emit)
-        self.botao_editar = _acao("Editar taxa" if a.caixinhas else "Editar")
-        self.botao_editar.clicked.connect(lambda: self.editar.emit(self.id_ativo))
-        self.botao_historico = _acao("Histórico")
-        self.botao_historico.setToolTip("Ver, corrigir ou excluir aportes, resgates e saldos")
-        self.botao_historico.clicked.connect(lambda: self.historico.emit(self.id_ativo))
-        self.botao_encerrar = _acao("Encerrar", perigo=True)
-        self.botao_encerrar.setToolTip("Tira da lista (o histórico fica). Resgate tudo antes")
-        self.botao_encerrar.clicked.connect(lambda: self.encerrar.emit(self.id_ativo))
-        self.botao_reativar = _acao("Reativar")
+        self.botao_reativar = _compacto(BotaoSecundario("Reativar"))
         self.botao_reativar.clicked.connect(lambda: self.reativar.emit(self.id_ativo))
+        # Histórico, Editar e Encerrar no "⋯"; caixinhas: o dinheiro se move na aba Metas, então só a taxa se edita aqui
+        self.botao_menu = BotaoMenu(f"Ações de {a.nome}", "Histórico, editar ou encerrar")
+        self.botao_historico = self.botao_menu.acao("Histórico", lambda: self.historico.emit(self.id_ativo))
+        self.botao_historico.setToolTip("Ver, corrigir ou excluir aportes, resgates e saldos")
+        self.botao_editar = self.botao_menu.acao(
+            "Editar taxa" if a.caixinhas else "Editar", lambda: self.editar.emit(self.id_ativo)
+        )
+        self.botao_menu.separador()
+        self.botao_encerrar = self.botao_menu.acao("Encerrar", lambda: self.encerrar.emit(self.id_ativo))
+        self.botao_encerrar.setToolTip("Tira da lista (o histórico fica). Resgate tudo antes")
+        self.botao_historico.setVisible(not a.caixinhas)
+        self.botao_editar.setVisible(not encerrado)
+        self.botao_encerrar.setVisible(not encerrado and not a.caixinhas)
+        self._topo.addWidget(self.botao_menu)
 
         self._fila_principal = QHBoxLayout()
         self._fila_principal.setSpacing(tema.ESPACO)
-        self._fila_extra = QHBoxLayout()
-        self._fila_extra.setSpacing(tema.ESPACO)
         principais = [self.botao_saldo, self.botao_metas] if a.caixinhas else [self.botao_aportar, self.botao_resgatar, self.botao_saldo]
         if encerrado:
-            principais = []
-        for w in (self.botao_aportar, self.botao_resgatar, self.botao_saldo, self.botao_metas, self.botao_reativar, self.botao_encerrar, self.botao_historico):
-            w.setVisible(False)
+            principais = [self.botao_reativar]
+        for w in (self.botao_aportar, self.botao_resgatar, self.botao_saldo, self.botao_metas, self.botao_reativar):
+            w.setVisible(w in principais)
         for w in principais:
-            w.setVisible(True)
             self._fila_principal.addWidget(w)
-        # caixinhas: o dinheiro se move na aba Metas, então não há o que corrigir aqui
-        historico = [] if a.caixinhas else [self.botao_historico]
-        self._discretas = historico + ([self.botao_reativar] if encerrado else [self.botao_editar] + ([] if a.caixinhas else [self.botao_encerrar]))
-        self.botao_editar.setVisible(not encerrado)
-        for w in self._discretas:
-            w.setVisible(True)
-        self._acomodar_discretas(False)
-
-    def _acomodar_discretas(self, estreito: bool) -> None:
-        """Editar/Encerrar ficam à direita da fila de botões; em cartão estreito, descem pra própria fila."""
-        if estreito == self._estreito:
-            return
-        self._estreito = estreito
-        for fila in (self._fila_principal, self._fila_extra):
-            for w in self._discretas:
-                fila.removeWidget(w)
-        for i in range(self._fila_principal.count() - 1, -1, -1):  # tira o esticador antigo
-            if self._fila_principal.itemAt(i).spacerItem():
-                self._fila_principal.takeAt(i)
-        while self._fila_extra.count():
-            self._fila_extra.takeAt(0)
-        if estreito:
-            self._fila_extra.addStretch(1)
-            destino = self._fila_extra
-        else:
-            self._fila_principal.addStretch(1)
-            destino = self._fila_principal
-        for w in self._discretas:
-            destino.addWidget(w)
-
-    def resizeEvent(self, evento) -> None:
-        self._acomodar_discretas(evento.size().width() < LARGURA_CARTAO_ESTREITO)
-        super().resizeEvent(evento)
+        self._fila_principal.addStretch(1)
 
     # --- Formulário: aportar, resgatar e atualizar saldo -----------------------------------------------
     def abrir_form(self, tipo: str, hoje: date, contas: list[tuple[int, str]]) -> None:
@@ -373,6 +347,113 @@ class CartaoAtivo(QFrame):
         self.movimento.emit(self.id_ativo, self._tipo_form, centavos, conta_id, data)
 
 
+# --- Uma linha da tabela ------------------------------------------------------------------------------
+
+COLUNAS = (("Tipo", 120), ("Quantidade", 100), ("Preço atual", 110), ("Valor total", 130), ("Rent.", 96))
+
+
+def _fila_de_colunas(primeira: QWidget, celulas: list[QWidget], fim: QWidget) -> QHBoxLayout:
+    """Ativo (estica) + as colunas de largura fixa + o fim (a seta): o cabeçalho e as linhas usam a mesma, e alinham."""
+    linha = QHBoxLayout()
+    linha.setContentsMargins(12, 0, 12, 0)
+    linha.setSpacing(tema.ESPACO)
+    linha.addWidget(primeira, 1)
+    for (_t, largura), w in zip(COLUNAS, celulas):
+        w.setFixedWidth(largura)
+        linha.addWidget(w)
+    fim.setFixedWidth(20)
+    linha.addWidget(fim)
+    return linha
+
+
+class CabecalhoTabela(QWidget):
+    def __init__(self, parent: QWidget | None = None):
+        super().__init__(parent)
+        titulos = [_rotulo(t, "NumeroRotulo") for t, _l in COLUNAS]
+        for t in titulos[1:]:
+            t.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        self.opcionais = titulos[1:3]  # Quantidade e Preço atual
+        self.setLayout(_fila_de_colunas(_rotulo("Ativo", "NumeroRotulo"), titulos, QWidget()))
+
+
+class LinhaInvestimento(QFrame):
+    """Um investimento numa linha (ativo, tipo, quantidade, preço, valor, rentabilidade). Clicar abre embaixo o
+    cartão completo, com os números todos e as ações; só o que se abre cresce, a lista fica curta."""
+
+    alternada = Signal(int)
+
+    def __init__(self, p: Posicao | dict, cartao: QWidget, aberta: bool, parent: QWidget | None = None):
+        super().__init__(parent)
+        self.setObjectName("LinhaInvestimento")
+        a = _ativo_de(p)
+        self.id_ativo = a.id
+        self.cartao = cartao
+        if isinstance(p, dict):
+            nome = a.ticker or a.nome
+            apoio = "" if a.nome == nome else a.nome  # o nome do ativo às vezes é o próprio ticker
+            quantidade = formatar_quantidade(p["quantidade"])
+            preco = "—" if p["cotacao"] is None else formatar_brl(p["cotacao"])
+            valor = "—" if p["valor_atual"] is None else formatar_brl(p["valor_atual"])
+            pct = p["resultado_pct"]
+            rent = Pilula("—") if pct is None else Pilula(formatar_pct(pct, sinal=True), "bom" if pct > 0 else "ruim" if pct < 0 else "neutra")
+        else:
+            nome, apoio = a.nome, a.descricao_taxa
+            quantidade = preco = "—"
+            valor = ("≈ " if p.estimado else "") + formatar_brl(p.valor_atual)
+            pct = p.rendimento_pct
+            rent = Pilula("—") if pct is None else Pilula(_pct(pct, sinal=True), "bom" if pct > 0 else "ruim" if pct < 0 else "neutra")
+        marcador = QLabel((nome or "?")[:1].upper())
+        marcador.setObjectName("ItemMarcador")
+        marcador.setProperty("tipo", "saida")
+        marcador.setFixedSize(32, 32)
+        marcador.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        textos = QVBoxLayout()
+        textos.setSpacing(0)
+        self.nome = RotuloElidido(nome, "ItemDescricao")
+        textos.addWidget(self.nome)
+        if apoio:
+            textos.addWidget(RotuloElidido(apoio, "ItemDetalhe"))
+        ativo = QWidget()
+        caixa = QHBoxLayout(ativo)
+        caixa.setContentsMargins(0, 0, 0, 0)
+        caixa.setSpacing(12)
+        caixa.addWidget(marcador)
+        caixa.addLayout(textos, 1)
+        self.valor = _rotulo(valor, "ItemValor")
+        self.rentabilidade = rent
+        celulas = [_rotulo(NOMES_TIPO[a.tipo], "ItemDetalhe"), _rotulo(quantidade, "ItemDetalhe"),
+                   _rotulo(preco, "ItemDetalhe"), self.valor]
+        for c in celulas[1:]:
+            c.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        self.opcionais = celulas[1:3]  # Quantidade e Preço atual: somem em janela estreita (o cartão aberto os tem)
+        fim_rent = QWidget()
+        r = QHBoxLayout(fim_rent)
+        r.setContentsMargins(0, 0, 0, 0)
+        r.addStretch(1)
+        r.addWidget(rent)
+        self.seta = _rotulo("", "FaturaSeta")
+        self._cabeca = QWidget()
+        self._cabeca.setObjectName("LinhaInvestimentoCabeca")
+        self._cabeca.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._cabeca.setMinimumHeight(56)
+        self._cabeca.setLayout(_fila_de_colunas(ativo, celulas + [fim_rent], self.seta))
+        self._cabeca.mouseReleaseEvent = lambda e: self.alternada.emit(self.id_ativo)  # clicar na linha abre/fecha
+        coluna = QVBoxLayout(self)
+        coluna.setContentsMargins(0, 0, 0, 0)
+        coluna.setSpacing(0)
+        coluna.addWidget(self._cabeca)
+        coluna.addWidget(cartao)
+        self.abrir(aberta)
+
+    def abrir(self, aberta: bool) -> None:
+        self.cartao.setVisible(aberta)
+        self.seta.setText("▾" if aberta else "▸")
+
+    @property
+    def aberta(self) -> bool:
+        return not self.cartao.isHidden()
+
+
 # --- A aba --------------------------------------------------------------------------------------
 
 
@@ -389,6 +470,8 @@ class AbaInvestimentos(QScrollArea):
         self._hoje = hoje
         self._mostrar_encerrados = False
         self._historicos_abertos: set[int] = set()
+        self._abertas: set[int] = set()  # linhas da tabela abertas (o cartão completo à mostra)
+        self._colunas_completas = True
         self._status: dict | None = None
         self._atualizando = False
         self.dialogo: DialogoAtivo | None = None
@@ -402,10 +485,14 @@ class AbaInvestimentos(QScrollArea):
         conteudo.setObjectName("Conteudo")
         coluna = QVBoxLayout(conteudo)
         m = 3 * tema.ESPACO
-        coluna.setContentsMargins(m, tema.ESPACO, m, m)
+        coluna.setContentsMargins(m, m, m, m)
         coluna.setSpacing(m)
         coluna.addWidget(self._montar_resumo())
-        coluna.addWidget(self._montar_grafico())
+        self._linha_graficos = QBoxLayout(QBoxLayout.Direction.LeftToRight)  # evolução + composição lado a lado
+        self._linha_graficos.setSpacing(m)
+        self._linha_graficos.addWidget(self._montar_grafico(), 2)
+        self._linha_graficos.addWidget(self._montar_composicao(), 1)
+        coluna.addLayout(self._linha_graficos)
         coluna.addWidget(self._montar_lista())
         coluna.addWidget(self._montar_proventos())
         coluna.addStretch(1)
@@ -413,7 +500,7 @@ class AbaInvestimentos(QScrollArea):
         self.recarregar()
 
     # --- Montagem --------------------------------------------------------------------
-    def _montar_resumo(self) -> Cartao:
+    def _montar_resumo(self) -> QWidget:
         self.botao_novo = BotaoPrimario("+ Novo investimento")
         self.botao_novo.setToolTip("Cadastrar um CDB, uma caixinha, um título do Tesouro, uma ação ou um FII...")
         self.botao_novo.clicked.connect(lambda: self.novo_investimento())
@@ -426,23 +513,28 @@ class AbaInvestimentos(QScrollArea):
         linha.setSpacing(tema.ESPACO)
         linha.addWidget(self.botao_importar)
         linha.addWidget(self.botao_novo)
-        cartao = Cartao("Investimentos", "Patrimônio, rendimento e a previsão até o fim do ano", acao=botoes)
+        self._botoes_cadastro = botoes  # vão pro cabeçalho da lista, junto do que cadastram
         self._patrimonio = NumeroDestaque("Patrimônio hoje", "", "")
         self._aporte = NumeroDestaque("Aporte do mês", "", "")
-        self._aporte_ativos = _rotulo("", "NumeroApoio")
-        self._aporte_ativos.setWordWrap(True)
+        # uma linha só, com "…" e o texto inteiro na dica: quebrada, ela era cortada dentro da grade dos blocos
+        self._aporte_ativos = RotuloElidido("", "NumeroApoio")
         self._aporte.adicionar(self._aporte_ativos)
         self._rendimento = NumeroDestaque("Rendimento no ano", "", "")
         self._pilula_cdi = Pilula("", "neutra")
         self._rendimento.adicionar(self._pilula_cdi)
         self._previsao = NumeroDestaque("Previsão 31/12", "", "", destaque=True)
-        grade = GradeResponsiva(largura_minima_item=LARGURA_MINIMA_NUMERO, espaco=3 * tema.ESPACO)
+        grade = GradeResponsiva(largura_minima_item=LARGURA_MINIMA_NUMERO, espaco=3 * tema.ESPACO, colunas_permitidas=(4, 2, 1))
         for numero in (self._patrimonio, self._aporte, self._rendimento, self._previsao):
-            grade.adicionar(numero)
-        cartao.corpo.addWidget(grade)
+            bloco = Cartao()
+            bloco.corpo.addWidget(numero)
+            grade.adicionar(bloco)
+        topo = QWidget()
+        coluna = QVBoxLayout(topo)
+        coluna.setContentsMargins(0, 0, 0, 0)
+        coluna.setSpacing(tema.ESPACO)
+        coluna.addWidget(grade)
         self.selo = _rotulo("", "SeloTaxas")
         self.selo.setWordWrap(True)
-        cartao.corpo.addWidget(self.selo)
         self.botao_cotacoes = QPushButton("Cotações…")
         self.botao_cotacoes.setObjectName("BotaoLink")
         self.botao_cotacoes.setToolTip("Token gratuito da brapi: histórico de preços e proventos de ações e FIIs")
@@ -455,13 +547,13 @@ class AbaInvestimentos(QScrollArea):
         self.botao_meta_aporte.setCursor(Qt.CursorShape.PointingHandCursor)
         self.botao_meta_aporte.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.botao_meta_aporte.clicked.connect(lambda: self.abrir_meta_aporte())
-        links = QHBoxLayout()
+        links = QHBoxLayout()  # o selo das taxas e os links numa linha só, embaixo dos blocos
         links.setSpacing(2 * tema.ESPACO)
+        links.addWidget(self.selo, 1)
         links.addWidget(self.botao_cotacoes)
         links.addWidget(self.botao_meta_aporte)
-        links.addStretch(1)
-        cartao.corpo.addLayout(links)
-        return cartao
+        coluna.addLayout(links)
+        return topo
 
     def _montar_grafico(self) -> Cartao:
         self._cartao_grafico = Cartao("Patrimônio no ano", "")
@@ -470,9 +562,17 @@ class AbaInvestimentos(QScrollArea):
         self._cartao_grafico.corpo.addWidget(self.grafico, 1)
         return self._cartao_grafico
 
+    def _montar_composicao(self) -> Cartao:
+        self._cartao_composicao = Cartao("Composição da carteira", "Por tipo, pelo valor de hoje")
+        self.composicao = PainelRosca("total", largura_lado_a_lado=LARGURA_ROSCA_LADO_A_LADO)
+        self.composicao.setMinimumHeight(260)
+        self._cartao_composicao.corpo.addWidget(self.composicao, 1)
+        return self._cartao_composicao
+
     def _montar_lista(self) -> Cartao:
         self._cartao_lista = Cartao(
-            "Seus investimentos", "Renda fixa estimada pelas taxas do Banco Central, ações e FIIs pela última cotação; tudo bruto, sem IR"
+            "Seus investimentos", "Renda fixa estimada pelas taxas do Banco Central, ações e FIIs pela última cotação; tudo bruto, sem IR",
+            acao=self._botoes_cadastro,
         )
         self._lista = QVBoxLayout()
         self._lista.setSpacing(tema.ESPACO + 4)
@@ -513,23 +613,30 @@ class AbaInvestimentos(QScrollArea):
         encerrados = [p for p in posicoes if not p.ativo.ativo] + [p for p in acoes if not p["ativo"].ativo]
 
         self._carregar_numeros(r)
-        self._cartao_grafico.titulo.setText(f"PATRIMÔNIO EM {hoje.year}")
+        self._cartao_grafico.titulo.setText(f"Patrimônio em {hoje.year}")
         self.grafico.definir(investimentos.serie_patrimonio_no_ano(self.conn, hoje), hoje.year)
         self._carregar_selo()
 
         self._carregar_proventos(hoje, [p for p in acoes if p["ativo"].ativo])
+        por_tipo = pd.DataFrame(
+            [(NOMES_TIPO[_ativo_de(p).tipo], _valor_do_grupo(p)) for p in ativas], columns=["categoria", "centavos"]
+        ).groupby("categoria", as_index=False)["centavos"].sum()
+        por_tipo = por_tipo[por_tipo["centavos"] > 0]
+        self.composicao.definir(top_com_outros(por_tipo), hoje.year, hoje.month, True,
+                                vazio=("Nada aplicado ainda", "Cadastre um investimento pra ver a divisão"))
 
         self._esvaziar()
+        if ativas or (self._mostrar_encerrados and encerrados):
+            self._lista.addWidget(CabecalhoTabela())
         for tipo in ORDEM_DOS_GRUPOS:
-            grupo = [p for p in ativas if _ativo_de(p).tipo == tipo]
-            if grupo:
-                self._lista.addWidget(self._montar_grupo(tipo, grupo))
+            for p in ativas:
+                if _ativo_de(p).tipo == tipo:
+                    self._lista.addWidget(self._montar_linha(p))
         if self._mostrar_encerrados and encerrados:
-            titulo = _rotulo("ENCERRADOS", "GrupoNome")
-            _espacar_letras(titulo, 1.0)
-            self._lista.addWidget(titulo)
+            self._lista.addWidget(_rotulo("Encerrados", "GrupoNome"))
             for p in encerrados:
-                self._lista.addWidget(self._montar_cartao(p))
+                self._lista.addWidget(self._montar_linha(p))
+        self._aplicar_colunas()
         self._vazio.setVisible(not ativas)
         self.botao_encerrados.setVisible(bool(encerrados))
         self.botao_encerrados.setText(
@@ -540,7 +647,7 @@ class AbaInvestimentos(QScrollArea):
         pat = r.patrimonio
         self._patrimonio.definir(formatar_brl(pat["total"]), "investimentos + caixinhas")
         self._aporte.definir(formatar_brl(r.progresso.aportado), texto_do_aporte(r.progresso))
-        self._aporte_ativos.setText(texto_por_ativo(r.progresso.por_ativo))
+        self._aporte_ativos.setTexto(texto_por_ativo(r.progresso.por_ativo))  # a dica mostra o texto inteiro
         self._aporte_ativos.setVisible(bool(r.progresso.por_ativo))
         rend = r.rendimento_ano
         self._rendimento.definir(
@@ -583,22 +690,26 @@ class AbaInvestimentos(QScrollArea):
                 widget.setParent(None)
                 widget.deleteLater()
 
-    def _montar_grupo(self, tipo: str, posicoes: list) -> QWidget:
-        caixa = QWidget()
-        coluna = QVBoxLayout(caixa)
-        coluna.setContentsMargins(0, 0, 0, 0)
-        coluna.setSpacing(tema.ESPACO)
-        cabecalho = QHBoxLayout()
-        nome = _rotulo("FIIs" if tipo == "fii" else NOMES_TIPO[tipo].upper(), "GrupoNome")
-        _espacar_letras(nome, 1.0)
-        subtotal = _rotulo(formatar_brl(sum(_valor_do_grupo(p) for p in posicoes)), "GrupoSubtotal")
-        cabecalho.addWidget(nome)
-        cabecalho.addStretch(1)
-        cabecalho.addWidget(subtotal)
-        coluna.addLayout(cabecalho)
-        for p in posicoes:
-            coluna.addWidget(self._montar_cartao(p))
-        return caixa
+    def _montar_linha(self, p: Posicao | dict) -> LinhaInvestimento:
+        cartao = self._montar_cartao(p)
+        linha = LinhaInvestimento(p, cartao, _ativo_de(p).id in self._abertas)
+        linha.alternada.connect(self.alternar_linha)
+        return linha
+
+    def linhas(self) -> list[LinhaInvestimento]:
+        return self.findChildren(LinhaInvestimento)
+
+    def _linha(self, ativo_id: int) -> LinhaInvestimento | None:
+        return next((x for x in self.linhas() if x.id_ativo == ativo_id), None)
+
+    def alternar_linha(self, ativo_id: int) -> None:
+        """Clique na linha: abre ou fecha o cartão completo embaixo dela (fica assim ao recarregar)."""
+        self._abrir_linha(ativo_id, ativo_id not in self._abertas)
+
+    def _abrir_linha(self, ativo_id: int, aberta: bool = True) -> None:
+        (self._abertas.add if aberta else self._abertas.discard)(ativo_id)
+        if (linha := self._linha(ativo_id)) is not None:
+            linha.abrir(aberta)
 
     def _montar_cartao(self, p: Posicao | dict) -> CartaoAtivo | CartaoAcao:
         if isinstance(p, dict):
@@ -660,6 +771,7 @@ class AbaInvestimentos(QScrollArea):
         self._fechar_formularios(menos=ativo_id)
         cartao = self.cartao_do_ativo(ativo_id)
         if cartao is not None:
+            self._abrir_linha(ativo_id)
             cartao.abrir_form(tipo, self._hoje(), self._contas_do_formulario())
 
     def _fechar_formularios(self, menos: int | None = None) -> None:
@@ -672,6 +784,7 @@ class AbaInvestimentos(QScrollArea):
         self._fechar_formularios(menos=ativo_id)
         cartao = self.cartao_da_acao(ativo_id)
         if cartao is not None:
+            self._abrir_linha(ativo_id)
             cartao.abrir_form(modo, self._hoje(), self._contas_do_formulario())
 
     def _operacao_rv(self, ativo_id: int, dados: dict) -> None:
@@ -708,6 +821,7 @@ class AbaInvestimentos(QScrollArea):
             cartao.mostrar_historico(None)
         else:
             self._historicos_abertos.add(ativo_id)
+            self._abrir_linha(ativo_id)
             cartao.mostrar_historico(investimentos.historico(self.conn, ativo_id))
 
     def _salvar_operacao(self, ativo_id: int, d: dict) -> None:
@@ -832,3 +946,17 @@ class AbaInvestimentos(QScrollArea):
 
     def editar_investimento(self, ativo_id: int) -> DialogoAtivo | None:
         return self._abrir_dialogo(ativo_id)
+
+    def resizeEvent(self, evento) -> None:
+        estreita = evento.size().width() < LARGURA_LADO_A_LADO
+        direcao = QBoxLayout.Direction.TopToBottom if estreita else QBoxLayout.Direction.LeftToRight
+        if self._linha_graficos.direction() != direcao:
+            self._linha_graficos.setDirection(direcao)
+        self._colunas_completas = evento.size().width() >= LARGURA_COLUNAS_COMPLETAS
+        self._aplicar_colunas()
+        super().resizeEvent(evento)
+
+    def _aplicar_colunas(self) -> None:
+        for w in self.findChildren(LinhaInvestimento) + self.findChildren(CabecalhoTabela):
+            for c in w.opcionais:
+                c.setVisible(self._colunas_completas)

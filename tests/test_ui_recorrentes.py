@@ -4,13 +4,13 @@ from datetime import date
 
 import pytest
 from conftest import id_cat, id_conta
-from PySide6.QtCore import QDate
+from PySide6.QtCore import QDate, QPoint
 from PySide6.QtWidgets import QApplication
 
 from meu_cofre import lancamentos as lanc
 from meu_cofre import recorrentes as rec
 from meu_cofre.ui import tema
-from meu_cofre.ui.aba_recorrentes import AbaRecorrentes, texto_situacao
+from meu_cofre.ui.aba_recorrentes import AbaRecorrentes, proximas_cobrancas, texto_situacao
 from meu_cofre.ui.dialogo_lancamento import DialogoLancamento
 from meu_cofre.ui.dialogo_recorrente import DialogoRecorrente
 from meu_cofre.ui.janela import JanelaPrincipal
@@ -70,18 +70,24 @@ def test_aba_vazia_mostra_o_estado_vazio_com_dica(app, conn):
     assert aba._vazio.isVisibleTo(aba)
     assert aba._vazio.titulo.text() == "Nenhuma assinatura ou fixo ainda"
     assert "Repetir todo mês" in aba._vazio.dica.text()
-    assert aba.linhas() == [] and aba._saidas.valor.text() == "R$ 0,00"
+    assert aba.linhas() == [] and aba._mensal.valor.text() == "R$ 0,00"
+    assert aba._proximo.valor.text() == "—" and not aba._cartao_proximos.isVisibleTo(aba)
     assert not aba.botao_encerradas.isVisibleTo(aba)
 
 
 def test_aba_numeros_e_grupos(app, conn, varias):
     aba = _aba(conn)
-    assert aba._saidas.valor.text() == "R$ 1.561,80"  # 150000 + 3990 + 2190
-    assert aba._ano.valor.text() == "R$ 18.741,60"
-    assert aba._ano.valor.property("destaque") is True
-    assert aba._entradas.valor.text() == "R$ 5.200,00"
-    assert "1 cobrada · R$ 39,90" in aba._este_mes.apoio.text()  # só o vídeo (dia 7) já foi cobrado
-    assert "2 a cobrar · R$ 1.521,90" in aba._este_mes.apoio.text()
+    assert aba._mensal.valor.text() == "R$ 1.561,80"  # 150000 + 3990 + 2190
+    assert aba._mensal.apoio.text() == "1 já cobrada este mês"  # só o vídeo (dia 7)
+    assert aba._anual.valor.text() == "R$ 18.741,60"
+    assert aba._proximo.valor.text() == "Em 5 dias" and aba._proximo.apoio.text() == "Aluguel · R$ 1.500,00"
+    assert aba._ativas.valor.text() == "3 de 3" and aba._ativas.apoio.text() == "nenhuma pausada"
+    assert aba._cartao_categorias.isVisibleTo(aba)
+    fatias = aba.rosca._vista.chart().series()[0].slices()  # o salário (entrada) não entra
+    assert {(f.label(), round(f.value(), 2)) for f in fatias} == {("Moradia", 1500.0), ("Assinaturas", 61.8)}
+    # próximos: o que ainda cobra este mês e, do que já cobrou, o do mês que vem; entrada não entra
+    assert [(d, n) for d, n, _v in proximas_cobrancas(rec.listar(conn, HOJE), HOJE)] == [
+        (date(2026, 10, 25), "Aluguel"), (date(2026, 10, 28), "Música"), (date(2026, 11, 7), "Vídeo")]
     # cartão antes da conta corrente; dentro do grupo, por nome
     assert _nomes(aba) == ["Música", "Vídeo", "Aluguel", "Salário"]
     linhas = {l.nome.texto(): l for l in aba.linhas()}
@@ -91,15 +97,17 @@ def test_aba_numeros_e_grupos(app, conn, varias):
     assert linhas["Música"].situacao.text() == "cobra em 8 dias"
     assert linhas["Vídeo"].quando.texto() == "todo dia 7 · Assinaturas"
     assert linhas["Aluguel"].quando.texto() == "todo dia 25 · Boleto · Moradia"
-    assert linhas["Vídeo"].historico.texto() == "desde set/2026 · R$ 80 até hoje"  # 2 cobranças de 39,90
+    assert linhas["Vídeo"].toolTip() == "desde set/2026 · R$ 80 até hoje"  # 2 cobranças de 39,90
+    assert linhas["Aluguel"].marcador.property("tipo") == "logo" and not linhas["Aluguel"].marcador.pixmap().isNull()
+    assert linhas["Vídeo"].marcador.text() == "V"  # sem par: a inicial
 
 
 def test_aba_filtros(app, conn, varias):
     aba = _aba(conn)
     aba.filtro.clicar("Assinaturas")
-    assert _nomes(aba) == ["Música", "Vídeo"] and aba._entradas.valor.text() == "R$ 0,00"
+    assert _nomes(aba) == ["Música", "Vídeo"] and aba._mensal.valor.text() == "R$ 61,80"
     aba.filtro.clicar("Fixos")
-    assert _nomes(aba) == ["Aluguel", "Salário"] and aba._saidas.valor.text() == "R$ 1.500,00"
+    assert _nomes(aba) == ["Aluguel", "Salário"] and aba._mensal.valor.text() == "R$ 1.500,00"
     aba.filtro.clicar("Ambos")
     assert len(aba.linhas()) == 4
 
@@ -109,6 +117,18 @@ def test_filtro_sem_resultado_mas_com_dados_diz_qual_falta(app, conn):
     aba = _aba(conn)
     aba.filtro.clicar("Fixos")
     assert aba._vazio.isVisibleTo(aba) and aba._vazio.titulo.text() == "Nenhum gasto fixo por aqui"
+
+
+def test_proximas_cobrancas_ajusta_o_dia_e_vira_o_ano(conn):
+    _criar(conn, "Fim do mês", dia=31, inicio=date(2026, 9, 1))
+    _criar(conn, "Pausada", dia=21, inicio=date(2026, 9, 1))
+    rec.pausar(conn, 2, date(2026, 11, 20))
+    hoje = date(2026, 11, 20)
+    rec.gerar_pendentes(conn, hoje)  # o app gera os previstos do mês ao abrir
+    assert proximas_cobrancas(rec.listar(conn, hoje), hoje) == [(date(2026, 11, 30), "Fim do mês", 3990)]  # 31 → 30
+    dez = date(2026, 12, 31)
+    rec.gerar_pendentes(conn, dez)
+    assert proximas_cobrancas(rec.listar(conn, dez), dez)[0][0] == date(2027, 1, 31)  # já cobrou: janeiro
 
 
 def test_situacoes():
@@ -125,14 +145,15 @@ def test_pausar_e_retomar_pela_aba(app, conn, varias):
     aba.alterado.connect(avisos.append)
     musica = next(l for l in aba.linhas() if l.nome.texto() == "Música")
     assert musica.botao_pausa.text() == "Pausar"
-    musica.botao_pausa.click()
+    musica.botao_pausa.trigger()
     assert avisos == ["Pausado: Música"]
     musica = next(l for l in aba.linhas() if l.nome.texto() == "Música")
     assert musica.situacao.text() == "! pausada" and musica.botao_pausa.text() == "Retomar"
-    assert aba._saidas.valor.text() == "R$ 1.539,90"  # a pausada sai da conta
+    assert aba._mensal.valor.text() == "R$ 1.539,90"  # a pausada sai da conta
+    assert aba._ativas.valor.text() == "2 de 3" and aba._ativas.apoio.text() == "1 pausada"
     assert conn.execute("SELECT COUNT(*) FROM lancamentos WHERE descricao = 'Música' AND status = 'previsto'").fetchone()[0] == 0
 
-    musica.botao_pausa.click()
+    musica.botao_pausa.trigger()
     assert avisos[-1] == "Retomado: Música"
     musica = next(l for l in aba.linhas() if l.nome.texto() == "Música")
     assert musica.situacao.text() == "cobra em 8 dias"  # o previsto do mês voltou
@@ -143,11 +164,11 @@ def test_encerrar_pede_confirmacao_na_propria_linha(app, conn, varias):
     avisos = []
     aba.alterado.connect(avisos.append)
     video = next(l for l in aba.linhas() if l.nome.texto() == "Vídeo")
-    video.botao_encerrar.click()
-    assert video.confirmando and avisos == []
+    video.botao_encerrar.trigger()
+    assert video.confirmando and avisos == [] and not video.botao_menu.isVisibleTo(aba)
     video.botao_nao.click()
     assert not video.confirmando and rec.obter(conn, 1)["ativa"] == 1
-    video.botao_encerrar.click()
+    video.botao_encerrar.trigger()
     video.botao_sim.click()
     assert rec.obter(conn, 1)["ativa"] == 0 and avisos == ["Encerrado: Vídeo. O histórico fica."]
     assert "Vídeo" not in _nomes(aba)
@@ -162,7 +183,7 @@ def test_mostrar_encerradas_recolhido_por_padrao(app, conn, varias):
     assert "Vídeo" in _nomes(aba) and aba.botao_encerradas.text() == "Esconder encerradas"
     video = next(l for l in aba.linhas() if l.nome.texto() == "Vídeo")
     assert video.situacao.text() == "encerrada" and not video._acoes.isVisibleTo(aba)  # sem ações
-    assert aba._saidas.valor.text() == "R$ 1.521,90"  # encerrada não conta nos números
+    assert aba._mensal.valor.text() == "R$ 1.521,90"  # encerrada não conta nos números
     aba.botao_encerradas.click()
     assert "Vídeo" not in _nomes(aba)
 
@@ -176,23 +197,21 @@ def test_so_encerradas_nao_mostra_vazio_quando_expandidas(app, conn):
     assert not aba._vazio.isVisibleTo(aba) and _nomes(aba) == ["Streaming"]
 
 
-def test_aba_sem_corte_em_940px(app, conn, varias):
+def _y(aba, w):
+    return w.mapTo(aba.widget(), QPoint(0, 0)).y()
+
+
+def test_aba_sem_corte_em_940px_e_proximos_descem(app, conn, varias):
     aba = _aba(conn, (940, 1000))
-    assert aba._colunas_numeros == 2
     assert not aba.horizontalScrollBar().isVisible()
+    assert _y(aba, aba._cartao_proximos) > _y(aba, aba._cartao_lista)  # estreita: embaixo da lista
     for l in aba.linhas():
         assert l.width() <= aba.viewport().width()
         assert l.situacao.isVisible() and l.valor.isVisible()
+        assert l._acoes.x() + l._acoes.width() <= l.width()
     aba.resize(1400, 900)
     QApplication.processEvents()
-    assert aba._colunas_numeros == 4
-
-
-def test_linha_estreita_poe_as_acoes_embaixo(app, conn, varias):
-    aba = _aba(conn, (640, 900))
-    linha = aba.linhas()[0]
-    assert linha._acoes.y() > linha.nome.y()  # embaixo do texto
-    assert linha._acoes.x() + linha._acoes.width() <= linha.width()
+    assert _y(aba, aba._cartao_proximos) == _y(aba, aba._cartao_lista)  # larga: ao lado
 
 
 def test_editar_pela_aba_abre_o_dialogo_e_atualiza(app, conn, varias):
@@ -200,7 +219,7 @@ def test_editar_pela_aba_abre_o_dialogo_e_atualiza(app, conn, varias):
     avisos = []
     aba.alterado.connect(avisos.append)
     linha = next(l for l in aba.linhas() if l.nome.texto() == "Música")
-    linha.botao_editar.click()
+    linha.botao_editar.trigger()
     d = aba.dialogo
     assert isinstance(d, DialogoRecorrente) and d.descricao.text() == "Música"
     d.valor.setText("29,90")
@@ -482,3 +501,53 @@ def test_reativar_encerrada_pela_lista(app, conn, varias):
     assert avisos == ["Reativado: Vídeo. Volta a cobrar a partir deste mês."]
     ativo = next(l for l in aba.linhas() if l.nome.texto() == "Vídeo")
     assert not ativo.botao_reativar.isVisibleTo(aba) and ativo._acoes.isVisibleTo(aba)
+
+
+# --- Simulador "E se eu cancelasse?" (#62) ------------------------------------------------------
+
+
+def test_gasto_anual_mostra_o_percentual_das_entradas_fixas(app, conn, varias):
+    aba = _aba(conn)
+    assert aba._anual.apoio.text() == "30% das entradas fixas"  # 1561,80 de 5200,00
+
+
+def test_simulacao_marca_soma_e_nao_muda_nada(app, conn, varias):
+    rec.pausar(conn, next(i for i, n in _ids(conn).items() if n == "Música"), HOJE)
+    aba = _aba(conn)
+    assert aba.barra_simulacao.isHidden() and all(l.simular.isHidden() for l in aba.linhas())
+    aba.botao_simular.click()
+    linhas = {l.nome.texto(): l for l in aba.linhas()}
+    assert not aba.barra_simulacao.isHidden() and not aba.botao_meta.isEnabled()
+    assert not linhas["Vídeo"].simular.isHidden() and not linhas["Aluguel"].simular.isHidden()
+    assert linhas["Música"].simular.isHidden() and linhas["Salário"].simular.isHidden()  # pausada e entrada: fora
+    linhas["Vídeo"].simular.setChecked(True)
+    linhas["Aluguel"].simular.setChecked(True)
+    assert aba.texto_simulacao.texto() == "Cancelando Vídeo e Aluguel"
+    assert aba.valor_simulacao.texto() == "sobram R$ 1.539,90/mês · R$ 18.478,80/ano"
+    assert aba.apoio_simulacao.texto().startswith("29,6% das entradas fixas")
+    assert aba.botao_simular.isHidden()  # na simulação, sai-se pelo botão da barra
+    pedidos = []
+    aba.criar_meta.connect(lambda *a: pedidos.append(a))
+    aba.botao_meta.click()
+    assert pedidos == [("Economia: Vídeo e Aluguel", 1_847_880, 153_990)]  # na ordem da lista
+    aba.recarregar()  # recarregar (ex.: depois de salvar algo) mantém as marcas
+    assert {l.nome.texto() for l in aba.linhas() if l.simular.isChecked()} == {"Aluguel", "Vídeo"}
+    aba.botao_sair_simulacao.click()
+    assert aba.barra_simulacao.isHidden() and not any(l.simular.isChecked() for l in aba.linhas())
+    assert len(rec.listar(conn, HOJE)) == 4  # nada foi encerrado
+
+
+def _ids(conn):
+    return {int(r.id): r.descricao for r in rec.listar(conn, HOJE).itertuples()}
+
+
+def test_guardar_economia_abre_a_meta_preenchida_na_aba_metas(app, conn, varias):
+    j = _janela(conn)
+    j.mostrar_aba("recorrentes")
+    a = j.aba_recorrentes
+    a.simular(True)
+    next(l for l in a.linhas() if l.nome.texto() == "Vídeo").simular.setChecked(True)
+    a.botao_meta.click()
+    d = j.aba_metas.dialogo
+    assert j.aba_atual == "metas" and d is not None and d.meta_id is None
+    assert d.nome.text() == "Economia: Vídeo" and d.valor.text() == "478,80"

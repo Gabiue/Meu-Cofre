@@ -90,7 +90,9 @@ CREATE TABLE IF NOT EXISTS metas (
     reserva             INTEGER NOT NULL DEFAULT 0,    -- 1 = reserva de emergência
     criada_em           TEXT    NOT NULL DEFAULT (date('now', 'localtime')),
     concluida_em        TEXT,
-    arquivada           INTEGER NOT NULL DEFAULT 0
+    arquivada           INTEGER NOT NULL DEFAULT 0,
+    descricao           TEXT,                          -- o "porquê", curto e opcional
+    imagem              TEXT                           -- nome do arquivo em imagens-metas/, ao lado do banco
 );
 
 -- Investimentos (F8). `indexador` + `taxa`: cdi/selic = % do índice (100 = 100% do CDI); ipca = taxa real somada ao

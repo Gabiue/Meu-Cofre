@@ -1,18 +1,22 @@
 """Aba "Metas" (docs/design/telas.md, F7): juntar dinheiro pra algo, com a conta de quanto cabe no mês.
 
-Topo: quanto está guardado, a sobra média real, quanto as metas pedem por mês e quanto sobra pra novas metas.
-Depois, a sugestão de reserva de emergência (enquanto não houver uma), a lista de metas em ordem de prioridade
-(barra de progresso, plano, se cabe na sobra, e as ações: Guardar, Retirar, Editar, subir/descer, Concluir,
-Arquivar) e o simulador "Comprar agora ou parcelar?".
+Topo: quatro blocos (guardado, sobra média real, quanto as metas pedem por mês e quanto sobra pra novas metas).
+Depois, a sugestão de reserva de emergência (enquanto não houver uma) e, lado a lado (empilhados em janela
+estreita), a lista de metas em ordem de prioridade e o detalhe da escolhida: anel de progresso, quanto falta e
+até quando, se cabe na sobra, o ritmo real dos últimos meses, Guardar e Retirar, o menu "⋯" (Editar, subir/descer,
+Concluir, Arquivar) e a evolução mês a mês contra a linha ideal. Por último, o simulador "Comprar agora ou parcelar?".
 Guardar e retirar abrem um formulário na própria meta. `alterado(mensagem)` avisa a janela principal.
 """
 
 import sqlite3
 from collections.abc import Callable
 from datetime import date
+from pathlib import Path
 
-from PySide6.QtCore import QDate, Qt, Signal
+from PySide6.QtCore import QDate, QPointF, QRectF, Qt, Signal
+from PySide6.QtGui import QColor, QFont, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import (
+    QBoxLayout,
     QFrame,
     QGridLayout,
     QHBoxLayout,
@@ -30,6 +34,7 @@ from meu_cofre.lancamentos import formatar_brl, para_centavos
 from meu_cofre.metas import Meta
 from meu_cofre.ui import tema
 from meu_cofre.ui.componentes import (
+    BotaoMenu,
     BarraProgresso,
     BotaoPrimario,
     BotaoSecundario,
@@ -40,10 +45,10 @@ from meu_cofre.ui.componentes import (
     NumeroDestaque,
     Pilula,
     RotuloElidido,
-    _espacar_letras,
     _repolir,
 )
 from meu_cofre.ui.dialogo_meta import (
+    foto_arredondada,
     DialogoMeta,
     explicacao_viabilidade,
     mes_ano,
@@ -52,10 +57,11 @@ from meu_cofre.ui.dialogo_meta import (
     reais,
     texto_atrasos,
 )
-from meu_cofre.ui.graficos import EstadoVazio
+from meu_cofre.ui.graficos import MESES_CURTOS, EstadoVazio
 
-LARGURA_MINIMA_NUMERO = 185
+LARGURA_MINIMA_NUMERO = 220  # cada número num bloco próprio: abaixo disso, 2 × 2
 LARGURA_MINIMA_BLOCO = 300
+LARGURA_LADO_A_LADO = 1100  # abaixo disso, o detalhe da meta desce pra baixo da lista
 PARCELAS_PADRAO = 10
 
 
@@ -82,6 +88,176 @@ def _compacto(botao: QPushButton) -> QPushButton:
     botao.setAutoDefault(False)
     botao.setFocusPolicy(Qt.FocusPolicy.NoFocus)
     return botao
+
+
+def texto_do_prazo(m: Meta, hoje: date) -> str:
+    """Quanto falta e até quando, pro item da lista: "faltam 12 dias · meta para 23/11/2026", "pronta em jul/2027"."""
+    v = m.viabilidade
+    if m.estado != "ativa":
+        return texto_do_plano(m, hoje)
+    if v.situacao == "cumprida":
+        return "valor atingido"
+    if m.modo != "prazo":
+        return f"pronta em {mes_ano(v.pedida)}"
+    dias = (m.prazo - hoje).days
+    if dias < 0:
+        return f"prazo venceu em {m.prazo:%d/%m/%Y}"
+    falta = f"faltam {dias} dias" if dias <= 60 else f"faltam {plural_meses(metas.meses_de_diferenca(hoje, m.prazo))}"
+    return f"{falta} · meta para {m.prazo:%d/%m/%Y}"
+
+
+def texto_do_ritmo(m: Meta, ritmo: int | None) -> tuple[str, str] | None:
+    """(texto, variante da pílula) comparando o que entrou de fato por mês com o que o plano pede; None sem dado."""
+    v = m.viabilidade
+    if ritmo is None or v is None or v.situacao == "cumprida" or not v.necessario:
+        return None
+    texto = f"Você guardou em média {reais(ritmo)}/mês · o plano pede {reais(v.necessario)}"
+    return texto, "bom" if ritmo >= v.necessario else "atencao"
+
+
+class AnelProgresso(QLabel):
+    """O percentual no centro de um anel: o arco cheio é o progresso (o texto é o próprio QLabel)."""
+
+    LADO = 96
+
+    def __init__(self, fracao: float, apagada: bool = False, parent: QWidget | None = None):
+        super().__init__(f"{int(fracao * 100)}%", parent)
+        self._fracao, self._apagada = fracao, apagada
+        self.setObjectName("MetaAnel")
+        self.setFixedSize(self.LADO, self.LADO)
+        self.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+    def paintEvent(self, evento) -> None:
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        espessura = 9
+        r = QRectF(self.rect()).adjusted(espessura, espessura, -espessura, -espessura)
+        p.setPen(QPen(QColor(tema.BORDA), espessura))
+        p.drawEllipse(r)
+        if self._fracao > 0:
+            caneta = QPen(QColor(tema.TEXTO_APAGADO if self._apagada else tema.VERDE), espessura)
+            caneta.setCapStyle(Qt.PenCapStyle.RoundCap)
+            p.setPen(caneta)
+            p.drawArc(r, 90 * 16, -int(self._fracao * 360 * 16))  # do topo, no sentido do relógio
+        p.end()
+        super().paintEvent(evento)
+
+
+class GraficoEvolucao(QWidget):
+    """Guardado no fim de cada mês (linha cheia) e onde deveria estar pelo plano (tracejada), de 0 ao alvo.
+
+    A linha ideal: no modo mensal, o mensal acumulado desde o primeiro mês; no modo prazo, uma reta de zero até o
+    alvo no mês do prazo.
+    """
+
+    ALTURA = 150
+
+    def __init__(
+        self, pontos: list[tuple[date, int]], alvo: int, prazo: date | None = None, mensal: int | None = None,
+        parent: QWidget | None = None,
+    ):
+        super().__init__(parent)
+        self._pontos, self._alvo, self._prazo, self._mensal = pontos, alvo, prazo, mensal
+        self.setFixedHeight(self.ALTURA)
+
+    def ideal(self, i: int) -> int | None:
+        """Quanto o plano pedia guardado no fim do i-ésimo mês (sem plano: None)."""
+        if self._mensal:
+            return min(self._alvo, self._mensal * (i + 1))
+        if self._prazo is None:
+            return None
+        total = metas.meses_ate_prazo(self._pontos[0][0], self._prazo)  # a mesma conta do plano mensal
+        return min(self._alvo, round(self._alvo * (i + 1) / total))
+
+    def paintEvent(self, evento) -> None:
+        if not self._pontos:
+            return
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        esq, dir_, topo, base = 44.0, self.width() - 12.0, 8.0, self.height() - 22.0
+        n = len(self._pontos)
+        fonte = QFont(self.font())
+        fonte.setPixelSize(tema.PX_RODAPE)
+        p.setFont(fonte)
+
+        def x(i: int) -> float:
+            return esq + (dir_ - esq) * (i / (n - 1) if n > 1 else 0.5)
+
+        def y(c: int) -> float:
+            return base - (base - topo) * min(max(c / self._alvo, 0), 1)
+
+        p.setPen(QColor(tema.TEXTO_APAGADO))
+        for frac, rotulo in ((0, "0%"), (0.5, "50%"), (1, "100%")):
+            yy = base - (base - topo) * frac
+            p.drawText(QRectF(0, yy - 8, esq - 8, 16), Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter, rotulo)
+            p.setPen(QPen(QColor(tema.BORDA), 1))
+            p.drawLine(QPointF(esq, yy), QPointF(dir_, yy))
+            p.setPen(QColor(tema.TEXTO_APAGADO))
+        for i in sorted({0, n // 2, n - 1}):
+            mes = self._pontos[i][0]
+            p.drawText(QRectF(x(i) - 30, base + 4, 60, 16), Qt.AlignmentFlag.AlignCenter, f"{MESES_CURTOS[mes.month - 1]}")
+        ideais = [self.ideal(i) for i in range(n)]
+        if ideais[0] is not None:
+            caneta = QPen(QColor(tema.DOURADO), 1.5, Qt.PenStyle.DashLine)
+            p.setPen(caneta)
+            p.drawPolyline([QPointF(x(i), y(c)) for i, c in enumerate(ideais)])
+        p.setPen(QPen(QColor(tema.VERDE), 2))
+        reais_ = [QPointF(x(i), y(c)) for i, (_m, c) in enumerate(self._pontos)]
+        p.drawPolyline(reais_)
+        p.setBrush(QColor(tema.VERDE))
+        p.setPen(QPen(QColor(tema.CARTAO), 2))
+        p.drawEllipse(reais_[-1], 5, 5)
+
+
+class ItemMeta(QFrame):
+    """Uma meta na lista: inicial, nome, percentual, barra, quanto já tem e quanto falta. Clicar escolhe a meta."""
+
+    clicado = Signal(int)
+
+    def __init__(
+        self, m: Meta, hoje: date, selecionada: bool, foto: Path | None = None, parent: QWidget | None = None
+    ):
+        super().__init__(parent)
+        self.id_meta = m.id
+        encerrada = m.estado != "ativa"
+        self.setObjectName("MetaItem")
+        self.setProperty("selecionada", selecionada)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        marcador = QLabel(m.nome[:1].upper())
+        marcador.setObjectName("ItemMarcador")
+        marcador.setProperty("tipo", "saida")
+        marcador.setFixedSize(40, 40)
+        marcador.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        if foto is not None:  # a foto no lugar da inicial
+            marcador.setPixmap(foto_arredondada(QPixmap(str(foto)), 40, 8))
+            marcador.setProperty("tipo", "foto")
+        self.marcador = marcador
+        self.nome = RotuloElidido(m.nome, "MetaNome")
+        self.nome.setProperty("encerrada", encerrada)
+        self.percentual = _rotulo(f"{int(m.progresso * 100)}%", "MetaPct")
+        self.percentual.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        topo = QHBoxLayout()
+        topo.addWidget(self.nome, 1)
+        topo.addWidget(self.percentual)
+        self.barra = BarraProgresso(m.progresso, apagada=encerrada)
+        self.valores = RotuloElidido(f"{reais(m.guardado)} de {reais(m.valor_alvo_centavos)} · {texto_do_prazo(m, hoje)}", "ItemDetalhe")
+        textos = QVBoxLayout()
+        textos.setSpacing(6)
+        textos.addLayout(topo)
+        if m.descricao:
+            textos.addWidget(RotuloElidido(m.descricao, "ItemDetalhe"))
+        textos.addWidget(self.barra)
+        textos.addWidget(self.valores)
+        linha = QHBoxLayout(self)
+        linha.setContentsMargins(12, 12, 12, 12)
+        linha.setSpacing(12)
+        linha.addWidget(marcador, 0, Qt.AlignmentFlag.AlignTop)
+        linha.addLayout(textos, 1)
+
+    def mouseReleaseEvent(self, evento) -> None:
+        if evento.button() == Qt.MouseButton.LeftButton:
+            self.clicado.emit(self.id_meta)
+        super().mouseReleaseEvent(evento)
 
 
 def texto_do_plano(m: Meta, hoje: date) -> str:
@@ -122,7 +298,6 @@ class FormMovimento(QFrame):
 
         self.titulo = _rotulo("", "NumeroRotulo")
         self.titulo.setWordWrap(True)
-        _espacar_letras(self.titulo, 1.0)
         grade.addWidget(self.titulo, 0, 0, 1, 3)
         self.valor = QLineEdit()
         self.valor.setObjectName("CampoValor")
@@ -157,7 +332,7 @@ class FormMovimento(QFrame):
     def preparar(
         self, titulo: str, rotulo_conta: str, botao: str, valor_centavos: int | None, hoje: date, contas: list[tuple[int, str]]
     ) -> None:
-        self.titulo.setText(titulo.upper())
+        self.titulo.setText(titulo)
         self.rotulo_conta.setText(rotulo_conta)
         self.botao_confirmar.setText(botao)
         self.valor.setText(formatar_brl(valor_centavos).removeprefix("R$ ") if valor_centavos else "")
@@ -199,7 +374,7 @@ class FormMovimento(QFrame):
 
 
 class CartaoMeta(QFrame):
-    """Uma meta: nome, barra de progresso, plano, se cabe na sobra e as ações."""
+    """O detalhe da meta escolhida: anel, quanto tem e quanto falta, plano, se cabe na sobra, ritmo, ações e evolução."""
 
     guardar = Signal(int)
     retirar = Signal(int)
@@ -210,7 +385,11 @@ class CartaoMeta(QFrame):
     reativar = Signal(int)
     movimento = Signal(int, str, int, int, date)  # id, "guardar" | "retirar", centavos, conta, data
 
-    def __init__(self, m: Meta, hoje: date, sobra: int, posicao: int = 0, total: int = 1, parent: QWidget | None = None):
+    def __init__(
+        self, m: Meta, hoje: date, sobra: int, posicao: int = 0, total: int = 1,
+        evolucao: list[tuple[date, int]] | None = None, ritmo: int | None = None, foto: Path | None = None,
+        parent: QWidget | None = None,
+    ):
         super().__init__(parent)
         self.meta = m
         self.id_meta = m.id
@@ -231,40 +410,67 @@ class CartaoMeta(QFrame):
         self.pilula = Pilula(texto, variante)
         if v is not None and v.situacao in ("parcial", "nao_cabe"):
             self.pilula.setToolTip(explicacao_viabilidade(v, sobra))
-        self.botao_sobe = _acao("↑", largura=34)
-        self.botao_sobe.setToolTip("Mais prioridade")
-        self.botao_sobe.setEnabled(not encerrada and posicao > 0)
-        self.botao_sobe.clicked.connect(lambda: self.mover.emit(self.id_meta, -1))
-        self.botao_desce = _acao("↓", largura=34)
-        self.botao_desce.setToolTip("Menos prioridade")
-        self.botao_desce.setEnabled(not encerrada and posicao < total - 1)
-        self.botao_desce.clicked.connect(lambda: self.mover.emit(self.id_meta, +1))
-
+        linha_nome = QHBoxLayout()
+        linha_nome.setSpacing(tema.ESPACO)
+        linha_nome.addWidget(self.nome)
+        linha_nome.addWidget(self.pilula_reserva)
+        linha_nome.addStretch(1)
+        linha_nome.addWidget(self.pilula)
+        linha_nome.addWidget(self._montar_menu(posicao, total, encerrada))
+        self.descricao = RotuloElidido(m.descricao, "MetaInfo")
+        self.descricao.setVisible(bool(m.descricao))
+        cabeca = QVBoxLayout()
+        cabeca.setSpacing(2)
+        cabeca.addLayout(linha_nome)
+        cabeca.addWidget(self.descricao)
         topo = QHBoxLayout()
-        topo.setSpacing(tema.ESPACO)
-        topo.addWidget(self.nome)
-        topo.addWidget(self.pilula_reserva)
-        topo.addStretch(1)
-        topo.addWidget(self.pilula)
-        if not encerrada:
-            topo.addWidget(self.botao_sobe)
-            topo.addWidget(self.botao_desce)
+        topo.setSpacing(2 * tema.ESPACO)
+        self.foto = QLabel()
+        self.foto.setVisible(foto is not None)
+        if foto is not None:
+            self.foto.setPixmap(foto_arredondada(QPixmap(str(foto)), 72, 10))
+        topo.addWidget(self.foto, 0, Qt.AlignmentFlag.AlignTop)
+        topo.addLayout(cabeca, 1)
 
-        self.barra = BarraProgresso(m.progresso, apagada=encerrada)
-        self.percentual = _rotulo(f"{int(m.progresso * 100)}%", "MetaPct")
-        self.percentual.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-        progresso = QHBoxLayout()
-        progresso.setSpacing(2 * tema.ESPACO)
-        progresso.addWidget(self.barra, 1, Qt.AlignmentFlag.AlignVCenter)
-        progresso.addWidget(self.percentual)
-
+        self.percentual = AnelProgresso(m.progresso, apagada=encerrada)
         self.guardado = _rotulo(f"{formatar_brl(m.guardado)} de {formatar_brl(m.valor_alvo_centavos)}", "MetaGuardado")
+        self.barra = BarraProgresso(m.progresso, apagada=encerrada)
         self.plano = RotuloElidido(texto_do_plano(m, hoje), "MetaInfo")
-        self.plano.setAlignment(Qt.AlignmentFlag.AlignRight)
+        self.prazo = RotuloElidido(texto_do_prazo(m, hoje), "MetaInfo")
+        # no modo mensal o plano já diz "pronta em ..."; o prazo só acrescenta no modo prazo
+        self.prazo.setVisible(not encerrada and m.modo == "prazo" and v is not None and v.situacao != "cumprida")
+        numeros = QVBoxLayout()
+        numeros.setSpacing(6)
+        numeros.addStretch(1)
+        numeros.addWidget(self.guardado)
+        numeros.addWidget(self.barra)
+        numeros.addWidget(self.plano)
+        numeros.addWidget(self.prazo)
+        numeros.addStretch(1)
         valores = QHBoxLayout()
-        valores.setSpacing(2 * tema.ESPACO)
-        valores.addWidget(self.guardado)
-        valores.addWidget(self.plano, 1)
+        valores.setSpacing(3 * tema.ESPACO)
+        valores.addWidget(self.percentual)
+        valores.addLayout(numeros, 1)
+        self.pilula_ritmo = Pilula("")
+        ritmo_txt = texto_do_ritmo(m, ritmo)
+        self.ritmo = _rotulo(ritmo_txt[0] if ritmo_txt else "", "MetaInfo")
+        self.ritmo.setWordWrap(True)
+        if ritmo_txt:
+            self.pilula_ritmo.definir("no ritmo" if ritmo_txt[1] == "bom" else "abaixo do plano", ritmo_txt[1])
+        linha_ritmo = QHBoxLayout()
+        linha_ritmo.setSpacing(tema.ESPACO)
+        linha_ritmo.addWidget(self.pilula_ritmo)
+        linha_ritmo.addWidget(self.ritmo, 1)
+        self.pilula_ritmo.setVisible(bool(ritmo_txt))
+        self.ritmo.setVisible(bool(ritmo_txt))
+        self.grafico = GraficoEvolucao(
+            evolucao or [], m.valor_alvo_centavos,
+            prazo=m.prazo if m.modo == "prazo" else None, mensal=m.mensal_centavos if m.modo != "prazo" else None,
+        )
+        self.titulo_grafico = _rotulo("Evolução", "SimTitulo")
+        tem_historia = len(evolucao or []) > 1  # um mês só não faz linha
+        self.grafico.setVisible(tem_historia)
+        self.titulo_grafico.setVisible(tem_historia)
 
         self.detalhe = _rotulo("", "MetaDetalhe")
         self.detalhe.setWordWrap(True)
@@ -284,11 +490,28 @@ class CartaoMeta(QFrame):
         coluna.setContentsMargins(p, p, p, p)
         coluna.setSpacing(tema.ESPACO)
         coluna.addLayout(topo)
-        coluna.addLayout(progresso)
         coluna.addLayout(valores)
         coluna.addWidget(self.detalhe)
+        coluna.addLayout(linha_ritmo)
         coluna.addWidget(self.form)
         coluna.addLayout(self._acoes)
+        coluna.addSpacing(tema.ESPACO)
+        coluna.addWidget(self.titulo_grafico)
+        coluna.addWidget(self.grafico)
+
+    def _montar_menu(self, posicao: int, total: int, encerrada: bool) -> BotaoMenu:
+        """Editar, prioridade, Concluir e Arquivar num menu "⋯": à vista ficam só Guardar e Retirar."""
+        self.botao_menu = BotaoMenu(f"Ações de {self.meta.nome}", "Editar, mudar a prioridade, concluir ou arquivar")
+        self.botao_editar = self.botao_menu.acao("Editar", lambda: self.editar.emit(self.id_meta))
+        self.botao_sobe = self.botao_menu.acao("Mais prioridade", lambda: self.mover.emit(self.id_meta, -1))
+        self.botao_sobe.setEnabled(posicao > 0)
+        self.botao_desce = self.botao_menu.acao("Menos prioridade", lambda: self.mover.emit(self.id_meta, +1))
+        self.botao_desce.setEnabled(posicao < total - 1)
+        self.botao_menu.separador()
+        self.acao_concluir = self.botao_menu.acao("Concluir", lambda: self.concluir.emit(self.id_meta))
+        self.botao_arquivar = self.botao_menu.acao("Arquivar", lambda: self.arquivar.emit(self.id_meta))
+        self.botao_menu.setVisible(not encerrada)
+        return self.botao_menu
 
     def _montar_acoes(self, m: Meta, encerrada: bool, v) -> QHBoxLayout:
         linha = QHBoxLayout()
@@ -301,12 +524,9 @@ class CartaoMeta(QFrame):
         self.botao_retirar.setEnabled(m.guardado > 0)
         self.botao_retirar.setToolTip("" if m.guardado > 0 else "Não há nada guardado nessa meta")
         self.botao_retirar.clicked.connect(lambda: self.retirar.emit(self.id_meta))
-        self.botao_editar = _acao("Editar")
-        self.botao_editar.clicked.connect(lambda: self.editar.emit(self.id_meta))
-        self.botao_concluir = _compacto(BotaoPrimario("Concluir")) if cumprida else _acao("Concluir")
+        # cumprida: concluir vira a ação principal, à vista (o menu também tem)
+        self.botao_concluir = _compacto(BotaoPrimario("Concluir"))
         self.botao_concluir.clicked.connect(lambda: self.concluir.emit(self.id_meta))
-        self.botao_arquivar = _acao("Arquivar", perigo=True)
-        self.botao_arquivar.clicked.connect(lambda: self.arquivar.emit(self.id_meta))
         self.botao_reativar = _acao("Reativar")
         self.botao_reativar.clicked.connect(lambda: self.reativar.emit(self.id_meta))
 
@@ -314,7 +534,7 @@ class CartaoMeta(QFrame):
             linha.addWidget(self.botao_retirar)
             linha.addStretch(1)
             linha.addWidget(self.botao_reativar)
-            for w in (self.botao_guardar, self.botao_editar, self.botao_concluir, self.botao_arquivar):
+            for w in (self.botao_guardar, self.botao_concluir):
                 w.setVisible(False)
                 linha.addWidget(w)
             self.botao_retirar.setVisible(m.guardado > 0)
@@ -322,10 +542,9 @@ class CartaoMeta(QFrame):
             self.botao_reativar.setVisible(False)
             linha.addWidget(self.botao_guardar)
             linha.addWidget(self.botao_retirar)
-            linha.addStretch(1)
-            linha.addWidget(self.botao_editar)
             linha.addWidget(self.botao_concluir)
-            linha.addWidget(self.botao_arquivar)
+            self.botao_concluir.setVisible(cumprida)
+            linha.addStretch(1)
         return linha
 
     # --- Formulário de guardar/retirar -------------------------------------------------------
@@ -369,8 +588,7 @@ class _BlocoSimulacao(QFrame):
         self.coluna = QVBoxLayout(self)
         self.coluna.setContentsMargins(p, p, p, p)
         self.coluna.setSpacing(6)
-        self.titulo = _rotulo(titulo.upper(), "SimTitulo")
-        _espacar_letras(self.titulo, 1.0)
+        self.titulo = _rotulo(titulo, "SimTitulo")
         self.destaque = _rotulo("", "SimDestaque")
         self.destaque.setWordWrap(True)
         self.pilula = Pilula("", "neutra")
@@ -555,6 +773,8 @@ class AbaMetas(QScrollArea):
         self._hoje = hoje
         self._mostrar_encerradas = False
         self._sobra = 0
+        self._selecionada: int | None = None
+        self._detalhe: CartaoMeta | None = None
         self.dialogo: DialogoMeta | None = None
 
         self.setWidgetResizable(True)
@@ -564,12 +784,17 @@ class AbaMetas(QScrollArea):
         conteudo.setObjectName("Conteudo")
         coluna = QVBoxLayout(conteudo)
         m = 3 * tema.ESPACO
-        coluna.setContentsMargins(m, tema.ESPACO, m, m)
+        coluna.setContentsMargins(m, m, m, m)
         coluna.setSpacing(m)
         coluna.addWidget(self._montar_resumo())
         self._cartao_reserva = self._montar_reserva()
         coluna.addWidget(self._cartao_reserva)
-        coluna.addWidget(self._montar_lista())
+        self._corpo = QBoxLayout(QBoxLayout.Direction.LeftToRight)
+        self._corpo.setSpacing(m)
+        self._corpo.addWidget(self._montar_lista(), 2, Qt.AlignmentFlag.AlignTop)
+        self._lado_detalhe = QVBoxLayout()
+        self._corpo.addLayout(self._lado_detalhe, 3)
+        coluna.addLayout(self._corpo)
         self.simulador = Simulador(conn, hoje)
         self.simulador.criar_meta.connect(self._criar_do_simulador)
         coluna.addWidget(self.simulador)
@@ -578,20 +803,17 @@ class AbaMetas(QScrollArea):
         self.recarregar()
 
     # --- Montagem --------------------------------------------------------------------
-    def _montar_resumo(self) -> Cartao:
-        self.botao_nova = BotaoPrimario("+ Nova meta")
-        self.botao_nova.setToolTip("Criar uma meta")
-        self.botao_nova.clicked.connect(lambda: self.nova_meta())
-        cartao = Cartao("Metas", "O que você está juntando e quanto cabe no mês", acao=self.botao_nova)
+    def _montar_resumo(self) -> GradeResponsiva:
         self._guardado = NumeroDestaque("Guardado", "", "", destaque=True)
         self._sobra_media = NumeroDestaque("Sobra média por mês", "", "")
         self._comprometido = NumeroDestaque("Comprometido com metas", "", "")
         self._livre = NumeroDestaque("Livre pra novas metas", "", "")
-        grade = GradeResponsiva(largura_minima_item=LARGURA_MINIMA_NUMERO, espaco=3 * tema.ESPACO)
+        grade = GradeResponsiva(largura_minima_item=LARGURA_MINIMA_NUMERO, espaco=3 * tema.ESPACO, colunas_permitidas=(4, 2, 1))
         for numero in (self._guardado, self._sobra_media, self._comprometido, self._livre):
-            grade.adicionar(numero)
-        cartao.corpo.addWidget(grade)
-        return cartao
+            bloco = Cartao()
+            bloco.corpo.addWidget(numero)
+            grade.adicionar(bloco)
+        return grade
 
     def _montar_reserva(self) -> Cartao:
         cartao = Cartao("Sugestão")
@@ -616,8 +838,14 @@ class AbaMetas(QScrollArea):
     def _montar_lista(self) -> Cartao:
         self._cartao_lista = Cartao("Suas metas", "Em ordem de prioridade: a de cima recebe a sobra primeiro")
         self._lista = QVBoxLayout()
-        self._lista.setSpacing(tema.ESPACO + 4)
+        self._lista.setSpacing(tema.ESPACO)
         self._cartao_lista.corpo.addLayout(self._lista)
+        self.botao_nova = QPushButton("+ Nova meta")
+        self.botao_nova.setObjectName("NovaMeta")
+        self.botao_nova.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.botao_nova.setToolTip("Criar uma meta")
+        self.botao_nova.clicked.connect(lambda: self.nova_meta())
+        self._cartao_lista.corpo.addWidget(self.botao_nova)
         self._vazio = EstadoVazio("lista", "Nenhuma meta ainda", "Crie uma pra começar: reserva, viagem, cadeira nova...")
         self._vazio.setMinimumHeight(200)
         self._cartao_lista.corpo.addWidget(self._vazio)
@@ -642,14 +870,16 @@ class AbaMetas(QScrollArea):
         self._carregar_reserva(hoje)
 
         self._esvaziar()
-        for i, m in enumerate(ativas):
-            self._lista.addWidget(self._montar_cartao(m, hoje, i, len(ativas)))
+        visiveis = ativas + (encerradas if self._mostrar_encerradas else [])
+        if self._selecionada not in {m.id for m in visiveis}:
+            self._selecionada = visiveis[0].id if visiveis else None
+        for m in ativas:
+            self._lista.addWidget(self._montar_item(m, hoje))
         if self._mostrar_encerradas and encerradas:
-            titulo = _rotulo("CONCLUÍDAS E ARQUIVADAS", "GrupoNome")
-            _espacar_letras(titulo, 1.0)
-            self._lista.addWidget(titulo)
+            self._lista.addWidget(_rotulo("Concluídas e arquivadas", "GrupoNome"))
             for m in encerradas:
-                self._lista.addWidget(self._montar_cartao(m, hoje))
+                self._lista.addWidget(self._montar_item(m, hoje))
+        self._mostrar_detalhe(hoje, ativas, visiveis)
         self._vazio.setVisible(not lista)
         self.botao_encerradas.setVisible(bool(encerradas))
         self.botao_encerradas.setText(
@@ -689,8 +919,35 @@ class AbaMetas(QScrollArea):
                 widget.setParent(None)
                 widget.deleteLater()
 
+    def _montar_item(self, m: Meta, hoje: date) -> ItemMeta:
+        item = ItemMeta(m, hoje, m.id == self._selecionada, metas.caminho_imagem(self.conn, m))
+        item.clicado.connect(self.selecionar)
+        return item
+
+    def _mostrar_detalhe(self, hoje: date, ativas: list[Meta], visiveis: list[Meta]) -> None:
+        """Refaz o painel da meta escolhida (só um existe por vez: o formulário aberto fecha ao trocar de meta)."""
+        if self._detalhe is not None:
+            self._detalhe.setParent(None)
+            self._detalhe.deleteLater()
+            self._detalhe = None
+        m = next((x for x in visiveis if x.id == self._selecionada), None)
+        if m is None:
+            return
+        posicao = next((i for i, x in enumerate(ativas) if x.id == m.id), 0)
+        self._detalhe = self._montar_cartao(m, hoje, posicao, len(ativas))
+        self._lado_detalhe.addWidget(self._detalhe, 0, Qt.AlignmentFlag.AlignTop)
+
+    def selecionar(self, meta_id: int) -> None:
+        if meta_id != self._selecionada:
+            self._selecionada = meta_id
+            self.recarregar()
+
     def _montar_cartao(self, m: Meta, hoje: date, posicao: int = 0, total: int = 1) -> CartaoMeta:
-        cartao = CartaoMeta(m, hoje, self._sobra, posicao, total)
+        cartao = CartaoMeta(
+            m, hoje, self._sobra, posicao, total,
+            evolucao=metas.evolucao(self.conn, m.id, hoje), ritmo=metas.ritmo_medio(self.conn, m.id, hoje),
+            foto=metas.caminho_imagem(self.conn, m),
+        )
         cartao.guardar.connect(lambda i: self.abrir_form(i, "guardar"))
         cartao.retirar.connect(lambda i: self.abrir_form(i, "retirar"))
         cartao.editar.connect(self.editar_meta)
@@ -701,11 +958,16 @@ class AbaMetas(QScrollArea):
         cartao.movimento.connect(self._movimento)
         return cartao
 
-    def cartoes(self) -> list[CartaoMeta]:
-        return self.findChildren(CartaoMeta)
+    def itens(self) -> list[ItemMeta]:
+        """As metas da lista, na ordem em que aparecem."""
+        return [w for i in range(self._lista.count()) if isinstance(w := self._lista.itemAt(i).widget(), ItemMeta)]
 
     def cartao_da_meta(self, meta_id: int) -> CartaoMeta | None:
-        return next((c for c in self.cartoes() if c.id_meta == meta_id), None)
+        """Escolhe a meta (como clicar nela) e devolve o detalhe dela."""
+        if meta_id not in {i.id_meta for i in self.itens()}:
+            return None
+        self.selecionar(meta_id)
+        return self._detalhe
 
     # --- Ações ------------------------------------------------------------------------------
     def mostrar_encerradas(self, mostrar: bool) -> None:
@@ -716,16 +978,13 @@ class AbaMetas(QScrollArea):
         return [(c["id"], c["nome"]) for c in cadastros.contas_por_tipo(self.conn, ("corrente", "dinheiro"))]
 
     def abrir_form(self, meta_id: int, tipo: str) -> None:
-        """Abre o formulário de guardar/retirar na meta; só um fica aberto por vez."""
-        for c in self.cartoes():
-            if c.id_meta != meta_id:
-                c.fechar_form()
+        """Escolhe a meta e abre o formulário de guardar/retirar no detalhe dela."""
         cartao = self.cartao_da_meta(meta_id)
         if cartao is not None:
             cartao.abrir_form(tipo, self._hoje(), self._contas_do_formulario())
 
     def _movimento(self, meta_id: int, tipo: str, centavos: int, conta_id: int, data: date) -> None:
-        cartao = self.cartao_da_meta(meta_id)
+        cartao = self._detalhe
         try:
             nome = metas.obter(self.conn, meta_id).nome
             if tipo == "guardar":
@@ -794,3 +1053,10 @@ class AbaMetas(QScrollArea):
 
     def _criar_do_simulador(self, valor_centavos: int, mensal_centavos: int) -> None:
         self.nova_meta(valor_centavos=valor_centavos, mensal_centavos=mensal_centavos or None)
+
+    def resizeEvent(self, evento) -> None:
+        estreita = evento.size().width() < LARGURA_LADO_A_LADO
+        direcao = QBoxLayout.Direction.TopToBottom if estreita else QBoxLayout.Direction.LeftToRight
+        if self._corpo.direction() != direcao:
+            self._corpo.setDirection(direcao)
+        super().resizeEvent(evento)

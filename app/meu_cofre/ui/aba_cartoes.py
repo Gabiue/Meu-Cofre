@@ -13,7 +13,10 @@ from collections.abc import Callable
 from datetime import date
 
 import pandas as pd
-from PySide6.QtCore import QDate, Qt, Signal
+import math
+
+from PySide6.QtCore import QDate, QEasingCurve, QPointF, QRectF, Qt, QVariantAnimation, Signal
+from PySide6.QtGui import QColor, QFont, QPainter, QPen
 from PySide6.QtWidgets import (
     QFrame,
     QGridLayout,
@@ -43,7 +46,6 @@ from meu_cofre.ui.componentes import (
     Pilula,
     RotuloElidido,
     Segmentado,
-    _espacar_letras,
     _repolir,
 )
 from meu_cofre.ui.dialogo_contas import detalhe_cartao
@@ -136,7 +138,6 @@ class FormPagamento(QFrame):
         grade.setColumnStretch(2, 1)
 
         self.titulo = _rotulo("", "NumeroRotulo")
-        _espacar_letras(self.titulo, 1.0)
         grade.addWidget(self.titulo, 0, 0, 1, 3)
         grade.setRowMinimumHeight(0, 22)
         self.valor = QLineEdit()
@@ -174,7 +175,7 @@ class FormPagamento(QFrame):
 
     def preparar(self, titulo: str, total_centavos: int, hoje: date, contas: list[tuple[int, str]]) -> None:
         """Preenche com o total da fatura, a conta Inter (ou a primeira corrente) e a data de hoje."""
-        self.titulo.setText(titulo.upper())
+        self.titulo.setText(titulo)
         self.valor.setText(formatar_brl(total_centavos).removeprefix("R$ "))
         self.conta.clear()
         for id_, nome in contas:
@@ -434,6 +435,148 @@ class FaturaCard(QFrame):
 # --- A aba -------------------------------------------------------------------------------------
 
 
+class Carteira(QWidget):
+    """Os cartões desenhados como uma carteira: o escolhido na frente, os outros empilhados atrás.
+
+    Clicar num de trás (ou ← / →) o traz pra frente: ele sobe da pilha, passa por cima e desce na frente, e os da
+    frente recuam uma posição. `cartoes` é uma lista de (id, nome, rodapé); a cor de cada um vem de
+    `tema.CORES_CARTAO`, pela posição na lista. Emite `escolhido(id)`.
+    """
+
+    escolhido = Signal(int)
+    LARGURA, ALTURA = 210, 132
+    PASSO_X, PASSO_Y = 22, 16  # deslocamento de cada cartão de trás
+    SUBIDA = 34  # quanto o cartão sobe ao ser puxado
+    DURACAO_MS = 420
+
+    def __init__(self, parent: QWidget | None = None):
+        super().__init__(parent)
+        self._cartoes: list[tuple[int, str, str]] = []
+        self._ordem: list[int] = []  # ids, da frente pra trás
+        self._de: list[int] = []  # ordem antes da animação
+        self._t = 1.0
+        self._anim = QVariantAnimation(self, startValue=0.0, endValue=1.0, duration=self.DURACAO_MS)
+        self._anim.setEasingCurve(QEasingCurve.Type.InOutCubic)
+        self._anim.valueChanged.connect(self._passo)
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        self.setMouseTracking(True)
+
+    def definir(self, cartoes: list[tuple[int, str, str]], atual: int) -> None:
+        """Troca a lista sem animar (ao recarregar). A mesma lista com o mesmo da frente não interrompe a animação."""
+        if cartoes == self._cartoes and atual == self.atual():
+            return
+        self._cartoes = cartoes
+        ids = [c[0] for c in cartoes]
+        i = ids.index(atual)
+        self._ordem = ids[i:] + ids[:i]
+        self._anim.stop()
+        self._t = 1.0
+        n = max(len(ids), 1)
+        self.setFixedSize(self.LARGURA + self.PASSO_X * (n - 1) + 4, self.ALTURA + self.PASSO_Y * (n - 1) + self.SUBIDA + 4)
+        self.update()
+
+    def atual(self) -> int | None:
+        return self._ordem[0] if self._ordem else None
+
+    def clicar(self, cartao_id: int) -> None:
+        """Traz o cartão pra frente (animando) e avisa."""
+        if not self._ordem or cartao_id == self._ordem[0]:
+            return
+        ids = [c[0] for c in self._cartoes]
+        i = ids.index(cartao_id)
+        self._de = self._ordem
+        self._ordem = ids[i:] + ids[:i]
+        self._t = 0.0
+        self._anim.start()
+        self.escolhido.emit(cartao_id)
+
+    def _passo(self, valor) -> None:
+        self._t = float(valor)
+        self.update()
+
+    # --- Geometria -------------------------------------------------------------------
+    def _canto(self, posicao: float) -> QPointF:
+        """Canto superior esquerdo na posição (0 = frente; fracionária durante a animação)."""
+        n = len(self._ordem)
+        return QPointF(2 + self.PASSO_X * posicao, 2 + self.SUBIDA + self.PASSO_Y * (n - 1 - posicao))
+
+    def _desenho(self) -> list[tuple[float, int, QRectF]]:
+        """(profundidade, id, retângulo) de cada cartão, do fundo pra frente."""
+        itens = []
+        for cid in self._ordem:
+            depois = self._ordem.index(cid)
+            antes = self._de.index(cid) if self._t < 1 and self._de else depois
+            pos = antes + (depois - antes) * self._t
+            canto = self._canto(pos)
+            profundidade = pos
+            if depois == 0 and antes > 0:  # o puxado: sobe, passa por cima e desce na frente
+                canto.setY(canto.y() - math.sin(math.pi * self._t) * self.SUBIDA)
+                profundidade = antes if self._t < 0.5 else -1
+            itens.append((profundidade, cid, QRectF(canto.x(), canto.y(), self.LARGURA, self.ALTURA)))
+        return sorted(itens, key=lambda x: -x[0])
+
+    def _cartao_em(self, ponto: QPointF) -> int | None:
+        for _p, cid, ret in reversed(self._desenho()):
+            if ret.contains(ponto):
+                return cid
+        return None
+
+    # --- Eventos ---------------------------------------------------------------------
+    def mousePressEvent(self, evento) -> None:
+        cid = self._cartao_em(evento.position())
+        if cid is not None:
+            self.clicar(cid)
+
+    def mouseMoveEvent(self, evento) -> None:
+        cid = self._cartao_em(evento.position())
+        clicavel = cid is not None and cid != self.atual()
+        self.setCursor(Qt.CursorShape.PointingHandCursor if clicavel else Qt.CursorShape.ArrowCursor)
+        nome = next((c[1] for c in self._cartoes if c[0] == cid), "")
+        self.setToolTip(f"Ver {nome}" if clicavel else "")
+
+    def keyPressEvent(self, evento) -> None:
+        passo = {Qt.Key.Key_Right: 1, Qt.Key.Key_Left: -1}.get(evento.key())
+        if passo and len(self._ordem) > 1:
+            ids = [c[0] for c in self._cartoes]
+            self.clicar(ids[(ids.index(self._ordem[0]) + passo) % len(ids)])
+        else:
+            super().keyPressEvent(evento)
+
+    def paintEvent(self, evento) -> None:
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        cores = {c[0]: tema.CORES_CARTAO[i % len(tema.CORES_CARTAO)] for i, c in enumerate(self._cartoes)}
+        dados = {c[0]: c for c in self._cartoes}
+        for profundidade, cid, ret in self._desenho():
+            p.setPen(Qt.PenStyle.NoPen)
+            p.setBrush(QColor(cores[cid]))
+            p.drawRoundedRect(ret, 12, 12)
+            if profundidade > 0.5:  # os de trás ficam mais apagados
+                p.setBrush(QColor(0, 0, 0, 70))
+                p.drawRoundedRect(ret, 12, 12)
+            _cid, nome, rodape = dados[cid]
+            p.setBrush(QColor(255, 255, 255, 60))  # chip genérico (não é logo de ninguém)
+            p.drawRoundedRect(QRectF(ret.x() + 16, ret.y() + 46, 30, 22), 4, 4)
+            p.setPen(QColor("#ffffff"))
+            fonte = QFont(self.font())
+            fonte.setPixelSize(14)
+            fonte.setWeight(QFont.Weight.DemiBold)
+            p.setFont(fonte)
+            texto = QRectF(ret.x() + 16, ret.y() + 12, ret.width() - 32, 22)
+            p.drawText(texto, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                       p.fontMetrics().elidedText(nome, Qt.TextElideMode.ElideRight, int(texto.width())))
+            fonte.setPixelSize(12)
+            fonte.setWeight(QFont.Weight.Normal)
+            p.setFont(fonte)
+            p.drawText(QRectF(ret.x() + 16, ret.bottom() - 32, ret.width() - 32, 20),
+                       Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, rodape)
+        if self.hasFocus() and self._ordem:
+            ret = next(r for _p, c, r in self._desenho() if c == self._ordem[0])
+            p.setPen(QPen(QColor(tema.VERDE), 2))
+            p.setBrush(Qt.BrushStyle.NoBrush)
+            p.drawRoundedRect(ret.adjusted(-3, -3, 3, 3), 14, 14)
+
+
 class AbaCartoes(QScrollArea):
     """Conteúdo da aba. `hoje` é uma função (a janela principal pode fixar a data nos testes)."""
 
@@ -450,8 +593,6 @@ class AbaCartoes(QScrollArea):
         self._pagando: str | None = None
         self._pago_agora: tuple[int, str, int] | None = None  # (cartão, referência, id do pagamento) recém-feito
         self._desfazendo: str | None = None
-        self._seletor: Segmentado | None = None
-        self._seletor_nomes: list[str] = []
         self._visao = "Aberta"  # qual fatura a rosca mostra: "Aberta" ou "Fechada"
         self._ref_rosca: str | None = None
         self._seg_fatura: Segmentado | None = None
@@ -464,10 +605,8 @@ class AbaCartoes(QScrollArea):
         conteudo.setObjectName("Conteudo")
         coluna = QVBoxLayout(conteudo)
         m = 3 * tema.ESPACO
-        coluna.setContentsMargins(m, tema.ESPACO, m, m)
+        coluna.setContentsMargins(m, m, m, m)
         coluna.setSpacing(m)
-        self._barra = QHBoxLayout()
-        coluna.addLayout(self._barra)
         coluna.addWidget(self._montar_destaque())
         coluna.addWidget(self._montar_rosca())
         coluna.addWidget(self._montar_lista())
@@ -496,10 +635,17 @@ class AbaCartoes(QScrollArea):
         self._aberta = NumeroDestaque("Fatura aberta", "", "")
         self.pilula_aberta = Pilula("")
         self._aberta.adicionar(self.pilula_aberta)
-        grade = GradeResponsiva(largura_minima_item=LARGURA_MINIMA_BLOCO, espaco=3 * tema.ESPACO)
-        grade.adicionar(self._fechada)
-        grade.adicionar(self._aberta)
-        self._cartao_destaque.corpo.addWidget(grade)
+        self._grade_destaque = GradeResponsiva(largura_minima_item=LARGURA_MINIMA_BLOCO, espaco=3 * tema.ESPACO)
+        self._grade_destaque.adicionar(self._fechada)
+        self._grade_destaque.adicionar(self._aberta)
+        self.carteira = Carteira()
+        self.carteira.escolhido.connect(self.selecionar_cartao)
+        linha = QHBoxLayout()
+        linha.setSpacing(4 * tema.ESPACO)
+        linha.addWidget(self.carteira, 0, Qt.AlignmentFlag.AlignTop)
+        linha.addWidget(self._grade_destaque, 1)
+        self._cartao_destaque.corpo.addLayout(linha)
+        self._cartao_destaque.titulo.setVisible(False)  # o nome já está no cartão desenhado
         self.aviso_pago = QFrame()  # "Fatura de X paga ✓" + Desfazer, logo após pagar
         self.aviso_pago.setObjectName("FormPagamento")
         linha_aviso = QHBoxLayout(self.aviso_pago)
@@ -568,28 +714,13 @@ class AbaCartoes(QScrollArea):
         self._mostrar_pagas = False
         self.recarregar()
 
-    def _atualizar_seletor(self) -> None:
-        nomes = [nome for _id, nome in self._cartoes]
-        if self._seletor is not None and self._seletor_nomes == nomes:
-            self._seletor.definir(dict(self._cartoes)[self._cartao_id])
-            return
-        while self._barra.count():
-            item = self._barra.takeAt(0)
-            if item.widget():
-                item.widget().setParent(None)
-                item.widget().deleteLater()
-        self._seletor = None
-        if len(self._cartoes) > 1:
-            self._seletor = Segmentado(nomes, dict(self._cartoes)[self._cartao_id])
-            self._seletor.escolhido.connect(self._escolheu_cartao)
-            self._barra.addWidget(self._seletor)
-            self._barra.addStretch(1)
-        self._seletor_nomes = nomes if self._seletor is not None else []
-
-    def _escolheu_cartao(self, nome: str) -> None:
-        for id_, n in self._cartoes:
-            if n == nome:
-                self.selecionar_cartao(id_)
+    def _atualizar_carteira(self) -> None:
+        cartoes = []
+        for id_, nome in self._cartoes:
+            conta = cadastros.obter_conta(self.conn, id_)
+            rotulo = conta["nome"] + (" (desativado)" if nome.endswith("(desativado)") else "")
+            cartoes.append((id_, rotulo, f"•••• {conta['final']}" if conta["final"] else ""))
+        self.carteira.definir(cartoes, self._cartao_id)
 
     def recarregar(self) -> None:
         hoje = self._hoje()
@@ -601,17 +732,16 @@ class AbaCartoes(QScrollArea):
         self._cartao_lista.setVisible(existe)
         if not existe:
             self._cartao_id = None
-            self._atualizar_seletor()
             return
         if self._cartao_id not in dict(self._cartoes):
             self._cartao_id = self._cartoes[0][0]
             self._pagando = self._desfazendo = None
-        self._atualizar_seletor()
+        self._atualizar_carteira()
 
         cartao = cadastros.obter_conta(self.conn, self._cartao_id)
         lista = faturas.faturas_do_cartao(self.conn, self._cartao_id, hoje)
         nome = nome_com_final(cartao["nome"], cartao["final"])
-        self._cartao_destaque.titulo.setText(nome.upper())
+        self._cartao_destaque.titulo.setText(nome)
         self._cartao_destaque.subtitulo.setText(detalhe_cartao(cartao) + ("" if cartao["dia_fechamento"] else " · fatura = mês do calendário"))
         self._carregar_destaque(lista, hoje, nome)
         self._carregar_rosca(lista, hoje, nome)
@@ -628,7 +758,7 @@ class AbaCartoes(QScrollArea):
         self._ref_destaque = fechada.referencia if fechada else None
         if fechada:
             texto, variante = situacao_da_fatura(fechada, hoje)
-            self._fechada.rotulo.setText(titulo_da_fatura(fechada, hoje).upper())
+            self._fechada.rotulo.setText(titulo_da_fatura(fechada, hoje))
             apoio = detalhe_da_fatura(fechada)
             if len(a_pagar) > 1:
                 apoio += f"\n+ {len(a_pagar) - 1} fatura{'s' if len(a_pagar) > 2 else ''} fechada{'s' if len(a_pagar) > 2 else ''} a pagar"
@@ -636,20 +766,26 @@ class AbaCartoes(QScrollArea):
             self.pilula_fechada.definir(texto, variante)
         elif pagas:
             ultima = max(pagas, key=lambda f: f.vencimento)
-            self._fechada.rotulo.setText(titulo_da_fatura(ultima, hoje).upper())
+            self._fechada.rotulo.setText(titulo_da_fatura(ultima, hoje))
             self._fechada.definir(formatar_brl(ultima.total_centavos), detalhe_da_fatura(ultima))
             self.pilula_fechada.definir("paga", "feito")
         else:
-            self._fechada.rotulo.setText("FATURA FECHADA")
+            self._fechada.rotulo.setText("Fatura fechada")
             self._fechada.definir("—", "Nenhuma fatura fechada pra pagar")
         self.pilula_fechada.setVisible(fechada is not None or bool(pagas))
         self.botao_pagar.setVisible(fechada is not None and self._pagando is None)
         self.link_pagas.setVisible(fechada is None and bool(pagas) and not self._mostrar_pagas)
 
         aberta = next((f for f in lista if f.situacao == "aberta"), None)
+        # em destaque (primeiro e maior) a fatura que pede ação: a fechada a pagar; sem ela, a aberta
+        heroi = self._fechada if fechada or not aberta else self._aberta
+        for bloco in (self._fechada, self._aberta):
+            bloco.valor.setProperty("heroi", bloco is heroi)
+            _repolir(bloco.valor)
+        self._grade_destaque.reordenar([heroi, self._aberta if heroi is self._fechada else self._fechada])
         if aberta:
             dias = (aberta.fechamento - hoje).days
-            self._aberta.rotulo.setText(f"FATURA ABERTA · {mes_da_referencia(aberta.referencia, hoje).upper()}")
+            self._aberta.rotulo.setText(f"Fatura aberta · {mes_da_referencia(aberta.referencia, hoje)}")
             self._aberta.definir(formatar_brl(aberta.total_centavos), detalhe_da_fatura(aberta))
             self.pilula_aberta.definir(f"fecha em {_dias(dias)}" if dias > 0 else "fecha hoje", "neutra")
 

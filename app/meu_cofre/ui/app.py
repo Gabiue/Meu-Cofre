@@ -174,12 +174,13 @@ def main() -> int:
     # Casa a janela com o meu-cofre.desktop (ícone certo no lançador e na barra) e define o ícone.
     app.setDesktopFileName("meu-cofre")
     app.setWindowIcon(QIcon(str(files("meu_cofre.ui").joinpath("icone.svg"))))
-    tema.aplicar_tema(app)
 
     destino = os.environ.get("MEU_COFRE_SCREENSHOT")
     if destino:  # modo revisão: nunca vai pra rede
         os.environ[indicadores.VAR_SEM_REDE] = "1"
     conn = db.conectar()  # respeita MEU_COFRE_DB
+    # o tema escolhido (padrão: o do sistema); MEU_COFRE_TEMA força um, pros prints de revisão
+    tema.aplicar_tema(app, os.environ.get("MEU_COFRE_TEMA") or db.ler_preferencia(conn, "tema", "sistema"))
     janela = JanelaPrincipal(conn)
 
     if destino:  # modo revisão: salva um PNG e sai

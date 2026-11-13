@@ -1,7 +1,7 @@
 """Componentes reutilizáveis da interface. A aparência vem do QSS global (ver `tema.py`)."""
 
 from PySide6.QtCore import QPointF, QRectF, QSize, Qt, Signal
-from PySide6.QtGui import QColor, QPainter, QPen, QTextCharFormat
+from PySide6.QtGui import QAction, QColor, QPainter, QPen, QTextCharFormat
 from PySide6.QtWidgets import (
     QButtonGroup,
     QCheckBox,
@@ -11,10 +11,12 @@ from PySide6.QtWidgets import (
     QGridLayout,
     QHBoxLayout,
     QLabel,
+    QMenu,
     QPushButton,
     QSizePolicy,
     QStyle,
     QStyleOptionButton,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
@@ -67,7 +69,7 @@ class RotuloElidido(QLabel):
 class Cartao(QFrame):
     """Superfície com borda fina e cantos arredondados.
 
-    Título (CAIXA ALTA, espaçado) e subtítulo são opcionais; `acao` é um widget no canto
+    Título (em caixa normal) e subtítulo são opcionais; `acao` é um widget no canto
     direito do cabeçalho (ex.: um `Segmentado`). O conteúdo entra em `self.corpo`.
     """
 
@@ -93,10 +95,9 @@ class Cartao(QFrame):
             textos = QVBoxLayout()
             textos.setSpacing(2)
             if titulo:
-                self.titulo = QLabel(titulo.upper())
+                self.titulo = QLabel(titulo)
                 self.titulo.setObjectName("CartaoTitulo")
                 self.titulo.setWordWrap(True)
-                _espacar_letras(self.titulo, 1.2)
                 textos.addWidget(self.titulo)
             if subtitulo:
                 self.subtitulo = QLabel(subtitulo)
@@ -191,7 +192,7 @@ class BarraProgresso(QWidget):
 class NumeroDestaque(QWidget):
     """Rótulo pequeno + número grande em negrito + linha de apoio opcional.
 
-    `destaque=True` usa o dourado no número (o "Livre"). `adicionar(widget)` põe algo
+    `destaque=True` pinta o número na cor de destaque (ex.: o "Livre"). `adicionar(widget)` põe algo
     embaixo, como uma `Pilula`.
     """
 
@@ -208,10 +209,9 @@ class NumeroDestaque(QWidget):
         self._layout.setContentsMargins(0, 0, 0, 0)
         self._layout.setSpacing(6)
 
-        self.rotulo = QLabel(rotulo.upper())
+        self.rotulo = QLabel(rotulo)
         self.rotulo.setObjectName("NumeroRotulo")
         self.rotulo.setWordWrap(True)
-        _espacar_letras(self.rotulo, 1.0)
 
         self.valor = QLabel(valor)
         self.valor.setObjectName("NumeroValor")
@@ -266,6 +266,12 @@ class GradeResponsiva(QWidget):
     def colunas(self) -> int:
         return self._colunas
 
+    def reordenar(self, itens: list[QWidget]) -> None:
+        """Mesmos itens em outra ordem (ex.: o destaque primeiro)."""
+        if itens != self._itens:
+            self._itens = list(itens)
+            self._distribuir(max(self._colunas, 1))
+
     def _distribuir(self, colunas: int) -> None:
         for w in self._itens:
             self._grade.removeWidget(w)
@@ -295,6 +301,31 @@ class BotaoPrimario(QPushButton):
         super().__init__(texto, parent)
         self.setObjectName("BotaoPrimario")
         self.setCursor(Qt.CursorShape.PointingHandCursor)
+
+
+class BotaoMenu(QToolButton):
+    """O "⋯" de um cartão ou linha: as ações menos usadas num menu, pra não amontoar botões à vista.
+
+    `acao(texto, ao_clicar)` acrescenta uma ação e a devolve (QAction: `trigger()`, `setVisible`, `setEnabled`).
+    """
+
+    def __init__(self, nome_acessivel: str, dica: str = "", parent: QWidget | None = None):
+        super().__init__(parent)
+        self.setObjectName("BotaoMenu")
+        self.setText("⋯")
+        self.setToolTip(dica)
+        self.setAccessibleName(nome_acessivel)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        self.setMenu(QMenu(self))
+
+    def acao(self, texto: str, ao_clicar) -> QAction:
+        a = self.menu().addAction(texto)
+        a.triggered.connect(ao_clicar)
+        return a
+
+    def separador(self) -> None:
+        self.menu().addSeparator()
 
 
 class BotaoSecundario(QPushButton):
@@ -373,7 +404,7 @@ class ItemLancamento(QFrame):
     """Linha da lista de recentes. Emite `clicado(id)` ao clicar.
 
     `valor_centavos` é positivo para entrada e negativo para saída. O número fica sempre na
-    cor do texto: quem diferencia entrada de saída é o marcador e o sinal (+ / −).
+    cor do texto: quem diferencia entrada de saída é o marcador (▲ ou a inicial da categoria) e o sinal (+ / −).
     `parcela` (ex.: "3/6") aparece apagada logo depois da descrição, que é quem encurta.
     `recorrente` põe um ↻ discreto antes da categoria (veio de uma assinatura ou gasto fixo).
     `meta` é guardar/retirar dinheiro de uma meta: marcador neutro (◎) e valor sem sinal, pra não parecer gasto.
@@ -404,7 +435,8 @@ class ItemLancamento(QFrame):
         self.setFixedHeight(60)
 
         entrada = valor_centavos > 0
-        marcador = QLabel("◎" if meta else "⇄" if transferencia else "▲" if entrada else "▼")
+        # saída mostra a inicial da categoria: um ▼ em toda linha não diz nada
+        marcador = QLabel("◎" if meta else "⇄" if transferencia else "▲" if entrada else (categoria[:1].upper() or "▼"))
         marcador.setObjectName("ItemMarcador")
         marcador.setProperty("tipo", "meta" if meta else "transferencia" if transferencia else "entrada" if entrada else "saida")
         marcador.setFixedSize(32, 32)

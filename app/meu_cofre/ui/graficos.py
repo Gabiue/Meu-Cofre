@@ -587,7 +587,9 @@ class _Barras(QWidget):
 
     MARGEM = QMargins(66, 22, 8, 26)
     GAP = 2
-    COR_CARTAO, COR_CONTAS = tema.SERIES[0], tema.SERIES[1]
+    def _cores(self) -> tuple[str, str]:
+        """(cartão, contas): lidas na hora de pintar, pra acompanhar a troca de tema."""
+        return tema.SERIES[0], tema.SERIES[1]
 
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
@@ -680,7 +682,8 @@ class _Barras(QWidget):
             largura = min(52.0, faixa.width() * 0.5)
             x = faixa.center().x() - largura / 2
             y_base = plano.bottom()
-            segmentos = [(m["cartao"], self.COR_CARTAO), (m["contas"], self.COR_CONTAS)]
+            cor_cartao, cor_contas = self._cores()
+            segmentos = [(m["cartao"], cor_cartao), (m["contas"], cor_contas)]
             segmentos = [(v, c) for v, c in segmentos if v > 0]
             for n, (valor, cor) in enumerate(segmentos):
                 altura = max(3.0, plano.height() * valor / topo_escala)
@@ -716,7 +719,7 @@ class PainelProximos(QWidget):
         coluna.setSpacing(tema.ESPACO)
         legenda = QHBoxLayout()
         legenda.setSpacing(tema.ESPACO)
-        for cor, nome in ((_Barras.COR_CARTAO, "Cartão"), (_Barras.COR_CONTAS, "Contas")):
+        for cor, nome in ((tema.SERIES[0], "Cartão"), (tema.SERIES[1], "Contas")):
             quadro = QFrame()
             quadro.setFixedSize(10, 10)
             quadro.setStyleSheet(f"background: {cor}; border-radius: 3px; border: none;")
@@ -746,7 +749,8 @@ class PainelProximos(QWidget):
 class _BarrasProventos(_Barras):
     """As mesmas barras do "Próximos meses", com uma série só (dourado: é projeção): usa o segmento `contas`."""
 
-    COR_CONTAS = tema.DOURADO
+    def _cores(self) -> tuple[str, str]:
+        return tema.SERIES[0], tema.DOURADO
 
     def definir(self, estimativa: pd.DataFrame) -> None:  # type: ignore[override]
         """`estimativa`: saída de `renda_variavel.estimar_proventos_carteira` (colunas `mes` e `centavos`)."""

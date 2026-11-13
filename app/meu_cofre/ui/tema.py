@@ -7,6 +7,7 @@ só referenciam estas constantes (ou as propriedades do QSS global gerado por `g
 from functools import cache
 from pathlib import Path
 
+from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor, QFont, QFontDatabase, QPalette
 from PySide6.QtWidgets import QApplication
 
@@ -39,6 +40,36 @@ TEXTO_SOBRE_VERDE = "#ffffff"  # texto em cima do botão primário (e do de peri
 # validadas no validador do dataviz sobre o branco (faixa de luz, croma, daltonismo, contraste)
 SERIES = ["#008ca3", "#d0501f", "#3a5fd9", "#c27c00", "#c2407a"]
 SERIE_OUTROS = "#8a979d"
+
+# --- Botão principal: no claro é o verde-petróleo; no escuro, off-white (o verde fica pros dados) --
+BOTAO_FUNDO, BOTAO_HOVER, BOTAO_PRESSIONADO, BOTAO_TEXTO = VERDE, VERDE_HOVER, VERDE_PRESSIONADO, TEXTO_SOBRE_VERDE
+
+# --- Tema escuro "Meia-noite" (#57): preto azulado; texto de 6,3:1 a 15,8:1 nos cartões; séries validadas no
+# dataviz sobre #0f1216. Só o que muda em relação ao claro; `usar_modo` troca os valores acima.
+ESCURO = {
+    "FUNDO": "#07080a", "CARTAO": "#0f1216", "CARTAO_ELEVADO": "#171b21", "BORDA": "#232a33",
+    "TEXTO": "#e8ecf1", "TEXTO_SECUNDARIO": "#a3acb8", "TEXTO_APAGADO": "#8d97a4", "TEXTO_DESABILITADO": "#4a525c",
+    "VERDE": "#3fb6c4", "VERDE_HOVER": "#55c2ce", "VERDE_PRESSIONADO": "#34a3b0",
+    "VERDE_SUAVE": "rgba(63, 182, 196, 0.14)", "VERDE_SUAVE_BORDA": "rgba(63, 182, 196, 0.40)",
+    "DOURADO": "#e0a83a", "DOURADO_SUAVE": "rgba(224, 168, 58, 0.12)", "DOURADO_SUAVE_BORDA": "rgba(224, 168, 58, 0.40)",
+    "VERMELHO": "#f07a68", "VERMELHO_HOVER": "#f38d7d",
+    "VERMELHO_SUAVE": "rgba(240, 122, 104, 0.12)", "VERMELHO_SUAVE_BORDA": "rgba(240, 122, 104, 0.40)",
+    "TEXTO_SOBRE_VERDE": "#07080a",
+    "SERIES": ["#1fa3b8", "#e0602c", "#5b7fe8", "#c28408", "#d4558c"], "SERIE_OUTROS": "#8d97a4",
+    "BOTAO_FUNDO": "#e8ecf1", "BOTAO_HOVER": "#ffffff", "BOTAO_PRESSIONADO": "#cfd6de", "BOTAO_TEXTO": "#07080a",
+    # o 1º cartão da carteira era da cor do fundo escuro: um ardósia mais claro (texto branco ainda > 10:1)
+    "CORES_CARTAO": ["#2c3c44", "#0d6470", "#7a4f0e", "#34408a", "#6b2f4a", "#3d4f2a"],
+}
+MODOS = ("sistema", "claro", "escuro")
+modo_atual = "claro"  # o que está valendo ("claro" ou "escuro"; "sistema" já resolvido)
+
+
+def usar_modo(escuro: bool) -> None:  # o CLARO (os valores definidos no módulo) é montado no fim do arquivo
+    """Troca as cores do módulo. Quem lê `tema.X` na hora de pintar já acompanha; o QSS vem de `aplicar_tema`."""
+    global modo_atual
+    globals().update(ESCURO if escuro else CLARO)
+    modo_atual = "escuro" if escuro else "claro"
+
 
 # --- Cartões da carteira (aba Cartões): cor por cartão, na ordem de cadastro; texto branco >= 6,8:1 ----
 # cores do próprio app, nunca as do banco (não imitar marca)
@@ -126,10 +157,10 @@ QToolTip {{ background: {CARTAO_ELEVADO}; color: {TEXTO}; border: 1px solid {BOR
 #Pilula[variante="ruim"] {{ background: {VERMELHO_SUAVE}; border: 1px solid {VERMELHO_SUAVE_BORDA}; color: {VERMELHO}; }}
 
 /* Botões */
-QPushButton#BotaoPrimario {{ background: {VERDE}; color: {TEXTO_SOBRE_VERDE}; border: 1px solid {VERDE};
+QPushButton#BotaoPrimario {{ background: {BOTAO_FUNDO}; color: {BOTAO_TEXTO}; border: 1px solid {BOTAO_FUNDO};
     border-radius: 6px; padding: 0 20px; min-height: 40px; font-size: {PX_TEXTO}px; font-weight: 700; }}
-QPushButton#BotaoPrimario:hover {{ background: {VERDE_HOVER}; border-color: {VERDE_HOVER}; }}
-QPushButton#BotaoPrimario:pressed {{ background: {VERDE_PRESSIONADO}; }}
+QPushButton#BotaoPrimario:hover {{ background: {BOTAO_HOVER}; border-color: {BOTAO_HOVER}; }}
+QPushButton#BotaoPrimario:pressed {{ background: {BOTAO_PRESSIONADO}; }}
 QPushButton#BotaoSecundario {{ background: transparent; color: {TEXTO}; border: 1px solid {BORDA};
     border-radius: 6px; padding: 0 20px; min-height: 40px; font-size: {PX_TEXTO}px; font-weight: 600; }}
 QPushButton#BotaoSecundario:hover {{ background: {CARTAO_ELEVADO}; border-color: {TEXTO_APAGADO}; }}
@@ -364,10 +395,20 @@ def _paleta() -> QPalette:
     return p
 
 
-def aplicar_tema(app: QApplication) -> None:
-    """Fusion + paleta + fonte + QSS global."""
+def sistema_escuro(app: QApplication) -> bool:
+    """O sistema (GNOME, KDE, Windows) está no modo escuro? Sem como saber, não."""
+    return app.styleHints().colorScheme() == Qt.ColorScheme.Dark
+
+
+def aplicar_tema(app: QApplication, modo: str = "claro") -> None:
+    """Fusion + paleta + fonte + QSS global, no `modo` ("sistema", "claro" ou "escuro"). Pode ser chamada de novo
+    com o app aberto: troca o tema na hora (quem monta gráfico com cor precisa recarregar; a janela faz isso)."""
+    usar_modo(modo == "escuro" or (modo == "sistema" and sistema_escuro(app)))
     app.setStyle("Fusion")
     app.setPalette(_paleta())
     familia = familia_da_fonte()
     app.setFont(fonte_base(familia))
     app.setStyleSheet(gerar_qss(familia))
+
+
+CLARO = {nome: globals()[nome] for nome in ESCURO}  # os valores do módulo (o tema claro), pra voltar do escuro

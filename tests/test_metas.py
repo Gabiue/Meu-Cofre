@@ -671,3 +671,37 @@ def test_ritmo_medio_dos_meses_completos_desde_a_criacao(conn):
     assert metas.ritmo_medio(conn, m, HOJE) == 15_000  # (200 + 100) / 2: julho é antes de a meta existir
     nova = _meta(conn, "Nova")  # criada hoje: nenhum mês completo
     assert metas.ritmo_medio(conn, nova, HOJE) is None
+
+
+# --- Foto e descrição (#65) --------------------------------------------------------------------------------
+
+
+def test_descricao_limpa_e_limite(conn):
+    m = metas.criar(conn, HOJE, nome="Cadeira", valor_alvo_centavos=100_000, modo="mensal", mensal_centavos=10_000,
+                    descricao="  Melhorar   o setup ")
+    assert metas.obter(conn, m).descricao == "Melhorar o setup"
+    with pytest.raises(ValueError, match="máximo é 120"):
+        metas.editar(conn, HOJE, m, nome="Cadeira", valor_alvo_centavos=100_000, modo="mensal", mensal_centavos=10_000,
+                     descricao="x" * 121)
+    metas.editar(conn, HOJE, m, nome="Cadeira", valor_alvo_centavos=100_000, modo="mensal", mensal_centavos=10_000)
+    assert metas.obter(conn, m).descricao == ""  # editar sem descrição tira a descrição
+
+
+def test_trocar_imagem_sem_deixar_arquivo_orfao(conn):
+    m = _meta(conn)
+    pasta = metas.pasta_imagens(conn)
+    metas.trocar_imagem(conn, m, b"png-1")
+    primeira = metas.caminho_imagem(conn, metas.obter(conn, m))
+    assert primeira.parent == pasta and primeira.read_bytes() == b"png-1"
+    metas.trocar_imagem(conn, m, b"png-2")  # trocar apaga a antiga
+    segunda = metas.caminho_imagem(conn, metas.obter(conn, m))
+    assert segunda.read_bytes() == b"png-2" and not primeira.exists()
+    metas.trocar_imagem(conn, m, None)  # tirar apaga o arquivo e limpa o campo
+    assert metas.obter(conn, m).imagem is None and not segunda.exists() and list(pasta.iterdir()) == []
+
+
+def test_caminho_da_imagem_sumida_e_none(conn):
+    m = _meta(conn)
+    metas.trocar_imagem(conn, m, b"png")
+    metas.caminho_imagem(conn, metas.obter(conn, m)).unlink()  # apagada fora do app
+    assert metas.caminho_imagem(conn, metas.obter(conn, m)) is None  # a tela mostra a inicial

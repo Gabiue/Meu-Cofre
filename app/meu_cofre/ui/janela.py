@@ -15,8 +15,9 @@ from datetime import date
 
 import pandas as pd
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QKeySequence, QShortcut
+from PySide6.QtGui import QActionGroup, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
+    QApplication,
     QFrame,
     QGridLayout,
     QHBoxLayout,
@@ -29,10 +30,11 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from meu_cofre import lancamentos, recorrentes, relatorio_automatico, relatorio_mensal, relatorios
+from meu_cofre import db, lancamentos, recorrentes, relatorio_automatico, relatorio_mensal, relatorios
 from meu_cofre.lancamentos import formatar_brl, formatar_brl_inteiro, nome_com_final
-from meu_cofre.ui import tema
+from meu_cofre.ui import logos, tema
 from meu_cofre.ui.componentes import (
+    BotaoMenu,
     BotaoPrimario,
     BotaoSecundario,
     Cartao,
@@ -218,6 +220,16 @@ class JanelaPrincipal(QMainWindow):
         self.rotulo_mes.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._navegacao_mes = (self.botao_mes_anterior, self.rotulo_mes, self.botao_mes_seguinte)
 
+        self.botao_tema = BotaoMenu("Tema", "Tema: seguir o sistema, claro ou escuro")
+        self.botao_tema.setText("◐")
+        grupo = QActionGroup(self.botao_tema)
+        self.acoes_tema = {}
+        for modo, rotulo in (("sistema", "Seguir o sistema"), ("claro", "Claro"), ("escuro", "Escuro")):
+            acao = self.botao_tema.acao(rotulo, lambda _=False, m=modo: self.escolher_tema(m))
+            acao.setCheckable(True)
+            grupo.addAction(acao)
+            self.acoes_tema[modo] = acao
+        self.acoes_tema[db.ler_preferencia(self.conn, "tema", "sistema")].setChecked(True)
         self.botao_contas = BotaoSecundario("Contas")
         self.botao_contas.setToolTip("Contas e cartões")
         self.botao_contas.clicked.connect(self.abrir_contas)
@@ -249,11 +261,11 @@ class JanelaPrincipal(QMainWindow):
             a.addSpacing(tema.ESPACO)
             pôr(a, *self._navegacao_mes)
             a.addStretch(1)
-            pôr(a, self.botao_contas, self.botao_categorias, self.botao_novo)
+            pôr(a, self.botao_tema, self.botao_contas, self.botao_categorias, self.botao_novo)
             return
         pôr(a, self.marca)
         a.addStretch(1)
-        pôr(a, self.botao_contas, self.botao_categorias, self.botao_novo)
+        pôr(a, self.botao_tema, self.botao_contas, self.botao_categorias, self.botao_novo)
         pôr(b, self.abas)
         if arranjo == 2:
             b.addSpacing(tema.ESPACO)
@@ -520,6 +532,16 @@ class JanelaPrincipal(QMainWindow):
         self.dialogo = dialogo
         dialogo.open()
         return dialogo
+
+    def escolher_tema(self, modo: str) -> None:
+        """Grava o tema e troca na hora: o QSS e a paleta mudam, e recarregar refaz gráficos e ícones na cor nova."""
+        db.gravar_preferencia(self.conn, "tema", modo)
+        tema.aplicar_tema(QApplication.instance(), modo)
+        logos.pixmap_do_icone.cache_clear()  # os ícones sem cor de marca usam a cor do texto
+        self.acoes_tema[modo].setChecked(True)
+        self.atualizar()
+        for w in self.findChildren(QWidget):  # quem pinta à mão relê as cores do tema
+            w.update()
 
     def _meta_da_economia(self, nome: str, valor_centavos: int, mensal_centavos: int) -> None:
         """"Guardar numa meta" da simulação de Assinaturas: vai pra aba Metas com a meta nova já preenchida."""

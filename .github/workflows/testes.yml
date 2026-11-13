@@ -5,6 +5,9 @@ on:
     branches: [main, develop]  # as outras rodam pelo pull_request
   pull_request:
 
+permissions:
+  contents: read  # repositório público: o token da CI só lê
+
 jobs:
   testes:
     strategy:

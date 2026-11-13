@@ -12,6 +12,8 @@ on:
       - uv.lock
   workflow_dispatch:
 
+permissions:
+  contents: read  # só o job "publicar" escreve (cria o Release), e declara isso nele
 jobs:
   build:
     strategy:

@@ -705,3 +705,14 @@ def test_caminho_da_imagem_sumida_e_none(conn):
     metas.trocar_imagem(conn, m, b"png")
     metas.caminho_imagem(conn, metas.obter(conn, m)).unlink()  # apagada fora do app
     assert metas.caminho_imagem(conn, metas.obter(conn, m)) is None  # a tela mostra a inicial
+
+
+def test_nome_de_imagem_com_caminho_nao_sai_da_pasta(conn, tmp_path):
+    fora = tmp_path / "importante.txt"  # ao lado do banco, fora de imagens-metas/
+    fora.write_text("não pode sumir")
+    m = _meta(conn)
+    conn.execute("UPDATE metas SET imagem = ? WHERE id = ?", ("../importante.txt", m))  # banco adulterado
+    conn.commit()
+    assert metas.caminho_imagem(conn, metas.obter(conn, m)) is None
+    metas.trocar_imagem(conn, m, None)
+    assert fora.read_text() == "não pode sumir"

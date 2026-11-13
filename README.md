@@ -7,43 +7,45 @@ Aplicativo desktop de finanças pessoais que roda só no seu computador. Você l
 Os prints abaixo usam dados de demonstração gerados por `scripts/dados_demo.py`.
 
 ![Início, painel de fluxo](.github/readme/inicio-fluxo.png)
-*Início: fluxo do mês, resumo (em conta, devo, gastei, livre até o fim do mês) e lançamentos recentes.*
+*Início: o "livre até o fim do mês" em destaque, o resumo (em conta, gastei, devo), o fluxo do mês e os lançamentos recentes.*
 
-![Início, painel por categoria](.github/readme/inicio-categorias.png)
-*O mesmo painel trocado para "Para onde foi" (gasto por categoria).*
+![Início no tema escuro, painel por categoria](.github/readme/escuro.png)
+*O mesmo painel trocado para "Para onde foi" (gasto por categoria), no tema escuro.*
 
 ![Assinaturas e fixos](.github/readme/assinaturas.png)
-*Assinaturas e fixos: o que se repete todo mês, agrupado por onde cobra.*
+*Assinaturas e fixos: gasto mensal e anual, próximos pagamentos, gasto por categoria e a lista com a logo de cada serviço.*
 
 ![Cartões](.github/readme/cartoes.png)
-*Cartões: fatura aberta, faturas pagas e gasto por categoria da fatura.*
+*Cartões: a carteira com os cartões (clique no de trás pra trazê-lo pra frente), a fatura que pede ação em destaque e o gasto por categoria.*
 
 ![Metas](.github/readme/metas.png)
-*Metas: progresso, valor por mês necessário e simulador de compra à vista ou parcelada.*
+*Metas: a lista em ordem de prioridade e o detalhe da escolhida, com o ritmo real e a evolução contra a linha ideal.*
 
 ![Investimentos](.github/readme/investimentos.png)
-*Investimentos: patrimônio, aporte do mês contra a meta, rendimento no ano e previsão até 31/12.*
+*Investimentos: patrimônio e previsão até 31/12, composição da carteira e a tabela dos investimentos.*
 
 ![Novo lançamento](.github/readme/novo-lancamento.png)
 *Novo lançamento: categoria sugerida pelo histórico e parcelamento no cartão.*
 
 ## Funcionalidades
 
-**Início.** Painel com três visões (fluxo de gasto por dia, gasto por categoria e próximos meses, com o que já está comprometido), resumo do mês e lista de recentes (todos, entradas, saídas). Navega entre os meses. A fila "A categorizar" reúne lançamentos sem categoria.
+**Início.** O quanto ainda está livre até o fim do mês em destaque, o resumo (em conta, gastei, devo), um painel com três visões (fluxo de gasto por dia, gasto por categoria e próximos meses, com o que já está comprometido) e a lista de recentes (todos, entradas, saídas). Navega entre os meses. A fila "A categorizar" reúne lançamentos sem categoria.
 
-**Assinaturas/fixos.** Molde mensal (descrição, valor, conta, dia do mês) que gera os lançamentos de cada mês: previstos até a data chegar, realizados depois. Dá pra pausar, editar e encerrar. Mostra o custo mensal, o total por ano e o que já foi cobrado no mês.
+**Assinaturas/fixos.** Molde mensal (descrição, valor, conta, dia do mês) que gera os lançamentos de cada mês: previstos até a data chegar, realizados depois. Dá pra pausar, editar e encerrar. Mostra o gasto mensal, o anual (e quanto ele pesa nas entradas fixas), os próximos pagamentos numa linha do tempo e o gasto por categoria. Cada serviço conhecido aparece com a logo (embutidas no app, sem internet). O simulador "E se eu cancelasse?" mostra quanto sobraria por mês e por ano e transforma a economia numa meta.
 
-**Cartões.** Cada cartão tem dia de fechamento e de vencimento. Mostra a fatura aberta, as próximas e as pagas, com as compras (inclusive parcelas futuras) e o gasto por categoria. Pagar a fatura aceita valor parcial ou a mais.
+**Cartões.** Os cartões aparecem como uma carteira: clicar no de trás (ou usar ← e →) o traz pra frente. Cada cartão tem dia de fechamento e de vencimento. Mostra a fatura que pede ação em destaque, as próximas e as pagas, com as compras (inclusive parcelas futuras) e o gasto por categoria. Pagar a fatura aceita valor parcial ou a mais.
 
-**Metas.** Metas com prazo ou com valor mensal, em ordem de prioridade, com a reserva de emergência no topo. Guardar e retirar movem dinheiro entre a conta e a conta "Caixinhas". Diz se a meta cabe na sobra média dos últimos meses e tem o simulador "comprar agora ou parcelar?".
+**Metas.** Metas com prazo ou com valor mensal, em ordem de prioridade, com a reserva de emergência no topo, e com foto e descrição opcionais. Guardar e retirar movem dinheiro entre a conta e a conta "Caixinhas". O detalhe da meta mostra quanto falta e até quando, se ela cabe na sobra média dos últimos meses, o ritmo real de quanto você tem guardado e a evolução mês a mês contra a linha ideal. Tem também o simulador "comprar agora ou parcelar?".
 
-**Investimentos.** Renda fixa (CDB, em % do CDI, Selic, IPCA+ ou prefixado), Tesouro, caixinhas das metas, ações e FIIs. Patrimônio, rendimento no ano comparado ao CDI, meta de aporte mensal e previsão para 31/12. Renda fixa é estimada pelas taxas do Banco Central (valores brutos, sem IR). Ações e FIIs têm preço médio, resultado, proventos recebidos e estimativa dos próximos 12 meses.
+**Investimentos.** Renda fixa (CDB, em % do CDI, Selic, IPCA+ ou prefixado), Tesouro, caixinhas das metas, ações e FIIs. Patrimônio, rendimento no ano comparado ao CDI, meta de aporte mensal e previsão para 31/12. Renda fixa é estimada pelas taxas do Banco Central (valores brutos, sem IR). Ações e FIIs têm preço médio, resultado, proventos recebidos e estimativa dos próximos 12 meses. A composição da carteira mostra a divisão por tipo, e a tabela abre o detalhe de cada investimento com um clique.
 
 **Contas e Categorias.** Contas correntes, carteira e cartões, com saldo inicial; categorias com natureza (essencial, flexível, supérfluo) e regras de categorização (descrição que contém um texto ou casa com uma regex vira uma categoria, menor prioridade vence).
 
 **Importação.**
 - Extrato OFX (Contas > Importar extrato), testado com os formatos do Inter e da Caixa. Mostra uma prévia antes de gravar.
 - Planilha de movimentações da Área do Investidor da B3 (Investimentos > Importar da B3), também com prévia.
+
+**Tema claro e escuro.** O botão ◐ no cabeçalho escolhe entre seguir o sistema, claro ou escuro; a troca é na hora.
 
 **Atalhos.** `Ctrl+N` novo lançamento, `Ctrl+1` a `Ctrl+5` trocam de aba, `Enter` salva e `Esc` cancela no diálogo, `Ctrl+Enter` salva e lança outro.
 
@@ -179,7 +181,9 @@ Configurar o msmtp (conta e senha de app do email) é com você; o meu-cofre nã
 
 ## Créditos
 
-A interface usa a fonte [Adwaita Sans](https://gitlab.gnome.org/GNOME/adwaita-fonts) (derivada da Inter), embutida em `app/meu_cofre/ui/fontes/` sob a licença SIL Open Font License 1.1 (ver `LICENSE-AdwaitaSans.txt`).
+- Fonte [IBM Plex Sans](https://github.com/IBM/plex), embutida em `app/meu_cofre/ui/fontes/` sob a SIL Open Font License 1.1 (ver `LICENSE-IBMPlexSans.txt`).
+- Logos dos serviços: [Simple Icons](https://simpleicons.org) (CC0), em `app/meu_cofre/ui/logos/marcas/`. As marcas pertencem aos seus donos; aparecem só pra identificar o serviço cobrado.
+- Ícones das contas fixas: [Tabler Icons](https://tabler.io/icons) (MIT), em `app/meu_cofre/ui/logos/genericos/`.
 
 ## Privacidade
 

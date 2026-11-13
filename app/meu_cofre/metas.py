@@ -566,7 +566,7 @@ def caminho_imagem(conn: sqlite3.Connection, m: Meta) -> Path | None:
     pasta = pasta_imagens(conn)
     if not m.imagem or pasta is None:
         return None
-    caminho = pasta / m.imagem
+    caminho = pasta / Path(m.imagem).name  # só o nome: um banco adulterado com "../" não sai da pasta
     return caminho if caminho.is_file() else None
 
 
@@ -585,7 +585,7 @@ def trocar_imagem(conn: sqlite3.Connection, meta_id: int, png: bytes | None) -> 
     with conn:
         conn.execute("UPDATE metas SET imagem = ? WHERE id = ?", (nova, meta_id))
     if antiga:
-        (pasta / antiga).unlink(missing_ok=True)
+        (pasta / Path(antiga).name).unlink(missing_ok=True)  # idem: nunca apaga fora da pasta
 
 
 def _renumerar(conn: sqlite3.Connection, ids_em_ordem: list[int]) -> None:

@@ -600,3 +600,59 @@ def test_meta_nova_sem_historia_nao_mostra_ritmo_nem_grafico(app, conn):
     c = _aba(conn).cartao_da_meta(m)
     assert c.pilula_ritmo.isHidden() and c.ritmo.isHidden()
     assert c.grafico.isHidden() and c.titulo_grafico.isHidden()
+
+
+# --- Foto e descrição (#65) ------------------------------------------------------------------------------------
+
+
+def _imagem(tmp_path, nome="foto.png", largura=1200, altura=800):
+    from PySide6.QtGui import QColor, QImage
+
+    img = QImage(largura, altura, QImage.Format.Format_RGB32)
+    img.fill(QColor("#3fb6c4"))
+    caminho = tmp_path / nome
+    img.save(str(caminho))
+    return str(caminho)
+
+
+def test_foto_e_descricao_pelo_dialogo_aparecem_na_lista_e_no_detalhe(app, conn, tmp_path):
+    from PySide6.QtGui import QImage
+
+    aba = _aba(conn)
+    d = aba.nova_meta()
+    d.nome.setText("Cadeira")
+    d.valor.setText("1500")
+    d.descricao.setText("Melhorar o setup pra estudar")
+    d.escolher_foto(_imagem(tmp_path))
+    assert not d.botao_tirar_foto.isHidden() and d.botao_foto.text() == "Trocar foto…"
+    assert d.salvar()
+    QApplication.processEvents()
+    m = metas.obter(conn, aba.itens()[0].id_meta)
+    arquivo = metas.caminho_imagem(conn, m)
+    assert m.descricao == "Melhorar o setup pra estudar" and arquivo is not None
+    assert QImage(str(arquivo)).size().width() == QImage(str(arquivo)).size().height() == 480  # quadrada e reduzida
+    item = aba.itens()[0]
+    assert item.marcador.property("tipo") == "foto" and not item.marcador.pixmap().isNull()
+    c = aba.cartao_da_meta(m.id)
+    assert c.descricao.texto() == "Melhorar o setup pra estudar" and not c.foto.isHidden()
+
+
+def test_tirar_foto_apaga_o_arquivo(app, conn, tmp_path):
+    m = metas.criar(conn, HOJE, nome="Cadeira", valor_alvo_centavos=150_000, modo="mensal", mensal_centavos=10_000)
+    metas.trocar_imagem(conn, m, b"png")
+    arquivo = metas.caminho_imagem(conn, metas.obter(conn, m))
+    aba = _aba(conn)
+    d = aba.editar_meta(m)
+    d.tirar_foto()
+    assert d.botao_tirar_foto.isHidden() and d.miniatura.text() == "sem foto"
+    assert d.salvar()
+    assert metas.obter(conn, m).imagem is None and not arquivo.exists()
+
+
+def test_arquivo_que_nao_e_imagem_avisa_e_nao_muda_nada(app, conn, tmp_path):
+    texto = tmp_path / "nao-e-foto.png"
+    texto.write_text("isto não é uma imagem")
+    aba = _aba(conn)
+    d = aba.nova_meta()
+    d.escolher_foto(str(texto))
+    assert "Não deu pra abrir" in d.erro_foto.text() and d.botao_tirar_foto.isHidden()

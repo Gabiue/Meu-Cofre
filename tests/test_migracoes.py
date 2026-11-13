@@ -136,6 +136,14 @@ def _tirar_v6(conn):
     conn.execute("DELETE FROM contas WHERE nome = 'Investimentos'")
 
 
+
+def _tirar_v11(conn):
+    """Como era antes da v11: sem descrição e foto nas metas (a v11 as acrescenta de novo)."""
+    colunas = {r[1] for r in conn.execute("PRAGMA table_info(metas)")}
+    for coluna in ("descricao", "imagem"):
+        if coluna in colunas:
+            conn.execute(f"ALTER TABLE metas DROP COLUMN {coluna}")
+
 def test_banco_novo_nasce_na_ultima_versao_sem_backup(tmp_path):
     caminho = tmp_path / "novo.db"
     conn = db.conectar(caminho)
@@ -182,6 +190,7 @@ def test_v3_para_v4_acrescenta_final_e_faturas_pagas_sem_perder_dados(tmp_path):
     conn.execute("DROP TABLE faturas_pagas")
     conn.execute("ALTER TABLE contas DROP COLUMN final")
     _tirar_v5(conn)
+    _tirar_v11(conn)
     conn.execute("PRAGMA user_version = 3")
     conn.commit()
     conn.close()
@@ -200,6 +209,7 @@ def test_v4_para_v5_cria_metas_meta_id_e_caixinhas_sem_perder_dados(tmp_path):
     conn = db.conectar(caminho)
     conn.execute("INSERT INTO lancamentos (conta_id, data, valor_centavos, descricao) VALUES (1, '2026-10-01', -1500, 'Pão')")
     _tirar_v5(conn)
+    _tirar_v11(conn)
     conn.execute("PRAGMA user_version = 4")
     conn.commit()
     conn.close()
@@ -221,6 +231,7 @@ def test_v5_para_v6_cria_investimentos_sem_perder_dados(tmp_path):
     conn.execute("INSERT INTO metas (nome, valor_alvo_centavos, modo, prazo) VALUES ('Viagem', 100000, 'prazo', '2027-01-01')")
     n_contas = conn.execute("SELECT COUNT(*) FROM contas").fetchone()[0]
     _tirar_v6(conn)
+    _tirar_v11(conn)
     conn.execute("PRAGMA user_version = 5")
     conn.commit()
     conn.close()
@@ -247,6 +258,7 @@ def test_v6_para_v7_cria_renda_variavel_sem_perder_dados(tmp_path):
     conn.execute("INSERT INTO ativos (nome, tipo, indexador, taxa) VALUES ('CDB Inter', 'renda_fixa', 'cdi', 110)")
     conn.execute("INSERT INTO movimentacoes_ativos (ativo_id, tipo, data, valor_centavos) VALUES (1, 'aporte', '2026-09-01', 100000)")
     _tirar_v7(conn)
+    _tirar_v11(conn)
     conn.execute("PRAGMA user_version = 6")
     conn.commit()
     conn.close()
@@ -279,6 +291,7 @@ def test_v6_nao_duplica_a_conta_investimentos_que_ja_existe(tmp_path):
     _tirar_v7(conn)
     for tabela in ("movimentacoes_ativos", "ativos", "indicadores"):
         conn.execute(f"DROP TABLE {tabela}")  # a conta fica
+    _tirar_v11(conn)
     conn.execute("PRAGMA user_version = 5")
     conn.commit()
     conn.close()
@@ -294,6 +307,7 @@ def test_v5_nao_duplica_caixinhas_que_ja_existe(tmp_path):
     conn.execute("ALTER TABLE lancamentos DROP COLUMN meta_id")
     conn.execute("DROP TABLE metas")  # Caixinhas e a categoria ficam
     _tirar_v7(conn)
+    _tirar_v11(conn)
     conn.execute("PRAGMA user_version = 4")
     conn.commit()
     conn.close()
@@ -353,6 +367,7 @@ def test_v7_para_v8_permite_varios_pagamentos_por_fatura_preservando_dados(tmp_p
             transferencia_id TEXT NOT NULL, UNIQUE (cartao_id, referencia))"""
     )
     conn.execute("INSERT INTO faturas_pagas VALUES (7, 1, '2026-10', 30000, '2026-10-10', 2, 'abc')")
+    _tirar_v11(conn)
     conn.execute("PRAGMA user_version = 7")
     conn.commit()
     conn.close()
@@ -370,6 +385,7 @@ def test_v8_para_v9_cria_preferencias(tmp_path):
     caminho = tmp_path / "meu.db"
     conn = db.conectar(caminho)
     conn.execute("DROP TABLE preferencias")
+    _tirar_v11(conn)
     conn.execute("PRAGMA user_version = 8")
     conn.commit()
     conn.close()
@@ -402,6 +418,7 @@ def test_v9_para_v10_aceita_eventos_preservando_linhas(tmp_path):
     conn.execute("INSERT INTO ativos (id, nome, tipo, ticker) VALUES (1, 'Itausa', 'acao', 'ITSA4')")
     conn.execute("INSERT INTO operacoes_rv VALUES (5, 1, 'compra', '2026-03-02', 100, 1000, 100000, 50, 0, NULL, NULL, 'b3', 'b3:abc')")
     conn.execute("INSERT INTO operacoes_rv VALUES (6, 1, 'dividendo', '2026-04-02', NULL, NULL, 700, 0, 0, NULL, NULL, 'manual', NULL)")
+    _tirar_v11(conn)
     conn.execute("PRAGMA user_version = 9")
     conn.commit()
     conn.close()
@@ -422,3 +439,26 @@ def test_v9_para_v10_aceita_eventos_preservando_linhas(tmp_path):
     assert conn.execute("SELECT name FROM sqlite_master WHERE name = 'ix_operacoes_rv_ativo'").fetchone()
     assert not conn.execute("SELECT name FROM sqlite_master WHERE name = 'operacoes_rv_v9'").fetchone()
     assert len(list((tmp_path / "backups").glob("meu-*-v9.db"))) == 1
+
+
+def test_v10_para_v11_poe_descricao_e_imagem_nas_metas(tmp_path):
+    caminho = tmp_path / "meu.db"
+    conn = db.conectar(caminho)
+    conn.execute("DROP TABLE metas")
+    conn.execute(  # como era na v10
+        """CREATE TABLE metas (id INTEGER PRIMARY KEY, nome TEXT NOT NULL,
+            valor_alvo_centavos INTEGER NOT NULL CHECK (valor_alvo_centavos > 0),
+            modo TEXT NOT NULL CHECK (modo IN ('prazo', 'mensal')), prazo TEXT, mensal_centavos INTEGER,
+            prioridade INTEGER NOT NULL DEFAULT 0, reserva INTEGER NOT NULL DEFAULT 0,
+            criada_em TEXT NOT NULL DEFAULT (date('now', 'localtime')), concluida_em TEXT,
+            arquivada INTEGER NOT NULL DEFAULT 0)"""
+    )
+    conn.execute("INSERT INTO metas (id, nome, valor_alvo_centavos, modo, mensal_centavos) VALUES (3, 'Viagem', 500000, 'mensal', 50000)")
+    conn.execute("PRAGMA user_version = 10")
+    conn.commit()
+    conn.close()
+
+    conn = db.conectar(caminho)
+    assert migracoes.versao(conn) == migracoes.ULTIMA_VERSAO
+    linha = conn.execute("SELECT nome, descricao, imagem FROM metas WHERE id = 3").fetchone()
+    assert tuple(linha) == ("Viagem", None, None)  # a meta antiga continua, sem foto nem descrição

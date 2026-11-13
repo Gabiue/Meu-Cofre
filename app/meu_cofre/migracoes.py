@@ -206,6 +206,11 @@ SELECT id, ativo_id, tipo, data, quantidade, preco_centavos, valor_centavos, tax
         "DROP TABLE operacoes_rv_v9",
         "CREATE INDEX IF NOT EXISTS ix_operacoes_rv_ativo ON operacoes_rv (ativo_id)",
     ],
+    # v11: foto e descrição nas metas (#65). A foto fica num arquivo ao lado do banco; aqui, só o nome dele.
+    11: [
+        "ALTER TABLE metas ADD COLUMN descricao TEXT",
+        "ALTER TABLE metas ADD COLUMN imagem TEXT",
+    ],
 }
 ULTIMA_VERSAO = max(MIGRACOES)
 

@@ -11,9 +11,10 @@ Guardar e retirar abrem um formulário na própria meta. `alterado(mensagem)` av
 import sqlite3
 from collections.abc import Callable
 from datetime import date
+from pathlib import Path
 
 from PySide6.QtCore import QDate, QPointF, QRectF, Qt, Signal
-from PySide6.QtGui import QColor, QFont, QPainter, QPen
+from PySide6.QtGui import QColor, QFont, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import (
     QBoxLayout,
     QFrame,
@@ -47,6 +48,7 @@ from meu_cofre.ui.componentes import (
     _repolir,
 )
 from meu_cofre.ui.dialogo_meta import (
+    foto_arredondada,
     DialogoMeta,
     explicacao_viabilidade,
     mes_ano,
@@ -212,7 +214,9 @@ class ItemMeta(QFrame):
 
     clicado = Signal(int)
 
-    def __init__(self, m: Meta, hoje: date, selecionada: bool, parent: QWidget | None = None):
+    def __init__(
+        self, m: Meta, hoje: date, selecionada: bool, foto: Path | None = None, parent: QWidget | None = None
+    ):
         super().__init__(parent)
         self.id_meta = m.id
         encerrada = m.estado != "ativa"
@@ -224,6 +228,10 @@ class ItemMeta(QFrame):
         marcador.setProperty("tipo", "saida")
         marcador.setFixedSize(40, 40)
         marcador.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        if foto is not None:  # a foto no lugar da inicial
+            marcador.setPixmap(foto_arredondada(QPixmap(str(foto)), 40, 8))
+            marcador.setProperty("tipo", "foto")
+        self.marcador = marcador
         self.nome = RotuloElidido(m.nome, "MetaNome")
         self.nome.setProperty("encerrada", encerrada)
         self.percentual = _rotulo(f"{int(m.progresso * 100)}%", "MetaPct")
@@ -236,6 +244,8 @@ class ItemMeta(QFrame):
         textos = QVBoxLayout()
         textos.setSpacing(6)
         textos.addLayout(topo)
+        if m.descricao:
+            textos.addWidget(RotuloElidido(m.descricao, "ItemDetalhe"))
         textos.addWidget(self.barra)
         textos.addWidget(self.valores)
         linha = QHBoxLayout(self)
@@ -377,7 +387,8 @@ class CartaoMeta(QFrame):
 
     def __init__(
         self, m: Meta, hoje: date, sobra: int, posicao: int = 0, total: int = 1,
-        evolucao: list[tuple[date, int]] | None = None, ritmo: int | None = None, parent: QWidget | None = None,
+        evolucao: list[tuple[date, int]] | None = None, ritmo: int | None = None, foto: Path | None = None,
+        parent: QWidget | None = None,
     ):
         super().__init__(parent)
         self.meta = m
@@ -399,13 +410,27 @@ class CartaoMeta(QFrame):
         self.pilula = Pilula(texto, variante)
         if v is not None and v.situacao in ("parcial", "nao_cabe"):
             self.pilula.setToolTip(explicacao_viabilidade(v, sobra))
+        linha_nome = QHBoxLayout()
+        linha_nome.setSpacing(tema.ESPACO)
+        linha_nome.addWidget(self.nome)
+        linha_nome.addWidget(self.pilula_reserva)
+        linha_nome.addStretch(1)
+        linha_nome.addWidget(self.pilula)
+        linha_nome.addWidget(self._montar_menu(posicao, total, encerrada))
+        self.descricao = RotuloElidido(m.descricao, "MetaInfo")
+        self.descricao.setVisible(bool(m.descricao))
+        cabeca = QVBoxLayout()
+        cabeca.setSpacing(2)
+        cabeca.addLayout(linha_nome)
+        cabeca.addWidget(self.descricao)
         topo = QHBoxLayout()
-        topo.setSpacing(tema.ESPACO)
-        topo.addWidget(self.nome)
-        topo.addWidget(self.pilula_reserva)
-        topo.addStretch(1)
-        topo.addWidget(self.pilula)
-        topo.addWidget(self._montar_menu(posicao, total, encerrada))
+        topo.setSpacing(2 * tema.ESPACO)
+        self.foto = QLabel()
+        self.foto.setVisible(foto is not None)
+        if foto is not None:
+            self.foto.setPixmap(foto_arredondada(QPixmap(str(foto)), 72, 10))
+        topo.addWidget(self.foto, 0, Qt.AlignmentFlag.AlignTop)
+        topo.addLayout(cabeca, 1)
 
         self.percentual = AnelProgresso(m.progresso, apagada=encerrada)
         self.guardado = _rotulo(f"{formatar_brl(m.guardado)} de {formatar_brl(m.valor_alvo_centavos)}", "MetaGuardado")
@@ -895,7 +920,7 @@ class AbaMetas(QScrollArea):
                 widget.deleteLater()
 
     def _montar_item(self, m: Meta, hoje: date) -> ItemMeta:
-        item = ItemMeta(m, hoje, m.id == self._selecionada)
+        item = ItemMeta(m, hoje, m.id == self._selecionada, metas.caminho_imagem(self.conn, m))
         item.clicado.connect(self.selecionar)
         return item
 
@@ -921,6 +946,7 @@ class AbaMetas(QScrollArea):
         cartao = CartaoMeta(
             m, hoje, self._sobra, posicao, total,
             evolucao=metas.evolucao(self.conn, m.id, hoje), ritmo=metas.ritmo_medio(self.conn, m.id, hoje),
+            foto=metas.caminho_imagem(self.conn, m),
         )
         cartao.guardar.connect(lambda i: self.abrir_form(i, "guardar"))
         cartao.retirar.connect(lambda i: self.abrir_form(i, "retirar"))

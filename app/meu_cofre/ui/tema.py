@@ -184,6 +184,9 @@ QPushButton:focus {{ outline: none; }}
 #ItemMarcador[tipo="entrada"] {{ background: {VERDE_SUAVE}; color: {VERDE}; }}
 #ItemMarcador[tipo="saida"] {{ background: {CARTAO_ELEVADO}; border: 1px solid {BORDA}; color: {TEXTO_SECUNDARIO}; }}
 #ItemMarcador[tipo="logo"] {{ background: {CARTAO}; border: 1px solid {BORDA}; }}
+#ItemMarcador[tipo="foto"] {{ background: transparent; border: none; }}
+#FotoMeta {{ background: {FUNDO}; border: 1px dashed {BORDA}; border-radius: 10px; color: {TEXTO_APAGADO};
+    font-size: {PX_RODAPE}px; }}
 #ItemMarcador[tipo="meta"] {{ background: {BORDA}; color: {DOURADO}; font-size: 14px; }}
 #ItemMarcador[tipo="transferencia"] {{ background: {BORDA}; color: {TEXTO_SECUNDARIO}; font-size: 15px; }}
 #ItemDescricao {{ font-size: {PX_TEXTO}px; font-weight: 600; color: {TEXTO}; }}

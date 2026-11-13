@@ -19,11 +19,11 @@ SAIDA = RAIZ / ".github" / "readme"
 # nome do arquivo -> variáveis do modo screenshot do app
 PRINTS = {
     "inicio-fluxo": {"MEU_COFRE_ABA": "inicio", "MEU_COFRE_PAINEL": "fluxo"},
-    "inicio-categorias": {"MEU_COFRE_ABA": "inicio", "MEU_COFRE_PAINEL": "rosca"},
     "assinaturas": {"MEU_COFRE_ABA": "recorrentes"},
     "cartoes": {"MEU_COFRE_ABA": "cartoes"},
     "metas": {"MEU_COFRE_ABA": "metas"},
     "investimentos": {"MEU_COFRE_ABA": "investimentos"},
+    "escuro": {"MEU_COFRE_ABA": "inicio", "MEU_COFRE_PAINEL": "rosca", "MEU_COFRE_TEMA": "escuro"},
     "novo-lancamento": {"MEU_COFRE_ABA": "inicio", "MEU_COFRE_DIALOGO": "cartao"},
 }
 
